@@ -18,6 +18,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -104,6 +105,32 @@ class OfishMutationClientTest {
     }
 
     @Test
+    fun `upload resolves chunk size once per upload`() = runTest {
+        val client = FakeOfishWorkspaceClient(
+            outputs = ArrayDeque(
+                listOf(
+                    "### 200 ok upload=.ofish.upload.tmp",
+                    "### 200 ok",
+                    "### 200 ok",
+                    "### 200 ok hash=abc",
+                ),
+            ),
+        )
+        val provider = RecordingUploadChunkBytesProvider(bytes = 2)
+        val mutationClient = mutationClient(
+            client = client,
+            probeResult = OfishProbeResult.Available(capabilities),
+            uploadChunkBytesProvider = provider,
+        )
+
+        val result = mutationClient.uploadFile(FileUploadRequest("file.bin", byteArrayOf(1, 2, 3, 4)))
+
+        assertTrue(result is FileOperationResult.Ok)
+        assertEquals(1, provider.calls)
+        assertEquals(2, client.commands.count { it.contains("#OFISH_UPLOAD_CHUNK") })
+    }
+
+    @Test
     fun `unsafe upload token rejected before chunks`() = runTest {
         val client = FakeOfishWorkspaceClient(outputs = ArrayDeque(listOf("### 200 ok upload=/tmp/evil")))
         val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities), uploadChunkBytes = 2)
@@ -186,6 +213,16 @@ class OfishMutationClientTest {
         client: FakeOfishWorkspaceClient,
         probeResult: OfishProbeResult,
         uploadChunkBytes: Int = 256 * 1024,
+    ): OfishMutationClient = mutationClient(
+        client = client,
+        probeResult = probeResult,
+        uploadChunkBytesProvider = FixedUploadChunkBytesProvider(uploadChunkBytes),
+    )
+
+    private fun mutationClient(
+        client: FakeOfishWorkspaceClient,
+        probeResult: OfishProbeResult,
+        uploadChunkBytesProvider: UploadChunkBytesProvider,
     ): OfishMutationClient {
         val probe = OfishCapabilityProbe(client, OfishSessionFactory(client))
         return OfishMutationClient(
@@ -193,8 +230,21 @@ class OfishMutationClientTest {
             sessionFactory = OfishSessionFactory(client),
             capabilityCache = FakeCapabilityCache(probe, probeResult),
             commandBuilder = OfishCommandBuilder(delimiterId = { "repo_test" }),
-            uploadChunkBytes = uploadChunkBytes,
+            uploadChunkBytes = uploadChunkBytesProvider,
         )
+    }
+
+    private class RecordingUploadChunkBytesProvider(
+        private val bytes: Int,
+    ) : UploadChunkBytesProvider {
+        var calls = 0
+            private set
+
+        override suspend fun get(capabilities: OfishCapabilities): Int {
+            calls += 1
+            assertFalse(capabilities.hashCommand == null)
+            return bytes
+        }
     }
 
     private class FakeCapabilityCache(

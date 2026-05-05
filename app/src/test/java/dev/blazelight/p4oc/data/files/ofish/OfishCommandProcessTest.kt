@@ -84,6 +84,21 @@ class OfishCommandProcessTest {
     }
 
     @Test
+    fun `upload chunk probe verifies payload and cleans temp file`() {
+        assumeShellAvailable()
+        val root = temporaryFolder.newFolder()
+        val command = OfishUploadChunkProbeCommandBuilder(
+            payloadBytes = { size -> ByteArray(size) { index -> index.toByte() } },
+            delimiterId = { "process_test" },
+        ).probe(128, capabilities)
+
+        val output = runShell(command, root)
+
+        assertTrue(OfishMutationParser.parse(output) is OfishMutationStatus.Ok)
+        assertTrue(root.listFiles()?.none { it.name.startsWith(".ofish.chunk-probe.") } ?: true)
+    }
+
+    @Test
     fun `upload init chunks and finish reconstruct bytes`() {
         assumeShellAvailable()
         val root = temporaryFolder.newFolder()

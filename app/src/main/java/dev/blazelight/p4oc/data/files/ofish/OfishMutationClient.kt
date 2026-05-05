@@ -13,18 +13,28 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+internal fun interface UploadChunkBytesProvider {
+    suspend fun get(capabilities: OfishCapabilities): Int
+}
+
+internal class FixedUploadChunkBytesProvider(
+    private val bytes: Int,
+) : UploadChunkBytesProvider {
+    init {
+        require(bytes > 0) { "bytes must be greater than zero" }
+    }
+
+    override suspend fun get(capabilities: OfishCapabilities): Int = bytes
+}
+
 internal class OfishMutationClient(
     private val client: OfishWorkspaceClient,
     private val sessionFactory: OfishSessionFactory,
     private val capabilityCache: CachedOfishCapabilities,
     private val commandBuilder: OfishCommandBuilder = OfishCommandBuilder(),
     private val shellAgent: String = DEFAULT_SHELL_AGENT,
-    // TODO(oa-0qgz): tune the transport chunk size from empirical upload benchmarks.
-    private val uploadChunkBytes: Int = DEFAULT_UPLOAD_CHUNK_BYTES,
+    private val uploadChunkBytes: UploadChunkBytesProvider = FixedUploadChunkBytesProvider(OFISH_DEFAULT_CHUNK_BYTES),
 ) {
-    init {
-        require(uploadChunkBytes > 0) { "uploadChunkBytes must be greater than zero" }
-    }
 
     suspend fun mutationCapabilities(): OfishProbeResult = capabilityCache.get()
 
@@ -91,9 +101,11 @@ internal class OfishMutationClient(
 
         var finished = false
         try {
+            val chunkBytes = uploadChunkBytes.get(capabilities)
+            require(chunkBytes > 0) { "upload chunk size must be greater than zero" }
             var offset = 0
             while (offset < request.bytes.size) {
-                val end = minOf(offset + uploadChunkBytes, request.bytes.size)
+                val end = minOf(offset + chunkBytes, request.bytes.size)
                 val chunk = request.bytes.copyOfRange(offset, end)
                 when (val chunkStatus = execute(sessionId, commandBuilder.uploadChunk(uploadToken, chunk, capabilities))) {
                     is OfishMutationStatus.Ok -> Unit
@@ -203,7 +215,6 @@ internal class OfishMutationClient(
     private companion object {
         const val TAG = "OfishMutationClient"
         const val DEFAULT_SHELL_AGENT = "build"
-        const val DEFAULT_UPLOAD_CHUNK_BYTES = 256 * 1024
         const val INVALID_PATH_MESSAGE = "Invalid file path"
         const val UNAVAILABLE_MESSAGE = "OFISH file mutations unavailable"
         const val OPERATION_WRITE = "write"
