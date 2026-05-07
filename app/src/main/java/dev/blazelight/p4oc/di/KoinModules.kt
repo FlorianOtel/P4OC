@@ -23,6 +23,7 @@ import dev.blazelight.p4oc.ui.screens.settings.SkillsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.VisualSettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.SettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.NotificationSettingsViewModel
+import dev.blazelight.p4oc.ui.screens.licenses.LicensesViewModel
 import dev.blazelight.p4oc.ui.screens.settings.ProviderConfigViewModel
 import dev.blazelight.p4oc.ui.screens.projects.ProjectsViewModel
 import dev.blazelight.p4oc.ui.screens.terminal.TerminalViewModel
@@ -96,6 +97,7 @@ val viewModelModule = module {
     viewModelOf(::SkillsViewModel)
     viewModelOf(::SettingsViewModel)
     viewModelOf(::NotificationSettingsViewModel)
+    viewModelOf(::LicensesViewModel)
     viewModelOf(::ProviderConfigViewModel)
     viewModelOf(::ProjectsViewModel)
     viewModel { params ->

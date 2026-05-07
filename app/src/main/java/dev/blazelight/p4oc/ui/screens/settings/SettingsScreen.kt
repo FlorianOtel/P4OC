@@ -44,7 +44,8 @@ fun SettingsScreen(
     onAgentsConfig: () -> Unit = {},
     onSkills: () -> Unit = {},
     onNotificationSettings: () -> Unit = {},
-    onConnectionSettings: () -> Unit = {}
+    onConnectionSettings: () -> Unit = {},
+    onLicenses: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isConnected by viewModel.isConnected.collectAsStateWithLifecycle()
@@ -146,6 +147,15 @@ fun SettingsScreen(
             )
 
             SettingsItem(
+                icon = Icons.Default.Description,
+                title = stringResource(R.string.settings_licenses),
+                subtitle = stringResource(R.string.settings_licenses_desc),
+                onClick = onLicenses,
+                showChevron = true,
+                testTag = "settings_licenses_item"
+            )
+
+            SettingsItem(
                 icon = Icons.Default.Info,
                 title = stringResource(R.string.settings_about),
                 subtitle = stringResource(R.string.settings_version_format, BuildConfig.VERSION_NAME),
@@ -222,6 +232,15 @@ fun SettingsScreen(
                     }
                 ) {
                     Text(stringResource(R.string.settings_about_github))
+                }
+                dev.blazelight.p4oc.ui.components.TuiTextButton(
+                    onClick = {
+                        showAboutDialog = false
+                        onLicenses()
+                    },
+                    modifier = Modifier.testTag("about_dialog_licenses_button")
+                ) {
+                    Text(stringResource(R.string.settings_licenses))
                 }
             }
         }

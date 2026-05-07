@@ -117,7 +117,16 @@ fun NavGraph(
                 },
                 onConnectionSettings = {
                     navController.navigate(Screen.ConnectionSettings.route)
+                },
+                onLicenses = {
+                    navController.navigate(Screen.Licenses.route)
                 }
+            )
+        }
+
+        composable(Screen.Licenses.route) {
+            dev.blazelight.p4oc.ui.screens.licenses.LicensesScreen(
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 

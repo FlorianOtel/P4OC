@@ -412,7 +412,17 @@ fun TabNavHost(
                 },
                 onConnectionSettings = {
                     navController.navigate(Screen.ConnectionSettings.route)
+                },
+                onLicenses = {
+                    navController.navigate(Screen.Licenses.route)
                 }
+            )
+        }
+
+        composable(Screen.Licenses.route) { backStackEntry ->
+            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
+            dev.blazelight.p4oc.ui.screens.licenses.LicensesScreen(
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 

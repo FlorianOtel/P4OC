@@ -88,6 +88,21 @@
     <string name="settings_about_github">View on GitHub</string>
     <string name="settings_about_github_url">https://github.com/theblazehen/P4OC</string>
     <string name="settings_about_build_info">Build: %1$s (%2$d)</string>
+    <string name="settings_licenses">Open source licenses</string>
+    <string name="settings_licenses_desc">Third-party components, license texts, and relinking notice</string>
+
+    <!-- Licenses Screen -->
+    <string name="licenses_title">Open source licenses</string>
+    <string name="licenses_intro">This app uses third-party open source software. Each component below is listed with its name, version, license (SPDX identifier), and a link to the upstream project. Tap a row to see notes and the full license text.</string>
+    <string name="licenses_relink_title">LGPL components — relinking notice</string>
+    <string name="licenses_relink_body">Any LGPL-2.1 components listed below that are currently shipped in this app are dynamically linked and used solely through their public APIs, without modification, and you have the right under LGPL-2.1 §6 to replace them with a modified version. Components marked as PLANNED (for example the Sora Editor) are not yet bundled; their entries document upcoming integration so the obligations are visible in advance and will apply once they ship. The unmodified upstream source is available at the URL on each component\'s row. To request the corresponding object code suitable for relinking against a modified version of an LGPL-covered library shipped in this app, please open an issue on the project\'s issue tracker.</string>
+    <string name="licenses_request_channel_action">Open project issue tracker</string>
+    <string name="licenses_request_channel_url">https://github.com/theblazehen/P4OC/issues</string>
+    <string name="licenses_open_upstream">View upstream source</string>
+    <string name="licenses_full_text_heading">Full license text — %1$s</string>
+    <string name="licenses_loading">Loading license text…</string>
+    <string name="licenses_expand">Expand</string>
+    <string name="licenses_collapse">Collapse</string>
     <string name="settings_disconnect">Disconnect</string>
     <string name="settings_disconnect_confirm">Are you sure you want to disconnect from the server?</string>
     <string name="button_cancel">Cancel</string>

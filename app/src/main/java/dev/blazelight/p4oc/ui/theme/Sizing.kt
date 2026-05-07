@@ -68,6 +68,9 @@ object Sizing {
     val panelWidthMd: Dp = 120.dp
     val panelWidthLg: Dp = 180.dp
 
+    // Scrollable embedded content (e.g. inline full-text blocks)
+    val embeddedScrollMaxHeight: Dp = 360.dp
+
     // Component-specific
     val switchCellWidth: Dp = 40.dp   // TuiSwitch ON/OFF cell width
     val treeIndent: Dp = 24.dp        // Session tree indentation per level
