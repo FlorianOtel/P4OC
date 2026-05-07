@@ -37,30 +37,34 @@ internal object LicenseCatalogue {
     private const val MARKDOWN_RENDERER = "0.39.2"
     private const val COIL = "2.7.0"
 
-    // Planned LGPL integration; not yet a build dependency.
-    // See ticket oa-lmh0 / blocking ticket oa-v3js.
-    private const val SORA_EDITOR_PLANNED = "0.23.6"
+    // Shipped LGPL-2.1 dependency (see oa-lmh0, oa-v3js).
+    private const val SORA_EDITOR = "0.23.6"
 
     val all: List<LicenseEntry> = listOf(
         // ----- Copyleft (LGPL/GPL) -----
 
         LicenseEntry(
             name = "Sora Editor (sora-editor)",
-            version = "$SORA_EDITOR_PLANNED (planned — not yet shipped)",
+            version = SORA_EDITOR,
             license = License.LGPL_2_1,
             upstreamUrl = "https://github.com/Rosemoe/sora-editor",
-            notes = "Status: PLANNED INTEGRATION. The Sora Editor is not yet bundled " +
-                "with this app; this entry documents the upcoming dependency in advance " +
-                "so the obligations are visible. When integrated, the library will be " +
-                "consumed as an unmodified Maven artifact (target version " +
-                "$SORA_EDITOR_PLANNED) and used solely through its public APIs " +
-                "(CodeEditor, ThemeRegistry, EditorColorScheme, TextMateLanguage, " +
-                "subscribeEvent), dynamically linked under LGPL-2.1. Once shipped, you " +
-                "will have the right under LGPL-2.1 §6 to replace it with a modified " +
-                "version; the unmodified upstream source is available at the URL above, " +
-                "and the project's issue tracker (see the relinking notice on this " +
-                "screen) is the channel for requesting object code suitable for " +
-                "relinking against a modified Sora Editor build."
+            notes = "Hosts the in-app file editor. Consumed as an unmodified Maven " +
+                "artifact (version $SORA_EDITOR, modules editor and language-textmate) " +
+                "and used solely through its public APIs (CodeEditor, ThemeRegistry, " +
+                "EditorColorScheme, TextMateLanguage, subscribeEvent), dynamically " +
+                "linked under LGPL-2.1. You have the right under LGPL-2.1 §6 to replace " +
+                "it with a modified version; the unmodified upstream source is available " +
+                "at the URL above, and the project's issue tracker (see the relinking " +
+                "notice on this screen) is the channel for requesting object code " +
+                "suitable for relinking against a modified Sora Editor build."
+        ),
+        LicenseEntry(
+            name = "Sora Editor language-textmate",
+            version = SORA_EDITOR,
+            license = License.LGPL_2_1,
+            upstreamUrl = "https://github.com/Rosemoe/sora-editor",
+            notes = "TextMate grammar/theme module distributed as part of sora-editor. " +
+                "Same usage and relinking terms apply as the Sora Editor entry above."
         ),
         LicenseEntry(
             name = "Termux terminal-view",

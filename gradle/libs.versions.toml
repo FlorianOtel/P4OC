@@ -35,6 +35,8 @@ okhttp = "5.3.2"
 retrofit = "3.0.0"
 security-crypto = "1.1.0-alpha06"
 splashscreen = "1.2.0"
+# Sora Editor (LGPL-2.1 — used unmodified via public APIs)
+sora-editor = "0.23.6"
 # Terminal
 termux = "0.118.0"
 
@@ -90,6 +92,9 @@ okhttp-logging = { module = "com.squareup.okhttp3:logging-interceptor", version.
 retrofit = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit" }
 retrofit-serialization = { module = "com.squareup.retrofit2:converter-kotlinx-serialization", version.ref = "retrofit" }
 security-crypto = { module = "androidx.security:security-crypto", version.ref = "security-crypto" }
+# Sora Editor
+sora-editor = { module = "io.github.Rosemoe.sora-editor:editor", version.ref = "sora-editor" }
+sora-editor-language-textmate = { module = "io.github.Rosemoe.sora-editor:language-textmate", version.ref = "sora-editor" }
 # Splash
 splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "splashscreen" }
 termux-emulator = { module = "com.termux.termux-app:terminal-emulator", version.ref = "termux" }

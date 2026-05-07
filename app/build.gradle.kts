@@ -125,6 +125,10 @@ dependencies {
     // Diff parsing
     implementation(libs.java.diff.utils)
 
+    // Sora Editor (LGPL-2.1; used unmodified through public APIs only)
+    implementation(libs.sora.editor)
+    implementation(libs.sora.editor.language.textmate)
+
     // DataStore Preferences
     implementation(libs.datastore.preferences)
 

@@ -95,7 +95,7 @@
     <string name="licenses_title">Open source licenses</string>
     <string name="licenses_intro">This app uses third-party open source software. Each component below is listed with its name, version, license (SPDX identifier), and a link to the upstream project. Tap a row to see notes and the full license text.</string>
     <string name="licenses_relink_title">LGPL components — relinking notice</string>
-    <string name="licenses_relink_body">Any LGPL-2.1 components listed below that are currently shipped in this app are dynamically linked and used solely through their public APIs, without modification, and you have the right under LGPL-2.1 §6 to replace them with a modified version. Components marked as PLANNED (for example the Sora Editor) are not yet bundled; their entries document upcoming integration so the obligations are visible in advance and will apply once they ship. The unmodified upstream source is available at the URL on each component\'s row. To request the corresponding object code suitable for relinking against a modified version of an LGPL-covered library shipped in this app, please open an issue on the project\'s issue tracker.</string>
+    <string name="licenses_relink_body">The LGPL-2.1 components listed below are dynamically linked and used solely through their public APIs, without modification, and you have the right under LGPL-2.1 §6 to replace them with a modified version. The unmodified upstream source is available at the URL on each component\'s row. To request the corresponding object code suitable for relinking against a modified version of an LGPL-covered library shipped in this app, please open an issue on the project\'s issue tracker.</string>
     <string name="licenses_request_channel_action">Open project issue tracker</string>
     <string name="licenses_request_channel_url">https://github.com/theblazehen/P4OC/issues</string>
     <string name="licenses_open_upstream">View upstream source</string>
@@ -405,6 +405,26 @@
     <string name="cd_path_separator">Path separator</string>
     <string name="cd_open_folder">Open folder</string>
     <string name="cd_toggle_line_numbers">Toggle line numbers</string>
+    <string name="cd_edit_file">Edit file</string>
+    <string name="cd_view_file">View file</string>
+    <string name="cd_save_file">Save file</string>
+    <string name="cd_undo">Undo</string>
+    <string name="cd_redo">Redo</string>
+
+    <!-- File editor -->
+    <string name="file_editor_save">Save</string>
+    <string name="file_editor_cancel">Cancel</string>
+    <string name="file_editor_discard">Discard</string>
+    <string name="file_editor_overwrite">Overwrite</string>
+    <string name="file_editor_reload">Reload</string>
+    <string name="file_editor_save_diff_title">Review changes</string>
+    <string name="file_editor_save_no_changes">No changes to save.</string>
+    <string name="file_editor_save_failed">Failed to save: %1$s</string>
+    <string name="file_editor_unsaved_title">Discard unsaved changes?</string>
+    <string name="file_editor_unsaved_body">You have unsaved edits in this file. Going back will discard them.</string>
+    <string name="file_editor_conflict_title">File changed on disk</string>
+    <string name="file_editor_conflict_body">The file on disk has changed since you opened it. Reload to discard your edits and load the latest version, or overwrite to replace it with your changes.</string>
+    <string name="file_editor_read_only">This workspace does not support writing files.</string>
     <string name="cd_stop">Stop</string>
     <string name="cd_commands">Commands</string>
     <string name="cd_terminal">Terminal</string>

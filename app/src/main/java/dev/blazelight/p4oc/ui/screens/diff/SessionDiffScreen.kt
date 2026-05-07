@@ -140,7 +140,7 @@ fun SessionDiffScreen(
 
                     items(fileList, key = { it.file }) { fileDiff ->
                         val diffContent = remember(fileDiff.file, fileDiff.before, fileDiff.after) {
-                            toUnifiedDiff(
+                            dev.blazelight.p4oc.ui.diff.UnifiedDiffBuilder.build(
                                 filePath = fileDiff.file,
                                 before = fileDiff.before,
                                 after = fileDiff.after
@@ -159,34 +159,4 @@ fun SessionDiffScreen(
     }
 }
 
-private fun toUnifiedDiff(filePath: String, before: String, after: String): String {
-    val beforeLines = before.lines()
-    val afterLines = after.lines()
-    val beforeCount = beforeLines.size
-    val afterCount = afterLines.size
 
-    return buildString {
-        append("--- a/")
-        append(filePath)
-        append('\n')
-        append("+++ b/")
-        append(filePath)
-        append('\n')
-        append("@@ -1,")
-        append(beforeCount)
-        append(" +1,")
-        append(afterCount)
-        append(" @@\n")
-
-        beforeLines.forEach {
-            append('-')
-            append(it)
-            append('\n')
-        }
-        afterLines.forEach {
-            append('+')
-            append(it)
-            append('\n')
-        }
-    }
-}
