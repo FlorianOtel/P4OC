@@ -6,12 +6,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import org.koin.androidx.compose.koinViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.termux.view.TerminalView
 import dev.blazelight.p4oc.ui.components.TermuxExtraKeysBar
 import dev.blazelight.p4oc.ui.components.TermuxTerminalView
-import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
+import dev.blazelight.p4oc.ui.theme.SemanticColors
+import org.koin.androidx.compose.koinViewModel
 
 @Composable
 fun TerminalScreen(
@@ -20,14 +21,17 @@ fun TerminalScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    
+    var terminalView by remember { mutableStateOf<TerminalView?>(null) }
+    val currentTerminalView by rememberUpdatedState(terminalView)
+
     // Modifier key state (hoisted for use by both keyboard and extra keys bar)
     var ctrlActive by remember { mutableStateOf(false) }
     var altActive by remember { mutableStateOf(false) }
-    
+
     // Wrapped input handler that processes CTRL/ALT modifiers
     val wrappedKeyInput: (String) -> Unit = remember(ctrlActive, altActive) {
-        { input ->
+        {
+                input ->
             when {
                 // CTRL + lowercase letter (a-z) -> control character (0x01-0x1A)
                 ctrlActive && input.length == 1 && input[0] in 'a'..'z' -> {
@@ -51,7 +55,7 @@ fun TerminalScreen(
             }
         }
     }
-    
+
     // Notify when PTY title is loaded
     LaunchedEffect(uiState.title) {
         uiState.title?.let { title ->
@@ -67,6 +71,12 @@ fun TerminalScreen(
                 duration = SnackbarDuration.Short
             )
             viewModel.clearError()
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.terminalInvalidations.collect {
+            currentTerminalView?.postInvalidate()
         }
     }
 
@@ -93,7 +103,8 @@ fun TerminalScreen(
                         emulator = viewModel.getTerminalEmulator(),
                         onKeyInput = wrappedKeyInput,
                         modifier = Modifier.fillMaxSize(),
-                        onTerminalViewReady = { view -> viewModel.setTerminalView(view) }
+                        onTerminalViewReady = { view -> terminalView = view },
+                        onTerminalSizeChanged = viewModel::onTerminalSizeChanged,
                     )
                 }
             }

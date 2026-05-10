@@ -67,6 +67,9 @@ data class MessageError(
     val responseBody: String? = null
 )
 
+fun MessageError.isAborted(): Boolean =
+    name == "MessageAbortedError" || message.equals("Aborted", ignoreCase = true)
+
 @Serializable
 data class ApiError(
     val message: String,

@@ -10,7 +10,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * TUI-style spacing system for dense, terminal-like layouts.
- * 
+ *
  * Design principles:
  * - Minimal padding (4-8dp instead of 16-24dp)
  * - Tight vertical spacing between elements
@@ -26,10 +26,10 @@ data class TuiSpacing(
     val xs: Dp = 4.dp,
     val sm: Dp = 6.dp,
     val md: Dp = 8.dp,
-    val mdLg: Dp = 10.dp,  // Between md and lg - for horizontal content padding
+    val mdLg: Dp = 10.dp, // Between md and lg - for horizontal content padding
     val lg: Dp = 12.dp,
-    val xl: Dp = 16.dp,  // Use sparingly - only for major sections
-    
+    val xl: Dp = 16.dp, // Use sparingly - only for major sections
+
     // Semantic spacing
     /** Internal padding for cards/containers */
     val cardPadding: Dp = 8.dp,
@@ -45,7 +45,7 @@ data class TuiSpacing(
     val listItemPadding: Dp = 8.dp,
     /** Input field padding */
     val inputPadding: Dp = 8.dp,
-    
+
     // Vertical arrangements
     /** Between items in a list */
     val listItemSpacing: Dp = 4.dp,
@@ -57,7 +57,7 @@ data class TuiSpacing(
     val formFieldSpacing: Dp = 6.dp,
     /** Empty state element spacing */
     val emptyStateSpacing: Dp = 8.dp,
-    
+
     // Horizontal arrangements
     /** Between inline elements */
     val inlineSpacing: Dp = 6.dp,
@@ -67,31 +67,31 @@ data class TuiSpacing(
     val buttonSpacing: Dp = 6.dp
 ) {
     // Convenience functions for common patterns
-    
+
     /** Content padding for lazy lists */
     val listContentPadding: PaddingValues
         get() = PaddingValues(screenPadding)
-    
+
     /** Vertical arrangement for list items */
     val listArrangement: Arrangement.Vertical
         get() = Arrangement.spacedBy(listItemSpacing)
-    
+
     /** Vertical arrangement for card content */
     val cardArrangement: Arrangement.Vertical
         get() = Arrangement.spacedBy(cardContentSpacing)
-    
+
     /** Vertical arrangement for form fields */
     val formArrangement: Arrangement.Vertical
         get() = Arrangement.spacedBy(formFieldSpacing)
-    
+
     /** Vertical arrangement for sections */
     val sectionArrangement: Arrangement.Vertical
         get() = Arrangement.spacedBy(sectionSpacing)
-    
+
     /** Horizontal arrangement for inline elements */
     val inlineArrangement: Arrangement.Horizontal
         get() = Arrangement.spacedBy(inlineSpacing)
-    
+
     /** Horizontal arrangement for buttons */
     val buttonArrangement: Arrangement.Horizontal
         get() = Arrangement.spacedBy(buttonSpacing)
@@ -116,7 +116,7 @@ object Spacing {
     val current: TuiSpacing
         @Composable
         get() = LocalTuiSpacing.current
-    
+
     // Direct accessors for common values (non-composable contexts)
     val none = TuiDefaults.none
     val hairline = TuiDefaults.hairline
@@ -127,13 +127,13 @@ object Spacing {
     val mdLg = TuiDefaults.mdLg
     val lg = TuiDefaults.lg
     val xl = TuiDefaults.xl
-    
+
     val cardPadding = TuiDefaults.cardPadding
     val screenPadding = TuiDefaults.screenPadding
     val dialogPadding = TuiDefaults.dialogPadding
     val listItemPadding = TuiDefaults.listItemPadding
     val emptyStatePadding = TuiDefaults.emptyStatePadding
-    
+
     val listItemSpacing = TuiDefaults.listItemSpacing
     val sectionSpacing = TuiDefaults.sectionSpacing
     val cardContentSpacing = TuiDefaults.cardContentSpacing

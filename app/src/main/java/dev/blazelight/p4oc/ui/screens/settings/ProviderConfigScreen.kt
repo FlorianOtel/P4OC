@@ -8,7 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,23 +15,24 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import org.koin.androidx.compose.koinViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.data.remote.dto.ModelDto
 import dev.blazelight.p4oc.data.remote.dto.ProviderDto
-import dev.blazelight.p4oc.ui.theme.SemanticColors
-import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiCard
 import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
 import dev.blazelight.p4oc.ui.components.TuiTopBar
+import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.SemanticColors
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
+import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,7 +54,11 @@ fun ProviderConfigScreen(
                         onClick = { viewModel.loadProviders() },
                         modifier = Modifier.size(Sizing.iconButtonMd)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh), modifier = Modifier.size(Sizing.iconAction))
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.refresh),
+                            modifier = Modifier.size(Sizing.iconAction)
+                        )
                     }
                 }
             )
@@ -129,7 +133,11 @@ fun ProviderConfigScreen(
                             provider = provider,
                             isExpanded = uiState.selectedProviderId == provider.id,
                             currentModel = uiState.currentModel,
-                            onToggle = { viewModel.selectProvider(if (uiState.selectedProviderId == provider.id) "" else provider.id) },
+                            onToggle = {
+                                viewModel.selectProvider(
+                                    if (uiState.selectedProviderId == provider.id) "" else provider.id
+                                )
+                            },
                             onSelectModel = { modelId -> viewModel.setModel(provider.id, modelId) }
                         )
                     }
@@ -212,9 +220,11 @@ private fun ProviderCard(
     TuiCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActiveProvider)
+            containerColor = if (isActiveProvider) {
                 theme.accent.copy(alpha = 0.1f)
-            else theme.backgroundElement
+            } else {
+                theme.backgroundElement
+            }
         )
     ) {
         Column {
@@ -298,8 +308,11 @@ private fun ModelItem(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                if (isSelected) theme.accent.copy(alpha = 0.1f)
-                else Color.Transparent,
+                if (isSelected) {
+                    theme.accent.copy(alpha = 0.1f)
+                } else {
+                    Color.Transparent
+                },
                 shape = RectangleShape
             )
             .clickable(role = Role.Button, onClick = onClick)

@@ -1,5 +1,6 @@
 package dev.blazelight.p4oc.ui.screens.files.upload
 
+import dev.blazelight.p4oc.core.filetype.FileTypeClassifier
 import java.util.Locale
 
 /**
@@ -23,19 +24,7 @@ fun formatFileSize(bytes: Long): String = when {
 
 /** Single-glyph TUI symbol for a filename, by extension. */
 fun getFileSymbol(name: String): String {
-    val ext = name.substringAfterLast('.', "").lowercase(Locale.US)
-    return when (ext) {
-        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp" -> "▣"
-        "mp4", "avi", "mov", "mkv", "webm" -> "▶"
-        "mp3", "wav", "ogg", "flac", "m4a" -> "♪"
-        "zip", "tar", "gz", "rar", "7z" -> "▤"
-        "kt", "java", "py", "js", "ts", "tsx", "jsx", "c", "cpp", "h",
-        "rs", "go", "rb", "php", "swift", "m", "sh", "bash" -> "{}"
-        "md", "txt", "rst", "log" -> "≡"
-        "json", "yaml", "yml", "xml", "toml", "ini", "conf", "config" -> "⚙"
-        "pdf", "doc", "docx" -> "▭"
-        else -> "◆"
-    }
+    return FileTypeClassifier.classify(name).uploadSymbol
 }
 
 /** Short uppercase label for a MIME type (e.g. "image/png" -> "PNG"). */

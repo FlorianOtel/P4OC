@@ -14,20 +14,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.domain.model.Part
 import dev.blazelight.p4oc.domain.model.ToolState
+import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
-import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Main wrapper component for tool call widgets.
  * Handles state cycling between Oneline, Compact, and Expanded views.
- * 
+ *
  * HITL tools (like question) always display expanded and don't cycle.
  */
 @Composable
@@ -39,22 +38,22 @@ fun ToolCallWidget(
     modifier: Modifier = Modifier
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     // HITL tools (pending state) always show expanded
     val isHitl = tool.state is ToolState.Pending
     val effectiveDefault = if (isHitl) ToolWidgetState.EXPANDED else defaultState
-    
+
     var currentState by remember(tool.callID) { mutableStateOf(effectiveDefault) }
-    
+
     // Update state if tool becomes pending (HITL)
     LaunchedEffect(isHitl) {
         if (isHitl) {
             currentState = ToolWidgetState.EXPANDED
         }
     }
-    
+
     val canCycle = !isHitl // HITL tools don't cycle
-    
+
     AnimatedContent(
         targetState = currentState,
         modifier = modifier.fillMaxWidth(),
@@ -64,17 +63,17 @@ fun ToolCallWidget(
         when (state) {
             ToolWidgetState.ONELINE -> ToolCallOneline(
                 tool = tool,
-                onClick = if (canCycle) {{ currentState = currentState.next() }} else null,
+                onClick = if (canCycle) { { currentState = currentState.next() } } else null,
                 modifier = Modifier.fillMaxWidth()
             )
             ToolWidgetState.COMPACT -> ToolCallCompact(
                 tool = tool,
-                onClick = if (canCycle) {{ currentState = currentState.next() }} else null,
+                onClick = if (canCycle) { { currentState = currentState.next() } } else null,
                 modifier = Modifier.fillMaxWidth()
             )
             ToolWidgetState.EXPANDED -> ToolCallExpanded(
                 tool = tool,
-                onClick = if (canCycle) {{ currentState = currentState.next() }} else null,
+                onClick = if (canCycle) { { currentState = currentState.next() } } else null,
                 onToolApprove = onToolApprove,
                 onToolDeny = onToolDeny,
                 modifier = Modifier.fillMaxWidth()
@@ -95,7 +94,7 @@ fun ToolCallOneline(
 ) {
     val theme = LocalOpenCodeTheme.current
     val (icon, color) = getToolStateIcon(tool.state, theme)
-    
+
     Row(
         modifier = modifier
             .then(if (onClick != null) Modifier.clickable(onClick = onClick, role = Role.Button) else Modifier)
@@ -122,7 +121,7 @@ fun ToolCallOneline(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        
+
         // Running indicator
         if (tool.state is ToolState.Running) {
             TuiLoadingIndicator()
@@ -145,7 +144,7 @@ fun ToolCallCompact(
     val theme = LocalOpenCodeTheme.current
     val (icon, color) = getToolStateIcon(tool.state, theme)
     val description = getToolCompactDescription(tool)
-    
+
     Row(
         modifier = modifier
             .then(if (onClick != null) Modifier.clickable(onClick = onClick, role = Role.Button) else Modifier)
@@ -162,7 +161,7 @@ fun ToolCallCompact(
             ),
             color = color
         )
-        
+
         Text(
             text = description,
             style = MaterialTheme.typography.labelMedium.copy(
@@ -174,12 +173,12 @@ fun ToolCallCompact(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
-        
+
         // Running indicator
         if (tool.state is ToolState.Running) {
             TuiLoadingIndicator()
         }
-        
+
         // Diff stats for edit tools
         getDiffStats(tool)?.let { (added, removed) ->
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -250,7 +249,10 @@ fun ToolCallExpanded(
 // ============== Helper Functions ==============
 
 @Composable
-private fun getToolStateIcon(state: ToolState, theme: dev.blazelight.p4oc.ui.theme.opencode.OpenCodeTheme): Pair<String, androidx.compose.ui.graphics.Color> {
+private fun getToolStateIcon(
+    state: ToolState,
+    theme: dev.blazelight.p4oc.ui.theme.opencode.OpenCodeTheme
+): Pair<String, androidx.compose.ui.graphics.Color> {
     return when (state) {
         is ToolState.Running -> "◐" to theme.warning
         is ToolState.Pending -> "○" to theme.secondary
@@ -265,13 +267,13 @@ private fun getToolStateIcon(state: ToolState, theme: dev.blazelight.p4oc.ui.the
 private fun getToolCompactDescription(tool: Part.Tool): String {
     val input = tool.state.input
     val name = tool.toolName.lowercase()
-    
+
     return when {
         name in listOf("bash", "execute", "shell") -> {
             extractParam(input, "command")?.take(60) ?: tool.toolName
         }
         name in listOf("read", "read_file", "serena_read_file") -> {
-            val path = extractParam(input, "filePath") 
+            val path = extractParam(input, "filePath")
                 ?: extractParam(input, "path")
                 ?: extractParam(input, "relative_path")
             val fileName = path?.substringAfterLast("/") ?: "file"
@@ -279,7 +281,7 @@ private fun getToolCompactDescription(tool: Part.Tool): String {
             if (lines != null) "Read $fileName ($lines lines)" else "Read $fileName"
         }
         name in listOf("edit", "write", "morph_edit_file", "serena_replace_content", "serena_create_text_file") -> {
-            val path = extractParam(input, "filePath") 
+            val path = extractParam(input, "filePath")
                 ?: extractParam(input, "path")
                 ?: extractParam(input, "relative_path")
             val fileName = path?.substringAfterLast("/") ?: "file"
@@ -318,7 +320,7 @@ private fun getDiffStats(tool: Part.Tool): Pair<Int, Int>? {
         is ToolState.Error -> state.metadata
         else -> null
     } ?: return null
-    
+
     return try {
         val added = metadata["linesAdded"]?.jsonPrimitive?.content?.toIntOrNull() ?: return null
         val removed = metadata["linesRemoved"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0

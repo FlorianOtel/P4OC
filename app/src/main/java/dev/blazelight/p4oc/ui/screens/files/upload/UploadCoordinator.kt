@@ -12,16 +12,25 @@ import kotlinx.coroutines.launch
 class UploadCoordinator(
     private val scope: CoroutineScope,
     private val repositoryFactory: () -> FileRepository,
-    private val destinationPath: () -> String?,
-    private val onComplete: suspend (List<UploadItem>) -> Unit = {},
 ) {
+    private data class UploadCallbacks(
+        val destinationPath: String?,
+        val onComplete: suspend (List<UploadItem>) -> Unit,
+    )
+
     private val _state = MutableStateFlow(UploadQueueState())
     val state: StateFlow<UploadQueueState> = _state
 
     private var uploadJob: Job? = null
     private var orchestrator: UploadOrchestrator? = null
+    private var callbacks: UploadCallbacks? = null
 
-    fun upload(source: UploadSource, sourceIds: List<String>) {
+    fun upload(
+        source: UploadSource,
+        sourceIds: List<String>,
+        destinationPath: String?,
+        onComplete: suspend (List<UploadItem>) -> Unit = {},
+    ) {
         if (sourceIds.isEmpty()) return
         if (_state.value.isActive) {
             _state.value = _state.value.copy(
@@ -34,6 +43,7 @@ class UploadCoordinator(
             fileRepository = repositoryFactory(),
             source = source,
         ).also { orchestrator = it }
+        val currentCallbacks = UploadCallbacks(destinationPath, onComplete).also { callbacks = it }
 
         uploadJob?.cancel()
         uploadJob = scope.launch(Dispatchers.IO) {
@@ -52,9 +62,9 @@ class UploadCoordinator(
                         probeFailure = metaResult.exceptionOrNull()?.message,
                     )
                 }
-                val finalState = currentOrchestrator.run(destinationPath(), plans)
+                val finalState = currentOrchestrator.run(currentCallbacks.destinationPath, plans)
                 _state.value = finalState
-                onComplete(finalState.successes)
+                currentCallbacks.onComplete(finalState.successes)
             } finally {
                 mirrorJob.cancel()
             }
@@ -73,7 +83,7 @@ class UploadCoordinator(
                 currentOrchestrator.retryFailed()
                 val finalState = currentOrchestrator.state.value
                 _state.value = finalState
-                onComplete(finalState.successes)
+                callbacks?.onComplete(finalState.successes)
             } finally {
                 mirrorJob.cancel()
             }
@@ -96,5 +106,6 @@ class UploadCoordinator(
         if (_state.value.isActive) return
         _state.value = UploadQueueState()
         orchestrator = null
+        callbacks = null
     }
 }

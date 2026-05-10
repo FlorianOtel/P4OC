@@ -18,9 +18,11 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.util.Base64
 
 class OfishMutationClientTest {
     private val capabilities = OfishCapabilities(
@@ -50,7 +52,7 @@ class OfishMutationClientTest {
         val client = FakeOfishWorkspaceClient()
         val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities))
 
-        val result = mutationClient.uploadFile(FileUploadRequest("../secret", byteArrayOf(1)))
+        val result = mutationClient.uploadFile(uploadRequest("../secret", byteArrayOf(1)))
 
         assertTrue(result is FileOperationResult.Failed)
         assertEquals(0, client.createdTitles.size)
@@ -67,6 +69,28 @@ class OfishMutationClientTest {
         assertEquals("abc", (result as FileOperationResult.Conflict).currentHash)
         assertEquals(1, client.createdTitles.size)
         assertEquals(listOf("session-1"), client.deletedIds)
+    }
+
+    @Test
+    fun `create directory conflict maps to FileOperationResult Conflict`() = runTest {
+        val client = FakeOfishWorkspaceClient(outputs = ArrayDeque(listOf("### 409 conflict")))
+        val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities))
+
+        val result = mutationClient.createDirectory("dir/new")
+
+        assertTrue(result is FileOperationResult.Conflict)
+        assertEquals(1, client.createdTitles.size)
+    }
+
+    @Test
+    fun `rename missing source maps to failed`() = runTest {
+        val client = FakeOfishWorkspaceClient(outputs = ArrayDeque(listOf("### 404 missing")))
+        val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities))
+
+        val result = mutationClient.renameFile("old.txt", "new.txt")
+
+        assertTrue(result is FileOperationResult.Failed)
+        assertEquals(1, client.createdTitles.size)
     }
 
     @Test
@@ -94,7 +118,7 @@ class OfishMutationClientTest {
         )
         val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities), uploadChunkBytes = 2)
 
-        val result = mutationClient.uploadFile(FileUploadRequest("file.bin", byteArrayOf(1, 2, 3, 4)))
+        val result = mutationClient.uploadFile(uploadRequest("file.bin", byteArrayOf(1, 2, 3, 4)))
 
         assertTrue(result is FileOperationResult.Ok)
         assertEquals("abc", (result as FileOperationResult.Ok).data.hash)
@@ -105,7 +129,7 @@ class OfishMutationClientTest {
     }
 
     @Test
-    fun `upload resolves chunk size once per upload`() = runTest {
+    fun `upload uses fixed 64 KiB chunks by default`() = runTest {
         val client = FakeOfishWorkspaceClient(
             outputs = ArrayDeque(
                 listOf(
@@ -116,36 +140,18 @@ class OfishMutationClientTest {
                 ),
             ),
         )
-        val provider = RecordingUploadChunkBytesProvider(bytes = 2)
         val mutationClient = mutationClient(
             client = client,
             probeResult = OfishProbeResult.Available(capabilities),
-            uploadChunkBytesProvider = provider,
+            uploadChunkBytes = OFISH_DEFAULT_CHUNK_BYTES,
         )
+        val bytes = ByteArray(OFISH_DEFAULT_CHUNK_BYTES + 1) { index -> index.toByte() }
 
-        val result = mutationClient.uploadFile(FileUploadRequest("file.bin", byteArrayOf(1, 2, 3, 4)))
+        val result = mutationClient.uploadFile(uploadRequest("file.bin", bytes))
 
         assertTrue(result is FileOperationResult.Ok)
-        assertEquals(1, provider.calls)
         assertEquals(4, client.commands.size)
-    }
-
-    @Test
-    fun `upload returns failed when chunk size provider fails`() = runTest {
-        val client = FakeOfishWorkspaceClient(outputs = ArrayDeque(listOf("### 200 ok upload=.ofish.upload.tmp", "### 204 deleted")))
-        val mutationClient = mutationClient(
-            client = client,
-            probeResult = OfishProbeResult.Available(capabilities),
-            uploadChunkBytesProvider = FailingUploadChunkBytesProvider(),
-        )
-
-        val result = mutationClient.uploadFile(FileUploadRequest("file.bin", byteArrayOf(1, 2, 3, 4)))
-
-        assertTrue(result is FileOperationResult.Failed)
-        val failed = result as FileOperationResult.Failed
-        assertEquals("OFISH upload chunk probe failed for test", failed.message)
-        assertTrue(failed.cause is OfishUploadChunkProbeUnavailableException)
-        assertEquals(2, client.commands.size)
+        assertEquals(2, client.commands.count { it.decodedScript().contains("#OFISH_UPLOAD_CHUNK") })
     }
 
     @Test
@@ -153,7 +159,7 @@ class OfishMutationClientTest {
         val client = FakeOfishWorkspaceClient(outputs = ArrayDeque(listOf("### 200 ok upload=/tmp/evil")))
         val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities), uploadChunkBytes = 2)
 
-        val result = mutationClient.uploadFile(FileUploadRequest("dir/file.bin", byteArrayOf(1, 2, 3, 4)))
+        val result = mutationClient.uploadFile(uploadRequest("dir/file.bin", byteArrayOf(1, 2, 3, 4)))
 
         assertTrue(result is FileOperationResult.Failed)
         assertEquals(1, client.commands.size)
@@ -194,7 +200,7 @@ class OfishMutationClientTest {
         )
         val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities), uploadChunkBytes = 4)
 
-        val result = mutationClient.uploadFile(FileUploadRequest("file.bin", byteArrayOf(1, 2), expectedHash = "old"))
+        val result = mutationClient.uploadFile(uploadRequest("file.bin", byteArrayOf(1, 2), expectedHash = "old"))
 
         assertTrue(result is FileOperationResult.Conflict)
         assertEquals("newer", (result as FileOperationResult.Conflict).currentHash)
@@ -204,7 +210,9 @@ class OfishMutationClientTest {
     @Test
     fun `concurrent cached capabilities probe once`() = runTest {
         val client = FakeOfishWorkspaceClient(
-            outputs = ArrayDeque(listOf("caps base64=1 base64_decode=-d hash=sha256sum mv=1 mkdir=1 rm=1 awk=1 mktemp=1\n### 200 ok")),
+            outputs = ArrayDeque(
+                listOf("caps base64=1 base64_decode=-d hash=sha256sum mv=1 mkdir=1 rm=1 awk=1 mktemp=1\n### 200 ok")
+            ),
         )
         val probe = OfishCapabilityProbe(client, OfishSessionFactory(client))
         val cache = CachedOfishCapabilities(probe)
@@ -220,7 +228,7 @@ class OfishMutationClientTest {
         val client = FakeOfishWorkspaceClient(outputs = ArrayDeque(listOf("### 200 ok upload=$uploadToken")))
         val mutationClient = mutationClient(client, OfishProbeResult.Available(capabilities), uploadChunkBytes = 2)
 
-        val result = mutationClient.uploadFile(FileUploadRequest(destinationPath, byteArrayOf(1, 2, 3, 4)))
+        val result = mutationClient.uploadFile(uploadRequest(destinationPath, byteArrayOf(1, 2, 3, 4)))
 
         assertTrue(result is FileOperationResult.Failed)
         assertEquals(1, client.commands.size)
@@ -252,24 +260,24 @@ class OfishMutationClientTest {
         )
     }
 
-    private class FailingUploadChunkBytesProvider : UploadChunkBytesProvider {
-        override suspend fun get(capabilities: OfishCapabilities): Int {
-            throw OfishUploadChunkProbeUnavailableException("OFISH upload chunk probe failed for test")
-        }
+    private fun String.decodedScript(): String {
+        val encoded = Regex("printf %s '?([A-Za-z0-9+/=]+)'? ").find(this)?.groupValues?.get(1)
+            ?: error("missing wrapped script")
+        return String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)
     }
 
-    private class RecordingUploadChunkBytesProvider(
-        private val bytes: Int,
-    ) : UploadChunkBytesProvider {
-        var calls = 0
-            private set
-
-        override suspend fun get(capabilities: OfishCapabilities): Int {
-            calls += 1
-            assertFalse(capabilities.hashCommand == null)
-            return bytes
-        }
-    }
+    private fun uploadRequest(
+        path: String,
+        bytes: ByteArray,
+        expectedHash: String? = null,
+        onBytesUploaded: (suspend (Long) -> Unit)? = null,
+    ) = FileUploadRequest(
+        path = path,
+        contentLength = bytes.size.toLong(),
+        openStream = { ByteArrayInputStream(bytes) as InputStream },
+        expectedHash = expectedHash,
+        onBytesUploaded = onBytesUploaded,
+    )
 
     private class FakeCapabilityCache(
         probe: OfishCapabilityProbe,

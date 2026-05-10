@@ -9,18 +9,18 @@ import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
 
 class PocketCodeApp : Application() {
-    
+
     private val notificationEventObserver: NotificationEventObserver by inject()
-    
+
     override fun onCreate() {
         super.onCreate()
-        
+
         startKoin {
             androidLogger()
             androidContext(this@PocketCodeApp)
             modules(allModules)
         }
-        
+
         notificationEventObserver.start()
     }
 }

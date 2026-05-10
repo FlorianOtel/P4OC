@@ -15,35 +15,35 @@ fun OpenCodeTheme.toMaterial3ColorScheme(): ColorScheme {
             onPrimary = background,
             primaryContainer = backgroundPanel,
             onPrimaryContainer = primary,
-            
+
             secondary = secondary,
             onSecondary = background,
             secondaryContainer = backgroundPanel,
             onSecondaryContainer = secondary,
-            
+
             tertiary = accent,
             onTertiary = background,
             tertiaryContainer = backgroundPanel,
             onTertiaryContainer = accent,
-            
+
             error = error,
             onError = background,
             errorContainer = backgroundPanel,
             onErrorContainer = error,
-            
+
             background = background,
             onBackground = text,
-            
+
             surface = background,
             onSurface = text,
             surfaceVariant = backgroundPanel,
             onSurfaceVariant = textMuted,
             surfaceTint = primary,
-            
+
             inverseSurface = text,
             inverseOnSurface = background,
             inversePrimary = primary,
-            
+
             surfaceContainerLowest = background,
             surfaceContainerLow = backgroundPanel,
             surfaceContainer = backgroundPanel,
@@ -51,10 +51,10 @@ fun OpenCodeTheme.toMaterial3ColorScheme(): ColorScheme {
             surfaceContainerHighest = backgroundElement,
             surfaceBright = backgroundPanel,
             surfaceDim = background,
-            
+
             outline = border,
             outlineVariant = borderSubtle,
-            
+
             scrim = background.copy(alpha = 0.5f)
         )
     } else {
@@ -63,35 +63,35 @@ fun OpenCodeTheme.toMaterial3ColorScheme(): ColorScheme {
             onPrimary = background,
             primaryContainer = backgroundPanel,
             onPrimaryContainer = primary,
-            
+
             secondary = secondary,
             onSecondary = background,
             secondaryContainer = backgroundPanel,
             onSecondaryContainer = secondary,
-            
+
             tertiary = accent,
             onTertiary = background,
             tertiaryContainer = backgroundPanel,
             onTertiaryContainer = accent,
-            
+
             error = error,
             onError = background,
             errorContainer = backgroundPanel,
             onErrorContainer = error,
-            
+
             background = background,
             onBackground = text,
-            
+
             surface = background,
             onSurface = text,
             surfaceVariant = backgroundPanel,
             onSurfaceVariant = textMuted,
             surfaceTint = primary,
-            
+
             inverseSurface = text,
             inverseOnSurface = background,
             inversePrimary = primary,
-            
+
             surfaceContainerLowest = background,
             surfaceContainerLow = backgroundPanel,
             surfaceContainer = backgroundPanel,
@@ -99,10 +99,10 @@ fun OpenCodeTheme.toMaterial3ColorScheme(): ColorScheme {
             surfaceContainerHighest = backgroundElement,
             surfaceBright = backgroundPanel,
             surfaceDim = background,
-            
+
             outline = border,
             outlineVariant = borderSubtle,
-            
+
             scrim = background.copy(alpha = 0.5f)
         )
     }

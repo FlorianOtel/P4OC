@@ -1,54 +1,54 @@
 package dev.blazelight.p4oc.ui.screens.sessions
 
+import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import org.koin.androidx.compose.koinViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
-import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
-import dev.blazelight.p4oc.ui.components.TuiAlertDialog
-import dev.blazelight.p4oc.ui.components.TuiInputDialog
-import dev.blazelight.p4oc.ui.components.TuiButton
-import dev.blazelight.p4oc.ui.components.TuiTextButton
-import dev.blazelight.p4oc.ui.components.TuiDropdownMenuItem
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
-import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.domain.model.Session
+import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.domain.model.SessionStatus
-import dev.blazelight.p4oc.ui.theme.ProjectColors
+import dev.blazelight.p4oc.ui.components.TuiAlertDialog
+import dev.blazelight.p4oc.ui.components.TuiButton
+import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
+import dev.blazelight.p4oc.ui.components.TuiDropdownMenuItem
+import dev.blazelight.p4oc.ui.components.TuiInputDialog
+import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import dev.blazelight.p4oc.ui.components.TuiSnackbar
+import dev.blazelight.p4oc.ui.components.TuiTextButton
+import dev.blazelight.p4oc.ui.components.TuiTopBar
+import dev.blazelight.p4oc.ui.components.status.SessionStatusRow
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.ProjectColors
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.components.TuiTopBar
-import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.ui.components.TuiCard
-import dev.blazelight.p4oc.ui.components.TuiSnackbar
-import android.content.Intent
-import androidx.compose.ui.platform.LocalContext
+import org.koin.androidx.compose.koinViewModel
 
 private data class SessionNode(
     val sessionWithProject: SessionWithProject,
@@ -69,8 +69,12 @@ fun SessionListScreen(
     onProjects: () -> Unit = {},
     onProjectClick: (projectId: String) -> Unit = {},
     onViewChanges: (sessionId: String) -> Unit = {},
-    onCreateSessionInProject: (directory: String) -> Unit = {},
+    onCreateSessionInWorkspace: (title: String?, directory: String?) -> Unit = { title, directory ->
+        viewModel.createSession(title, directory)
+    },
     autoCreateSession: Boolean = false,
+    autoCreateSessionTitle: String? = null,
+    autoCreateSessionDirectory: String? = null,
     onAutoCreateSessionConsumed: () -> Unit = {},
     onNavigateBack: (() -> Unit)? = null
 ) {
@@ -80,7 +84,7 @@ fun SessionListScreen(
     var showDeleteDialog by remember { mutableStateOf<Session?>(null) }
     var showRenameDialog by remember { mutableStateOf<Session?>(null) }
     val context = LocalContext.current
-    
+
     val displayedSessions = remember(uiState.sessions, filterProjectId) {
         if (filterProjectId != null) {
             uiState.sessions.filter { it.projectId == filterProjectId }
@@ -88,16 +92,16 @@ fun SessionListScreen(
             uiState.sessions
         }
     }
-    
+
     val filteredProject = remember(uiState.projects, filterProjectId) {
         filterProjectId?.let { id -> uiState.projects.find { it.id == id } }
     }
     val projectName = filteredProject?.name
 
-    LaunchedEffect(autoCreateSession, filteredProject?.worktree) {
-        if (autoCreateSession && filteredProject != null) {
+    LaunchedEffect(autoCreateSession, autoCreateSessionTitle, autoCreateSessionDirectory) {
+        if (autoCreateSession) {
             onAutoCreateSessionConsumed()
-            viewModel.createSession(title = null, directory = filteredProject.worktree)
+            viewModel.createSession(title = autoCreateSessionTitle, directory = autoCreateSessionDirectory)
         }
     }
 
@@ -133,19 +137,31 @@ fun SessionListScreen(
                         onClick = onProjects,
                         modifier = Modifier.size(Sizing.iconButtonMd)
                     ) {
-                        Icon(Icons.Default.Folder, contentDescription = stringResource(R.string.cd_projects), modifier = Modifier.size(Sizing.iconAction))
+                        Icon(
+                            Icons.Default.Folder,
+                            contentDescription = stringResource(R.string.cd_projects),
+                            modifier = Modifier.size(Sizing.iconAction)
+                        )
                     }
                     IconButton(
                         onClick = viewModel::refresh,
                         modifier = Modifier.size(Sizing.iconButtonMd)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_refresh), modifier = Modifier.size(Sizing.iconAction))
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.cd_refresh),
+                            modifier = Modifier.size(Sizing.iconAction)
+                        )
                     }
                     IconButton(
                         onClick = onSettings,
                         modifier = Modifier.size(Sizing.iconButtonMd).testTag("sessions_settings_button")
                     ) {
-                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings), modifier = Modifier.size(Sizing.iconAction))
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.cd_settings),
+                            modifier = Modifier.size(Sizing.iconAction)
+                        )
                     }
                 }
             )
@@ -179,8 +195,9 @@ fun SessionListScreen(
                                 icon = "\u25C6",
                                 title = stringResource(R.string.sessions_quick_global),
                                 subtitle = stringResource(R.string.sessions_quick_global_desc),
+                                contentDescription = stringResource(R.string.cd_new_session),
                                 onClick = {
-                                    viewModel.createSession(title = null)
+                                    onCreateSessionInWorkspace(null, null)
                                 },
                                 modifier = Modifier.testTag("quick_action_global")
                             )
@@ -191,12 +208,26 @@ fun SessionListScreen(
                                 icon = "\u25C7",
                                 title = stringResource(R.string.sessions_quick_custom),
                                 subtitle = stringResource(R.string.sessions_quick_custom_desc),
+                                contentDescription = stringResource(R.string.cd_new_session),
                                 onClick = {
                                     showNewSessionCustomDir = true
                                     showNewSessionDialog = true
                                 },
                                 modifier = Modifier.testTag("quick_action_custom")
                             )
+                        }
+                    } else {
+                        filteredProject?.let { project ->
+                            item(key = "quick_action_project") {
+                                QuickActionCard(
+                                    icon = "\u25C6",
+                                    title = stringResource(R.string.sessions_create_in_project, project.name),
+                                    subtitle = project.worktree,
+                                    contentDescription = stringResource(R.string.cd_new_session),
+                                    onClick = { onCreateSessionInWorkspace(null, project.worktree) },
+                                    modifier = Modifier.testTag("project_new_session_button")
+                                )
+                            }
                         }
                     }
 
@@ -220,15 +251,6 @@ fun SessionListScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = theme.textMuted,
                                 )
-                                filteredProject?.let { project ->
-                                    QuickActionCard(
-                                        icon = "◆",
-                                        title = stringResource(R.string.sessions_create_in_project, project.name),
-                                        subtitle = project.worktree,
-                                        onClick = { onCreateSessionInProject(project.worktree) },
-                                        modifier = Modifier.testTag("create_session_in_project")
-                                    )
-                                }
                             }
                         }
                     } else {
@@ -241,6 +263,7 @@ fun SessionListScreen(
                                 depth = 0,
                                 expandedSessions = expandedSessions,
                                 sessionStatuses = uiState.sessionStatuses,
+                                sessionPresences = uiState.sessionPresences,
                                 showProjectChip = filterProjectId == null,
                                 onSessionClick = { session -> onSessionClick(session.id, session.directory) },
                                 onDeleteSession = { showDeleteDialog = it },
@@ -295,7 +318,7 @@ fun SessionListScreen(
                 showNewSessionCustomDir = false
             },
             onCreate = { title, directory ->
-                viewModel.createSession(title, directory)
+                onCreateSessionInWorkspace(title, directory)
                 showNewSessionDialog = false
                 showNewSessionCustomDir = false
             }
@@ -334,12 +357,12 @@ private fun buildSessionTree(sessions: List<SessionWithProject>): List<SessionNo
     val childrenByParent = sessions
         .mapNotNull { swp -> swp.session.parentID?.let { parentId -> parentId to swp } }
         .groupBy({ it.first }, { it.second })
-    
+
     fun buildNode(sessionWithProject: SessionWithProject): SessionNode {
         val children = childrenByParent[sessionWithProject.session.id]?.map { buildNode(it) } ?: emptyList()
         return SessionNode(sessionWithProject, children)
     }
-    
+
     return sessions
         .filter { it.session.parentID == null }
         .map { buildNode(it) }
@@ -351,6 +374,7 @@ private fun SessionTreeNode(
     depth: Int,
     expandedSessions: MutableMap<String, Boolean>,
     sessionStatuses: Map<String, SessionStatus>,
+    sessionPresences: Map<String, SessionPresence>,
     showProjectChip: Boolean,
     onSessionClick: (Session) -> Unit,
     onDeleteSession: (Session) -> Unit,
@@ -366,7 +390,7 @@ private fun SessionTreeNode(
     val isExpanded = expandedSessions[session.id] ?: false
     val hasChildren = node.children.isNotEmpty()
     val indentPadding: Dp = Sizing.treeIndent * depth
-    
+
     Column(modifier = Modifier.padding(start = indentPadding)) {
         SessionCard(
             session = session,
@@ -374,6 +398,7 @@ private fun SessionTreeNode(
             projectName = swp.projectName,
             showProjectChip = showProjectChip,
             status = sessionStatuses[session.id],
+            presence = sessionPresences[session.id] ?: SessionPresence.IDLE,
             isShared = session.shareUrl != null,
             onClick = { onSessionClick(session) },
             onDelete = { onDeleteSession(session) },
@@ -387,7 +412,7 @@ private fun SessionTreeNode(
             onExpandToggle = if (hasChildren) { { onToggleExpand(session.id) } } else null,
             isSubAgent = depth > 0
         )
-        
+
         AnimatedVisibility(
             visible = isExpanded && hasChildren,
             enter = expandVertically(),
@@ -403,6 +428,7 @@ private fun SessionTreeNode(
                         depth = depth + 1,
                         expandedSessions = expandedSessions,
                         sessionStatuses = sessionStatuses,
+                        sessionPresences = sessionPresences,
                         showProjectChip = showProjectChip,
                         onSessionClick = onSessionClick,
                         onDeleteSession = onDeleteSession,
@@ -427,6 +453,7 @@ private fun SessionCard(
     projectName: String?,
     showProjectChip: Boolean,
     status: SessionStatus?,
+    presence: SessionPresence,
     isShared: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit,
@@ -441,8 +468,6 @@ private fun SessionCard(
     isSubAgent: Boolean = false
 ) {
     val theme = LocalOpenCodeTheme.current
-    val isBusy = status is SessionStatus.Busy
-    val isRetrying = status is SessionStatus.Retry
     var showContextMenu by remember { mutableStateOf(false) }
 
     Surface(
@@ -454,8 +479,8 @@ private fun SessionCard(
                 role = Role.Button
             ),
         color = when {
-            isBusy -> theme.accent.copy(alpha = 0.1f)
-            isRetrying -> theme.error.copy(alpha = 0.1f)
+            presence == SessionPresence.BUSY -> theme.accent.copy(alpha = 0.1f)
+            presence == SessionPresence.RETRYING || presence == SessionPresence.ERROR -> theme.error.copy(alpha = 0.1f)
             isSubAgent -> theme.backgroundElement.copy(alpha = 0.7f)
             else -> theme.backgroundElement
         },
@@ -467,19 +492,6 @@ private fun SessionCard(
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Selection indicator
-            Text(
-                text = if (isBusy) "▶" else if (isRetrying) "!" else ">",
-                style = MaterialTheme.typography.bodyMedium,
-                color = when {
-                    isBusy -> theme.accent
-                    isRetrying -> theme.error
-                    else -> theme.accent.copy(alpha = 0.3f)
-                }
-            )
-            
-            Spacer(Modifier.width(Spacing.sm))
-            
             // Expand/collapse or subagent indicator
             if (onExpandToggle != null) {
                 IconButton(
@@ -488,7 +500,9 @@ private fun SessionCard(
                 ) {
                     Icon(
                         if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (isExpanded) stringResource(R.string.cd_collapse) else stringResource(R.string.cd_expand),
+                        contentDescription = if (isExpanded) stringResource(
+                            R.string.cd_collapse
+                        ) else stringResource(R.string.cd_expand),
                         modifier = Modifier.size(Sizing.iconSm),
                         tint = theme.textMuted
                     )
@@ -501,7 +515,7 @@ private fun SessionCard(
                 )
                 Spacer(modifier = Modifier.width(Spacing.xs))
             }
-            
+
             // Main content column
             Column(
                 modifier = Modifier.weight(1f),
@@ -515,7 +529,7 @@ private fun SessionCard(
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
-                
+
                 // Metadata row
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -528,13 +542,13 @@ private fun SessionCard(
                             color = theme.info
                         )
                     }
-                    SessionStatusIndicator(status = status)
+                    SessionStatusIndicator(status = status, presence = presence)
                     Text(
                         text = formatDateTime(session.updatedAt),
                         style = MaterialTheme.typography.labelSmall,
                         color = theme.textMuted
                     )
-                    
+
                     session.summary?.let { summary ->
                         if (summary.additions > 0) {
                             Text(
@@ -560,7 +574,7 @@ private fun SessionCard(
                     }
                 }
             }
-            
+
             // Project chip on far right
             if (showProjectChip && projectId != null && !projectName.isNullOrEmpty()) {
                 ProjectChip(
@@ -571,7 +585,7 @@ private fun SessionCard(
             }
         }
     }
-    
+
     // Long-press context menu
     DropdownMenu(
         expanded = showContextMenu,
@@ -668,48 +682,15 @@ private fun ProjectChip(
 }
 
 @Composable
-private fun SessionStatusIndicator(status: SessionStatus?) {
-    val theme = LocalOpenCodeTheme.current
-    when (status) {
-        is SessionStatus.Busy -> {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TuiLoadingIndicator()
-                Text(
-                    text = stringResource(R.string.session_working),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = theme.accent
-                )
-            }
-        }
-        is SessionStatus.Retry -> {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Refresh,
-                    contentDescription = stringResource(R.string.retry),
-                    modifier = Modifier.size(Sizing.iconXs),
-                    tint = theme.error
-                )
-                Text(
-                    text = stringResource(R.string.session_retry_format, status.attempt),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = theme.error
-                )
-            }
-        }
-        is SessionStatus.Idle -> {
-            Text(
-                text = "●",
-                style = MaterialTheme.typography.labelSmall,
-                color = theme.success
-            )
-        }
-        null -> {}
+private fun SessionStatusIndicator(status: SessionStatus?, presence: SessionPresence) {
+    val label = when (status) {
+        is SessionStatus.Busy -> stringResource(R.string.session_working)
+        is SessionStatus.Retry -> stringResource(R.string.session_retry_format, status.attempt)
+        is SessionStatus.Idle, null -> null
+    }
+
+    if (label != null) {
+        SessionStatusRow(presence = presence, label = label)
     }
 }
 
@@ -718,6 +699,7 @@ private fun QuickActionCard(
     icon: String,
     title: String,
     subtitle: String,
+    contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -725,6 +707,7 @@ private fun QuickActionCard(
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .semantics { this.contentDescription = contentDescription }
             .clickable(role = Role.Button, onClick = onClick),
         color = theme.background,
         shape = RectangleShape
@@ -779,8 +762,14 @@ private fun NewSessionDialog(
 ) {
     var title by remember { mutableStateOf("") }
     // Default to null (Global) unless a specific project is requested
-    var selectedProject by remember(defaultProjectId, projects) { 
-        mutableStateOf(if (defaultProjectId != null && !initialUseCustomDirectory) projects.find { it.id == defaultProjectId } else null) 
+    var selectedProject by remember(defaultProjectId, projects) {
+        mutableStateOf(if (defaultProjectId != null && !initialUseCustomDirectory) {
+            projects.find {
+                it.id == defaultProjectId
+            }
+        } else {
+            null
+        })
     }
     var expanded by remember { mutableStateOf(false) }
     var useCustomDirectory by remember { mutableStateOf(initialUseCustomDirectory) }
@@ -788,13 +777,13 @@ private fun NewSessionDialog(
 
     val globalText = stringResource(R.string.sessions_global)
     val customText = stringResource(R.string.sessions_custom_directory)
-    
+
     // Resolve the effective directory for session creation
     val effectiveDirectory = when {
         useCustomDirectory -> customDirectory.takeIf { it.isNotBlank() }
         else -> selectedProject?.worktree
     }
-    
+
     TuiAlertDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.sessions_new),
@@ -836,7 +825,7 @@ private fun NewSessionDialog(
                 val theme = LocalOpenCodeTheme.current
                 // Global option first
                 DropdownMenuItem(
-                    text = { 
+                    text = {
                         Column {
                             Text(stringResource(R.string.sessions_global), style = MaterialTheme.typography.bodyMedium)
                             Text(
@@ -852,11 +841,11 @@ private fun NewSessionDialog(
                         expanded = false
                     }
                 )
-                
+
                 // Project options
                 projects.forEach { project ->
                     DropdownMenuItem(
-                        text = { 
+                        text = {
                             Column {
                                 Text(project.name, style = MaterialTheme.typography.bodyMedium)
                                 Text(
@@ -873,12 +862,15 @@ private fun NewSessionDialog(
                         }
                     )
                 }
-                
+
                 // Custom directory option
                 DropdownMenuItem(
-                    text = { 
+                    text = {
                         Column {
-                            Text(stringResource(R.string.sessions_custom_directory), style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                stringResource(R.string.sessions_custom_directory),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                             Text(
                                 stringResource(R.string.sessions_custom_directory_desc),
                                 style = MaterialTheme.typography.bodySmall,
@@ -894,7 +886,7 @@ private fun NewSessionDialog(
                 )
             }
         }
-        
+
         // Show custom directory text field when selected
         if (useCustomDirectory) {
             OutlinedTextField(
@@ -906,7 +898,7 @@ private fun NewSessionDialog(
                 modifier = Modifier.fillMaxWidth()
             )
         }
-        
+
         OutlinedTextField(
             value = title,
             onValueChange = { title = it },
@@ -920,5 +912,8 @@ private fun NewSessionDialog(
 private fun formatDateTime(epochMillis: Long): String {
     val instant = Instant.fromEpochMilliseconds(epochMillis)
     val local = instant.toLocalDateTime(TimeZone.currentSystemDefault())
-    return "${local.monthNumber}/${local.dayOfMonth}/${local.year} ${local.hour}:${local.minute.toString().padStart(2, '0')}"
+    return "${local.monthNumber}/${local.dayOfMonth}/${local.year} ${local.hour}:${local.minute.toString().padStart(
+        2,
+        '0'
+    )}"
 }

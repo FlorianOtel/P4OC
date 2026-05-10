@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.*
@@ -16,23 +15,26 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dev.blazelight.p4oc.R
+import dev.blazelight.p4oc.core.filetype.FileTypeCategory
+import dev.blazelight.p4oc.core.filetype.FileTypeClassifier
 import dev.blazelight.p4oc.domain.model.FileNode
+import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
-import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import dev.blazelight.p4oc.ui.theme.Spacing
 
 data class SelectedFile(
     val path: String,
@@ -122,7 +124,7 @@ fun FilePickerDialog(
                                     style = MaterialTheme.typography.labelMedium,
                                     color = theme.accent,
                                     fontFamily = FontFamily.Monospace
-                                    )
+                                )
                             }
                             Text(
                                 text = "[Upload]",
@@ -157,14 +159,14 @@ fun FilePickerDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = Spacing.md, vertical = Spacing.sm),
-                    placeholder = { 
+                    placeholder = {
                         Text(
                             "/ ${stringResource(R.string.search_files)}",
                             fontFamily = FontFamily.Monospace,
                             color = theme.textMuted
-                        ) 
+                        )
                     },
-                    leadingIcon = { 
+                    leadingIcon = {
                         Text(
                             "/",
                             fontFamily = FontFamily.Monospace,
@@ -172,7 +174,7 @@ fun FilePickerDialog(
                         )
                     },
                     trailingIcon = if (searchQuery.isNotEmpty()) {
-                        { 
+                        {
                             Text(
                                 "×",
                                 fontFamily = FontFamily.Monospace,
@@ -180,7 +182,9 @@ fun FilePickerDialog(
                                 modifier = Modifier.clickable(role = Role.Button) { searchQuery = "" }
                             )
                         }
-                    } else null,
+                    } else {
+                        null
+                    },
                     singleLine = true,
                     shape = RectangleShape,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -244,7 +248,9 @@ fun FilePickerDialog(
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
-                                    text = if (searchQuery.isNotBlank()) stringResource(R.string.no_matching_files) else stringResource(R.string.empty_folder),
+                                    text = if (searchQuery.isNotBlank()) stringResource(
+                                        R.string.no_matching_files
+                                    ) else stringResource(R.string.empty_folder),
                                     color = theme.textMuted,
                                     fontFamily = FontFamily.Monospace
                                 )
@@ -279,7 +285,7 @@ fun FilePickerDialog(
                                         }
                                     }
                                 }
-                                
+
                                 items(filteredFiles, key = { it.path }) { file ->
                                     val isSelected = selectedFiles.any { it.path == file.path }
                                     PickerFileItem(
@@ -314,7 +320,7 @@ private fun PickerBreadcrumb(
 ) {
     val parts = path.split("/").filter { it.isNotEmpty() }
     val theme = LocalOpenCodeTheme.current
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -330,7 +336,7 @@ private fun PickerBreadcrumb(
             fontFamily = FontFamily.Monospace,
             modifier = Modifier.clickable(role = Role.Button) { onNavigateTo("") }
         )
-        
+
         var currentPath = ""
         parts.forEachIndexed { index, part ->
             Text(
@@ -339,10 +345,10 @@ private fun PickerBreadcrumb(
                 color = theme.textMuted,
                 fontFamily = FontFamily.Monospace
             )
-            
+
             currentPath = if (currentPath.isEmpty()) "/$part" else "$currentPath/$part"
             val pathToNavigate = currentPath
-            
+
             Text(
                 text = part,
                 style = MaterialTheme.typography.labelMedium,
@@ -362,7 +368,7 @@ private fun SelectedFilesChips(
     onRemove: (String) -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -407,13 +413,16 @@ private fun PickerFileItem(
 ) {
     val theme = LocalOpenCodeTheme.current
     val (icon, iconColor) = getPickerFileIcon(file)
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                if (isSelected && !file.isDirectory) theme.accent.copy(alpha = 0.1f)
-                else Color.Transparent
+                if (isSelected && !file.isDirectory) {
+                    theme.accent.copy(alpha = 0.1f)
+                } else {
+                    Color.Transparent
+                }
             )
             .clickable(onClick = onClick, role = Role.Button)
             .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
@@ -441,7 +450,7 @@ private fun PickerFileItem(
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.bodyMedium
         )
-        
+
         Text(
             text = file.name + if (file.isDirectory) "/" else "",
             style = MaterialTheme.typography.bodyMedium,
@@ -452,7 +461,7 @@ private fun PickerFileItem(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        
+
         if (file.isDirectory) {
             Text(
                 text = "→",
@@ -466,21 +475,19 @@ private fun PickerFileItem(
 @Composable
 private fun getPickerFileIcon(file: FileNode): Pair<ImageVector, Color> {
     val theme = LocalOpenCodeTheme.current
-    
+
     if (file.isDirectory) {
         return Icons.Default.Folder to theme.accent
     }
-    
-    val extension = file.name.substringAfterLast('.', "").lowercase()
-    
-    return when (extension) {
-        "kt", "java", "py", "js", "ts", "tsx", "jsx", "c", "cpp", "h", "rs", "go", "rb", "php", "swift", "m" ->
+
+    return when (FileTypeClassifier.classify(file.name).category) {
+        FileTypeCategory.Code ->
             Icons.Default.Code to SemanticColors.Status.success
-        "json", "yaml", "yml", "xml", "toml", "ini", "conf", "config", "properties" ->
+        FileTypeCategory.Config ->
             Icons.Default.Settings to SemanticColors.MimeType.data
-        "md", "txt", "rst", "doc", "docx", "pdf" ->
+        FileTypeCategory.Document ->
             Icons.Default.Description to SemanticColors.Reason.info
-        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp" ->
+        FileTypeCategory.Image ->
             Icons.Default.Image to SemanticColors.MimeType.image
         else -> Icons.AutoMirrored.Filled.InsertDriveFile to theme.textMuted
     }

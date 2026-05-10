@@ -4,6 +4,7 @@ import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.data.files.ofish.OfishSessionNames
 import dev.blazelight.p4oc.data.remote.dto.CreateSessionRequest
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
+import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
 import dev.blazelight.p4oc.data.remote.dto.UpdateSessionRequest
 import dev.blazelight.p4oc.data.remote.mapper.MessageMapper
 import dev.blazelight.p4oc.data.remote.mapper.SessionMapper
@@ -33,10 +34,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlin.coroutines.coroutineContext
-import kotlinx.coroutines.isActive
 
 class SessionRepositoryImpl(
     private val client: SessionWorkspaceClient,
@@ -67,6 +68,8 @@ class SessionRepositoryImpl(
     private var lastSuccess: CachedSnapshot? = null
 
     private val messageStates = mutableMapOf<String, MutableStateFlow<List<MessageWithParts>>>()
+    private val sessionUiStates = mutableMapOf<String, MutableStateFlow<SessionUiState>>()
+    private val childToParentSessionIds = mutableMapOf<String, String>()
 
     fun peek(): CachedSnapshot? {
         val cached = lastSuccess ?: return null
@@ -131,6 +134,11 @@ class SessionRepositoryImpl(
     }
 
     override fun acceptEvent(event: OpenCodeEvent) {
+        if (event is OpenCodeEvent.Connected) {
+            hydrateAfterReconnect()
+            return
+        }
+
         _state.value = when (val current = _state.value) {
             is RepoState.Hydrating -> if (isSessionEvent(event)) hydrateBuffer.buffer(event).copy(snapshot = current.snapshot) else current
             is RepoState.Live -> RepoState.Live(reducer.reduce(current.snapshot, event))
@@ -138,6 +146,72 @@ class SessionRepositoryImpl(
         }
 
         when (event) {
+            is OpenCodeEvent.SessionCreated -> {
+                event.session.parentID?.let { parentId ->
+                    synchronized(childToParentSessionIds) { childToParentSessionIds[event.session.id] = parentId }
+                }
+            }
+            is OpenCodeEvent.SessionDeleted -> {
+                synchronized(childToParentSessionIds) { childToParentSessionIds.remove(event.session.id) }
+                sessionUiStates.remove(event.session.id)
+            }
+            is OpenCodeEvent.SessionUpdated -> updateSession(event.session.id) { it.copy(session = event.session) }
+            is OpenCodeEvent.SessionStatusChanged -> {
+                updateSession(event.sessionID) { state ->
+                    state.copy(
+                        status = event.status,
+                        error = null,
+                        responseCompletedToken = if (event.status.isTerminalIdle()) state.responseCompletedToken + 1 else state.responseCompletedToken,
+                    )
+                }
+                if (event.status.isTerminalIdle()) clearStreamingFlags(SessionId(event.sessionID))
+            }
+            is OpenCodeEvent.SessionIdle -> {
+                updateSession(event.sessionID) { state ->
+                    state.copy(
+                        status = SessionStatus.Idle,
+                        error = null,
+                        responseCompletedToken = state.responseCompletedToken + 1,
+                    )
+                }
+                clearStreamingFlags(SessionId(event.sessionID))
+            }
+            is OpenCodeEvent.SessionError -> {
+                val eventSessionId = event.sessionID ?: return
+                updateSession(eventSessionId) { state ->
+                    state.copy(
+                        status = SessionStatus.Idle,
+                        error = event.error,
+                        responseCompletedToken = state.responseCompletedToken + 1,
+                    )
+                }
+                clearStreamingFlags(SessionId(eventSessionId))
+            }
+            is OpenCodeEvent.PermissionRequested -> {
+                updateOwnedSession(event.permission.sessionID) { state ->
+                    val callId = event.permission.callID ?: return@updateOwnedSession state
+                    state.copy(
+                        pendingPermissionsByCallId = state.pendingPermissionsByCallId + (callId to event.permission)
+                    )
+                }
+            }
+            is OpenCodeEvent.PermissionReplied -> {
+                updateOwnedSession(event.sessionID) { state ->
+                    state.copy(
+                        pendingPermissionsByCallId = state.pendingPermissionsByCallId.filterValues { it.id != event.requestID }
+                    )
+                }
+            }
+            is OpenCodeEvent.QuestionAsked -> {
+                updateOwnedSession(event.request.sessionID) { state ->
+                    if (state.pendingQuestion == null) {
+                        state.copy(pendingQuestion = event.request)
+                    } else {
+                        state.copy(queuedQuestions = state.queuedQuestions + event.request)
+                    }
+                }
+            }
+            is OpenCodeEvent.TodoUpdated -> updateSession(event.sessionID) { it.copy(todos = event.todos) }
             is OpenCodeEvent.MessageUpdated -> upsertMessage(event.message)
             is OpenCodeEvent.MessagePartUpdated -> upsertPart(event.part, event.delta)
             is OpenCodeEvent.MessageRemoved -> removeMessage(event.sessionID, event.messageID)
@@ -146,7 +220,49 @@ class SessionRepositoryImpl(
         }
     }
 
-    override fun messages(sessionId: SessionId): StateFlow<List<MessageWithParts>> = messageState(sessionId.value).asStateFlow()
+    private fun hydrateAfterReconnect() {
+        synchronized(this) {
+            if (inFlight != null) return
+            _state.value = RepoState.Hydrating(snapshot = state.value.snapshot, bufferedEvents = hydrateBuffer.size)
+            inFlight = scope.async {
+                runCatching { hydrate(client.listProjects()) }
+            }
+        }
+    }
+
+    override fun messages(sessionId: SessionId): StateFlow<List<MessageWithParts>> = messageState(
+        sessionId.value
+    ).asStateFlow()
+
+    override fun sessionUiState(sessionId: SessionId): StateFlow<SessionUiState> = sessionUiStateFor(
+        sessionId.value
+    ).asStateFlow()
+
+    override fun clearPermission(sessionId: SessionId, permissionId: String) {
+        updateSession(sessionId.value) { state ->
+            state.copy(
+                pendingPermissionsByCallId = state.pendingPermissionsByCallId.filterValues { it.id != permissionId }
+            )
+        }
+    }
+
+    override fun clearPermissionByRequestId(sessionId: SessionId, requestId: String) {
+        updateSession(sessionId.value) { state ->
+            state.copy(
+                pendingPermissionsByCallId = state.pendingPermissionsByCallId.filterValues { it.id != requestId }
+            )
+        }
+    }
+
+    override fun clearQuestion(sessionId: SessionId) {
+        updateSession(sessionId.value) { state ->
+            val nextQuestion = state.queuedQuestions.firstOrNull()
+            state.copy(
+                pendingQuestion = nextQuestion,
+                queuedQuestions = if (nextQuestion == null) emptyList() else state.queuedQuestions.drop(1),
+            )
+        }
+    }
 
     override suspend fun loadMessages(sessionId: SessionId, limit: Int?) {
         val workspaceClient = client as? WorkspaceClient
@@ -156,20 +272,32 @@ class SessionRepositoryImpl(
         mergeLoadedMessages(sessionId.value, messages)
     }
 
+    override fun sendMessageAsync(sessionId: SessionId, request: SendMessageRequest): Deferred<Result<Unit>> = scope.async {
+        runMutationCatching { client.sendMessageAsync(sessionId.value, request) }
+    }
+
+    override fun abortSession(sessionId: SessionId): Deferred<Result<Boolean>> = scope.async {
+        runMutationCatching { client.abortSession(sessionId.value) }
+    }
+
     override fun clearStreamingFlags(sessionId: SessionId) {
-        messageState(sessionId.value).update { messages -> messages.map { msgWithParts ->
-            msgWithParts.copy(
-                parts = msgWithParts.parts.map { part ->
-                    if (part is Part.Text && part.isStreaming) part.copy(isStreaming = false) else part
-                },
-            )
-        } }
+        messageState(sessionId.value).update { messages ->
+            messages.map { msgWithParts ->
+                msgWithParts.copy(
+                    parts = msgWithParts.parts.map { part ->
+                        if (part is Part.Text && part.isStreaming) part.copy(isStreaming = false) else part
+                    },
+                )
+            }
+        }
     }
 
     override fun close() {
         invalidate()
         job.cancel("SessionRepository closed")
         synchronized(messageStates) { messageStates.clear() }
+        synchronized(sessionUiStates) { sessionUiStates.clear() }
+        synchronized(childToParentSessionIds) { childToParentSessionIds.clear() }
     }
 
     suspend fun createSession(title: String?): WorkspaceSession {
@@ -257,7 +385,7 @@ class SessionRepositoryImpl(
                                 emptyList()
                             }
                             .filterNot { dto -> OfishSessionNames.isOfishTitle(dto.title) }
-                        .map { dto -> workspaceSession(SessionMapper.mapToDomain(dto)) }
+                            .map { dto -> workspaceSession(SessionMapper.mapToDomain(dto)) }
                     }
 
                     val projectSessionIds = projectSessions.map { it.id.value }.toSet()
@@ -330,8 +458,23 @@ class SessionRepositoryImpl(
         _state.value = RepoState.Live(snapshot.copy(sessions = snapshot.sessions + (session.id.value to session)))
     }
 
-    private fun messageState(sessionId: String): MutableStateFlow<List<MessageWithParts>> = synchronized(messageStates) {
+    private fun messageState(sessionId: String): MutableStateFlow<List<MessageWithParts>> = synchronized(
+        messageStates
+    ) {
         messageStates.getOrPut(sessionId) { MutableStateFlow(emptyList()) }
+    }
+
+    private fun sessionUiStateFor(sessionId: String): MutableStateFlow<SessionUiState> = synchronized(sessionUiStates) {
+        sessionUiStates.getOrPut(sessionId) { MutableStateFlow(SessionUiState()) }
+    }
+
+    private fun updateSession(sessionId: String, transform: (SessionUiState) -> SessionUiState) {
+        sessionUiStateFor(sessionId).update(transform)
+    }
+
+    private fun updateOwnedSession(eventSessionId: String, transform: (SessionUiState) -> SessionUiState) {
+        val ownerSessionId = synchronized(childToParentSessionIds) { childToParentSessionIds[eventSessionId] } ?: eventSessionId
+        updateSession(ownerSessionId, transform)
     }
 
     private fun mergeLoadedMessages(sessionId: String, loaded: List<MessageWithParts>) {
@@ -396,13 +539,15 @@ class SessionRepositoryImpl(
     }
 
     private fun removePart(sessionId: String, messageId: String, partId: String) {
-        messageState(sessionId).update { messages -> messages.map { msgWithParts ->
-            if (msgWithParts.message.id == messageId) {
-                msgWithParts.copy(parts = msgWithParts.parts.filterNot { it.id == partId })
-            } else {
-                msgWithParts
+        messageState(sessionId).update { messages ->
+            messages.map { msgWithParts ->
+                if (msgWithParts.message.id == messageId) {
+                    msgWithParts.copy(parts = msgWithParts.parts.filterNot { it.id == partId })
+                } else {
+                    msgWithParts
+                }
             }
-        } }
+        }
     }
 
     private fun applyDelta(existing: Part, incoming: Part, delta: String?): Part =
@@ -438,6 +583,18 @@ class SessionRepositoryImpl(
         is OpenCodeEvent.SessionCompacted,
         is OpenCodeEvent.SessionError -> true
         else -> false
+    }
+
+    private fun SessionStatus.isTerminalIdle(): Boolean = this !is SessionStatus.Busy && this !is SessionStatus.Retry
+
+    private inline fun <T> runMutationCatching(block: () -> T): Result<T> {
+        return try {
+            Result.success(block())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     private companion object {

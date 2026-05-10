@@ -1,8 +1,14 @@
 package dev.blazelight.p4oc.core.network
 
+import retrofit2.HttpException
+
 sealed class ApiResult<out T> {
     data class Success<T>(val data: T) : ApiResult<T>()
-    data class Error(val code: Int? = null, val message: String, val throwable: Throwable? = null) : ApiResult<Nothing>()
+    data class Error(
+        val code: Int? = null,
+        val message: String,
+        val throwable: Throwable? = null
+    ) : ApiResult<Nothing>()
 
     val isSuccess: Boolean get() = this is Success
     val isError: Boolean get() = this is Error
@@ -43,7 +49,9 @@ suspend inline fun <T> safeApiCall(crossinline block: suspend () -> T): ApiResul
     return try {
         ApiResult.Success(block())
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
-        throw e  // Re-throw to preserve structured concurrency
+        throw e // Re-throw to preserve structured concurrency
+    } catch (e: HttpException) {
+        ApiResult.Error(code = e.code(), message = e.message(), throwable = e)
     } catch (e: Exception) {
         ApiResult.Error(message = e.message ?: "Unknown error", throwable = e)
     }

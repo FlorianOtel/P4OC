@@ -43,8 +43,10 @@ class WorkspaceTest {
         val companion = Workspace::class.java.declaredClasses.singleOrNull { it.simpleName == "Companion" }
 
         assertEquals(null, companion)
-        assertFalse(Workspace::class.java.methods.any { method ->
-            method.name in setOf("getGlobal", "getDEFAULT", "getCurrent")
-        })
+        assertFalse(
+            Workspace::class.java.methods.any { method ->
+                method.name in setOf("getGlobal", "getDEFAULT", "getCurrent")
+            }
+        )
     }
 }

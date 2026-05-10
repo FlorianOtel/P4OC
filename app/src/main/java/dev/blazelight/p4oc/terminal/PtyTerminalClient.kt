@@ -3,10 +3,10 @@ package dev.blazelight.p4oc.terminal
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import dev.blazelight.p4oc.core.log.AppLog
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
+import dev.blazelight.p4oc.core.log.AppLog
 
 class PtyTerminalClient(
     private val context: Context,

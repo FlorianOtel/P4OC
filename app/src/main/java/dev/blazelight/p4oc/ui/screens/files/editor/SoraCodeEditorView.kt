@@ -137,5 +137,3 @@ private fun languageFor(filename: String): Language {
     return runCatching { TextMateLanguage.create(scope, /* autoComplete = */ false) }
         .getOrElse { EmptyLanguage() }
 }
-
-

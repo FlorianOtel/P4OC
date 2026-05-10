@@ -2,6 +2,7 @@ package dev.blazelight.p4oc.ui.screens.files
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.blazelight.p4oc.data.files.FileCapabilities
 import dev.blazelight.p4oc.data.files.FileOperationResult
 import dev.blazelight.p4oc.data.files.FileRepository
 import dev.blazelight.p4oc.data.files.FileWriteRequest
@@ -17,8 +18,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+@Suppress("TooManyFunctions")
 class FilesViewModel constructor(
     private val fileRepository: FileRepository,
+    private val uploadCoordinator: UploadCoordinator,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FilesUiState())
@@ -31,19 +34,15 @@ class FilesViewModel constructor(
     private var loadFilesJob: Job? = null
     private var loadContentJob: Job? = null
     private var saveJob: Job? = null
+    private var mutationJob: Job? = null
 
     private val _editState = MutableStateFlow(FileEditState())
     val editState: StateFlow<FileEditState> = _editState.asStateFlow()
 
-    private val uploadCoordinator = UploadCoordinator(
-        scope = viewModelScope,
-        repositoryFactory = { fileRepository },
-        destinationPath = { _uiState.value.currentPath.ifBlank { null } },
-        onComplete = { items -> if (items.isNotEmpty()) refresh() },
-    )
     val uploadState: StateFlow<UploadQueueState> = uploadCoordinator.state
 
     init {
+        loadCapabilities()
         loadFiles(ROOT_PATH)
     }
 
@@ -83,6 +82,12 @@ class FilesViewModel constructor(
                     _uiState.update { it.copy(isLoading = false, error = result.message) }
                 }
             }
+        }
+    }
+
+    private fun loadCapabilities() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(capabilities = fileRepository.capabilities()) }
         }
     }
 
@@ -260,7 +265,83 @@ class FilesViewModel constructor(
     }
 
     fun uploadFromSources(source: UploadSource, sourceIds: List<String>) {
-        uploadCoordinator.upload(source, sourceIds)
+        uploadCoordinator.upload(
+            source = source,
+            sourceIds = sourceIds,
+            destinationPath = _uiState.value.currentPath.ifBlank { null },
+            onComplete = { items -> if (items.isNotEmpty()) refresh() },
+        )
+    }
+
+    fun createFile(name: String) {
+        val path = childPath(_uiState.value.currentPath, name)
+        performMutation(
+            unsupported = "File creation is unavailable for this workspace",
+            supported = _uiState.value.capabilities.canWrite,
+            block = { fileRepository.writeFile(FileWriteRequest(path = path, content = "")) },
+            onSuccess = { refresh() },
+        )
+    }
+
+    fun createFolder(name: String) {
+        val path = childPath(_uiState.value.currentPath, name)
+        performMutation(
+            unsupported = "Folder creation is unavailable for this workspace",
+            supported = _uiState.value.capabilities.canCreateDirectory,
+            block = { fileRepository.createDirectory(path) },
+            onSuccess = { refresh() },
+        )
+    }
+
+    fun renameFile(file: FileNode, newName: String) {
+        val destination = childPath(parentPath(file.path), newName)
+        performMutation(
+            unsupported = "Rename is unavailable for this workspace",
+            supported = _uiState.value.capabilities.canRename,
+            block = { fileRepository.renameFile(file.path, destination) },
+            onSuccess = { refresh() },
+        )
+    }
+
+    fun deleteFile(file: FileNode) {
+        performMutation(
+            unsupported = "Delete is unavailable for this workspace",
+            supported = _uiState.value.capabilities.canDelete,
+            block = { fileRepository.deleteFile(file.path) },
+            onSuccess = { refresh() },
+        )
+    }
+
+    fun clearMutationMessage() {
+        _uiState.update { it.copy(mutationMessage = null) }
+    }
+
+    private fun <T> performMutation(
+        unsupported: String,
+        supported: Boolean,
+        block: suspend () -> FileOperationResult<T>,
+        onSuccess: () -> Unit,
+    ) {
+        if (!supported) {
+            _uiState.update { it.copy(mutationMessage = unsupported) }
+            return
+        }
+        mutationJob?.cancel()
+        mutationJob = viewModelScope.launch {
+            _uiState.update { it.copy(isMutating = true, mutationMessage = null) }
+            when (val result = block()) {
+                is FileOperationResult.Ok -> {
+                    _uiState.update { it.copy(isMutating = false) }
+                    onSuccess()
+                }
+                is FileOperationResult.Conflict -> {
+                    _uiState.update { it.copy(isMutating = false, mutationMessage = result.message) }
+                }
+                is FileOperationResult.Failed -> {
+                    _uiState.update { it.copy(isMutating = false, mutationMessage = result.message) }
+                }
+            }
+        }
     }
 
     fun retryFailedUploads() {
@@ -277,6 +358,12 @@ class FilesViewModel constructor(
 
     private companion object {
         const val ROOT_PATH = ""
+
+        fun childPath(parent: String, child: String): String = listOf(parent.trim('/'), child.trim('/'))
+            .filter { it.isNotBlank() }
+            .joinToString("/")
+
+        fun parentPath(path: String): String = path.substringBeforeLast('/', missingDelimiterValue = "")
     }
 }
 
@@ -287,6 +374,9 @@ data class FilesUiState(
     val fileContent: String? = null,
     val error: String? = null,
     val symbolError: String? = null,
+    val capabilities: FileCapabilities = FileCapabilities(),
+    val isMutating: Boolean = false,
+    val mutationMessage: String? = null,
 )
 
 /**

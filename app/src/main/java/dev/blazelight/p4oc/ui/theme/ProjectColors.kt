@@ -10,7 +10,7 @@ import kotlin.math.absoluteValue
  * Colors are derived from the current OpenCode theme accent colors.
  */
 object ProjectColors {
-    
+
     /**
      * Returns a deterministic color for a given project ID using theme accent colors.
      * The same project ID will always return the same color within a theme.
@@ -30,7 +30,7 @@ object ProjectColors {
         )
         return palette[projectId.hashCode().absoluteValue % palette.size]
     }
-    
+
     /**
      * Returns appropriate text color for project chip based on background luminance.
      * Uses luminance check on the actual tag color to pick contrasting text.
@@ -46,7 +46,7 @@ object ProjectColors {
             theme.text // Light text for dark backgrounds
         }
     }
-    
+
     /**
      * Get color palette based on current theme for dynamic project colors.
      */

@@ -9,8 +9,8 @@ interface UploadSource {
     /** Return lightweight metadata for the source (name, size, mime). */
     suspend fun probe(sourceId: String): UploadSourceMetadata
 
-    /** Read the full payload bytes. Implementations must respect [maxBytes]. */
-    suspend fun readBytes(sourceId: String, maxBytes: Long): ByteArray
+    /** Open a fresh stream for the payload. Callers own closing it. */
+    suspend fun openStream(sourceId: String): java.io.InputStream
 }
 
 data class UploadSourceMetadata(
@@ -18,9 +18,3 @@ data class UploadSourceMetadata(
     val sizeBytes: Long,
     val mimeType: String?,
 )
-
-/** Thrown when a source exceeds [UploadOrchestrator.maxBytes]. */
-class UploadTooLargeException(
-    val sizeBytes: Long,
-    val maxBytes: Long,
-) : Exception("Upload too large: $sizeBytes bytes (max $maxBytes)")

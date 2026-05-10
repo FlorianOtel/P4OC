@@ -1,10 +1,9 @@
 package dev.blazelight.p4oc.ui.screens.files
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -12,42 +11,45 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import dev.blazelight.p4oc.ui.components.TuiTopBar
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
-import dev.blazelight.p4oc.ui.theme.SemanticColors
-import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.ui.res.stringResource
 import dev.blazelight.p4oc.R
+import dev.blazelight.p4oc.core.filetype.FileTypeCategory
+import dev.blazelight.p4oc.core.filetype.FileTypeClassifier
 import dev.blazelight.p4oc.domain.model.FileNode
 import dev.blazelight.p4oc.domain.model.Symbol
-import dev.blazelight.p4oc.domain.workspace.WorkspacePathAttachmentCodec
+import dev.blazelight.p4oc.ui.components.TuiAlertDialog
+import dev.blazelight.p4oc.ui.components.TuiButton
+import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
+import dev.blazelight.p4oc.ui.components.TuiInputDialog
+import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import dev.blazelight.p4oc.ui.components.TuiTextButton
+import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.screens.files.upload.ContentResolverUploadSource
 import dev.blazelight.p4oc.ui.screens.files.upload.UploadProgressSheet
+import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
 
@@ -68,6 +70,9 @@ fun FileExplorerScreen(
     var isSearchActive by remember { mutableStateOf(false) }
     var isSymbolMode by remember { mutableStateOf(false) }
     var symbolQuery by remember { mutableStateOf("") }
+    var createDialog by remember { mutableStateOf<FileCreateKind?>(null) }
+    var renameTarget by remember { mutableStateOf<FileNode?>(null) }
+    var deleteTarget by remember { mutableStateOf<FileNode?>(null) }
 
     val context = LocalContext.current
     val uploadSource = remember(context) {
@@ -117,7 +122,12 @@ fun FileExplorerScreen(
                                     symbolQuery = it
                                     viewModel.searchSymbols(it)
                                 },
-                                placeholder = { Text(stringResource(R.string.symbol_search_hint), color = theme.textMuted) },
+                                placeholder = {
+                                    Text(
+                                        stringResource(R.string.symbol_search_hint),
+                                        color = theme.textMuted
+                                    )
+                                },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
@@ -132,7 +142,12 @@ fun FileExplorerScreen(
                             OutlinedTextField(
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
-                                placeholder = { Text(stringResource(R.string.files_search_placeholder), color = theme.textMuted) },
+                                placeholder = {
+                                    Text(
+                                        stringResource(R.string.files_search_placeholder),
+                                        color = theme.textMuted
+                                    )
+                                },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
@@ -167,22 +182,39 @@ fun FileExplorerScreen(
                     },
                     actions = {
                         if (!isSearchActive && !isSymbolMode) {
+                            FileCreateMenu(
+                                canCreateFile = uiState.capabilities.canWrite,
+                                canCreateFolder = uiState.capabilities.canCreateDirectory,
+                                onCreateFile = { createDialog = FileCreateKind.File },
+                                onCreateFolder = { createDialog = FileCreateKind.Folder },
+                            )
                             IconButton(
                                 onClick = { isSearchActive = true },
                                 modifier = Modifier.size(Sizing.iconButtonMd)
                             ) {
-                                Icon(Icons.Default.Search, contentDescription = stringResource(R.string.cd_search), tint = theme.textMuted, modifier = Modifier.size(Sizing.iconAction))
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = stringResource(R.string.cd_search),
+                                    tint = theme.textMuted,
+                                    modifier = Modifier.size(Sizing.iconAction)
+                                )
                             }
                             IconButton(
                                 onClick = { isSymbolMode = true },
                                 modifier = Modifier.size(Sizing.iconButtonMd)
                             ) {
-                                Icon(Icons.Default.Code, contentDescription = stringResource(R.string.cd_symbol_search), tint = theme.textMuted, modifier = Modifier.size(Sizing.iconAction))
+                                Icon(
+                                    Icons.Default.Code,
+                                    contentDescription = stringResource(R.string.cd_symbol_search),
+                                    tint = theme.textMuted,
+                                    modifier = Modifier.size(Sizing.iconAction)
+                                )
                             }
                         }
                         if (!isSearchActive && !isSymbolMode) {
                             IconButton(
                                 onClick = { uploadLauncher.launch(arrayOf("*/*")) },
+                                enabled = uiState.capabilities.canUpload,
                                 modifier = Modifier
                                     .size(Sizing.iconButtonMd)
                                     .testTag("files_upload_action")
@@ -199,11 +231,16 @@ fun FileExplorerScreen(
                             onClick = viewModel::refresh,
                             modifier = Modifier.size(Sizing.iconButtonMd)
                         ) {
-                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_refresh), tint = theme.textMuted, modifier = Modifier.size(Sizing.iconAction))
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = stringResource(R.string.cd_refresh),
+                                tint = theme.textMuted,
+                                modifier = Modifier.size(Sizing.iconAction)
+                            )
                         }
                     }
                 )
-                
+
                 if (uiState.currentPath.isNotBlank()) {
                     BreadcrumbNavigation(
                         path = uiState.currentPath,
@@ -278,7 +315,7 @@ fun FileExplorerScreen(
                             SymbolResultItem(
                                 symbol = symbol,
                                 onClick = {
-                                    onFileClick(WorkspacePathAttachmentCodec.parseFromServer(symbol.uri).value)
+                                    onFileClick(symbol.path)
                                 }
                             )
                         }
@@ -300,10 +337,20 @@ fun FileExplorerScreen(
                                 style = MaterialTheme.typography.displayMedium,
                                 color = theme.textMuted
                             )
-                            Text(
-                                text = if (searchQuery.isNotBlank()) stringResource(R.string.files_no_matching_files) else stringResource(R.string.files_empty_folder),
-                                color = theme.textMuted
-                            )
+                            val emptyText = if (searchQuery.isNotBlank()) {
+                                stringResource(R.string.files_no_matching_files)
+                            } else {
+                                stringResource(R.string.files_empty_folder)
+                            }
+                            Text(text = emptyText, color = theme.textMuted)
+                            if (searchQuery.isBlank()) {
+                                EmptyFolderActions(
+                                    canCreateFile = uiState.capabilities.canWrite,
+                                    canUpload = uiState.capabilities.canUpload,
+                                    onCreateFile = { createDialog = FileCreateKind.File },
+                                    onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
+                                )
+                            }
                         }
                     }
                     else -> {
@@ -315,13 +362,19 @@ fun FileExplorerScreen(
                             items(filteredFiles, key = { it.path }) { file ->
                                 TuiFileItem(
                                     file = file,
+                                    actions = FileItemActions(
+                                        canRename = uiState.capabilities.canRename,
+                                        canDelete = uiState.capabilities.canDelete,
+                                        onRename = { renameTarget = file },
+                                        onDelete = { deleteTarget = file },
+                                    ),
                                     onClick = {
                                         if (file.isDirectory) {
                                             viewModel.navigateTo(file.path)
                                         } else {
                                             onFileClick(file.path)
                                         }
-                                    }
+                                    },
                                 )
                             }
                         }
@@ -337,6 +390,135 @@ fun FileExplorerScreen(
                     onRetryFailed = { viewModel.retryFailedUploads() },
                 )
             }
+
+            if (uiState.isMutating) {
+                TuiLoadingScreen(modifier = Modifier.align(Alignment.Center))
+            }
+        }
+    }
+
+    createDialog?.let { kind ->
+        TuiInputDialog(
+            onDismissRequest = { createDialog = null },
+            onConfirm = { name ->
+                when (kind) {
+                    FileCreateKind.File -> viewModel.createFile(name)
+                    FileCreateKind.Folder -> viewModel.createFolder(name)
+                }
+            },
+            title = when (kind) {
+                FileCreateKind.File -> stringResource(R.string.files_new_file)
+                FileCreateKind.Folder -> stringResource(R.string.files_new_folder)
+            },
+            placeholder = when (kind) {
+                FileCreateKind.File -> stringResource(R.string.files_new_file_placeholder)
+                FileCreateKind.Folder -> stringResource(R.string.files_new_folder_placeholder)
+            },
+            confirmText = stringResource(R.string.files_create),
+        )
+    }
+
+    renameTarget?.let { file ->
+        TuiInputDialog(
+            onDismissRequest = { renameTarget = null },
+            onConfirm = { name -> viewModel.renameFile(file, name) },
+            title = stringResource(R.string.files_rename_title, file.name),
+            initialValue = file.name,
+            confirmText = stringResource(R.string.files_rename),
+        )
+    }
+
+    deleteTarget?.let { file ->
+        TuiConfirmDialog(
+            onDismissRequest = { deleteTarget = null },
+            onConfirm = { viewModel.deleteFile(file) },
+            title = stringResource(R.string.files_delete_title),
+            message = stringResource(R.string.files_delete_confirm, file.name),
+            confirmText = stringResource(R.string.files_delete),
+            isDestructive = true,
+        )
+    }
+
+    uiState.mutationMessage?.let { message ->
+        TuiAlertDialog(
+            onDismissRequest = viewModel::clearMutationMessage,
+            title = stringResource(R.string.files_operation_failed),
+            confirmButton = {
+                TuiButton(onClick = viewModel::clearMutationMessage) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            },
+        ) {
+            Text(message, color = theme.textMuted)
+        }
+    }
+}
+
+private enum class FileCreateKind { File, Folder }
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileCreateMenu(
+    canCreateFile: Boolean,
+    canCreateFolder: Boolean,
+    onCreateFile: () -> Unit,
+    onCreateFolder: () -> Unit,
+) {
+    val theme = LocalOpenCodeTheme.current
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            enabled = canCreateFile || canCreateFolder,
+            modifier = Modifier
+                .size(Sizing.iconButtonMd)
+                .testTag("files_create_action")
+        ) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = stringResource(R.string.files_create),
+                tint = theme.textMuted,
+                modifier = Modifier.size(Sizing.iconAction)
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.files_new_file), color = theme.text) },
+                enabled = canCreateFile,
+                onClick = {
+                    expanded = false
+                    onCreateFile()
+                },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = null, tint = theme.textMuted) }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.files_new_folder), color = theme.text) },
+                enabled = canCreateFolder,
+                onClick = {
+                    expanded = false
+                    onCreateFolder()
+                },
+                leadingIcon = { Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = theme.textMuted) }
+            )
+        }
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun EmptyFolderActions(
+    canCreateFile: Boolean,
+    canUpload: Boolean,
+    onCreateFile: () -> Unit,
+    onUpload: () -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        TuiTextButton(onClick = onCreateFile, enabled = canCreateFile) {
+            Text(stringResource(R.string.files_new_file))
+        }
+        TuiTextButton(onClick = onUpload, enabled = canUpload) {
+            Text(stringResource(R.string.files_upload_here))
         }
     }
 }
@@ -348,7 +530,7 @@ private fun BreadcrumbNavigation(
 ) {
     val theme = LocalOpenCodeTheme.current
     val parts = path.split("/").filter { it.isNotEmpty() }
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -371,7 +553,7 @@ private fun BreadcrumbNavigation(
                 modifier = Modifier.padding(horizontal = Spacing.xs)
             )
         }
-        
+
         var currentPath = ""
         parts.forEachIndexed { index, part ->
             Text(
@@ -379,10 +561,10 @@ private fun BreadcrumbNavigation(
                 style = MaterialTheme.typography.labelMedium,
                 color = theme.textMuted
             )
-            
+
             currentPath = if (currentPath.isEmpty()) part else "$currentPath/$part"
             val pathToNavigate = currentPath
-            
+
             Surface(
                 onClick = { onNavigateTo(pathToNavigate) },
                 color = Color.Transparent,
@@ -403,9 +585,11 @@ private fun BreadcrumbNavigation(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+@Suppress("FunctionNaming", "LongMethod")
 private fun TuiFileItem(
     file: FileNode,
-    onClick: () -> Unit
+    actions: FileItemActions,
+    onClick: () -> Unit,
 ) {
     val theme = LocalOpenCodeTheme.current
     val (icon, iconColor) = getFileIcon(file)
@@ -413,7 +597,7 @@ private fun TuiFileItem(
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var showContextMenu by remember { mutableStateOf(false) }
-    
+
     Box {
         Surface(
             modifier = Modifier
@@ -442,7 +626,7 @@ private fun TuiFileItem(
                     style = MaterialTheme.typography.bodyMedium,
                     color = theme.accent
                 )
-                
+
                 // Icon
                 Icon(
                     imageVector = icon,
@@ -450,7 +634,7 @@ private fun TuiFileItem(
                     tint = gitStatusColor ?: iconColor,
                     modifier = Modifier.size(Sizing.iconSm)
                 )
-                
+
                 // File name
                 Text(
                     text = file.name,
@@ -461,12 +645,12 @@ private fun TuiFileItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                
+
                 // Git status badge
                 file.gitStatus?.let { status ->
                     TuiGitStatusBadge(status)
                 }
-                
+
                 // Directory indicator
                 if (file.isDirectory) {
                     Text(
@@ -477,33 +661,87 @@ private fun TuiFileItem(
                 }
             }
         }
-        
-        DropdownMenu(
+
+        FileItemContextMenu(
             expanded = showContextMenu,
-            onDismissRequest = { showContextMenu = false }
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.files_copy_path), color = theme.text) },
-                onClick = {
-                    clipboardManager.setText(AnnotatedString(file.path))
-                    showContextMenu = false
-                },
-                leadingIcon = {
-                    Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.files_copy_path), tint = theme.textMuted)
-                }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.files_copy_name), color = theme.text) },
-                onClick = {
-                    clipboardManager.setText(AnnotatedString(file.name))
-                    showContextMenu = false
-                },
-                leadingIcon = {
-                    Icon(Icons.Default.TextFields, contentDescription = stringResource(R.string.files_copy_name), tint = theme.textMuted)
-                }
-            )
-        }
+            actions = actions,
+            onDismiss = { showContextMenu = false },
+            onCopyPath = { clipboardManager.setText(AnnotatedString(file.path)) },
+            onCopyName = { clipboardManager.setText(AnnotatedString(file.name)) },
+        )
     }
+}
+
+private data class FileItemActions(
+    val canRename: Boolean,
+    val canDelete: Boolean,
+    val onRename: () -> Unit,
+    val onDelete: () -> Unit,
+)
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileItemContextMenu(
+    expanded: Boolean,
+    actions: FileItemActions,
+    onDismiss: () -> Unit,
+    onCopyPath: () -> Unit,
+    onCopyName: () -> Unit,
+) {
+    val theme = LocalOpenCodeTheme.current
+
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.files_copy_path), color = theme.text) },
+            onClick = {
+                onCopyPath()
+                onDismiss()
+            },
+            leadingIcon = { FileMenuIcon(Icons.Default.ContentCopy, R.string.files_copy_path) }
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.files_copy_name), color = theme.text) },
+            onClick = {
+                onCopyName()
+                onDismiss()
+            },
+            leadingIcon = { FileMenuIcon(Icons.Default.TextFields, R.string.files_copy_name) }
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.files_rename), color = theme.text) },
+            enabled = actions.canRename,
+            onClick = {
+                onDismiss()
+                actions.onRename()
+            },
+            leadingIcon = { FileMenuIcon(Icons.Default.DriveFileRenameOutline, R.string.files_rename) }
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.files_delete), color = theme.error) },
+            enabled = actions.canDelete,
+            onClick = {
+                onDismiss()
+                actions.onDelete()
+            },
+            leadingIcon = {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = stringResource(R.string.files_delete),
+                    tint = theme.error
+                )
+            }
+        )
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileMenuIcon(icon: ImageVector, contentDescription: Int) {
+    Icon(
+        icon,
+        contentDescription = stringResource(contentDescription),
+        tint = LocalOpenCodeTheme.current.textMuted,
+    )
 }
 
 @Composable
@@ -515,7 +753,7 @@ private fun TuiGitStatusBadge(status: String) {
         "deleted" -> "D" to theme.error
         else -> status.take(1).uppercase() to theme.textMuted
     }
-    
+
     Text(
         text = "[$text]",
         style = MaterialTheme.typography.labelSmall,
@@ -538,56 +776,54 @@ private fun getGitStatusColor(status: String?): Color? {
 @Composable
 private fun getFileIcon(file: FileNode): Pair<ImageVector, Color> {
     val theme = LocalOpenCodeTheme.current
-    
+
     if (file.isDirectory) {
         return Icons.Default.Folder to theme.accent
     }
-    
-    val extension = file.name.substringAfterLast('.', "").lowercase()
-    
-    return when (extension) {
-        "kt", "java", "py", "js", "ts", "tsx", "jsx", "c", "cpp", "h", "rs", "go", "rb", "php", "swift", "m" ->
+
+    return when (FileTypeClassifier.classify(file.name).category) {
+        FileTypeCategory.Code ->
             Icons.Default.Code to SemanticColors.FileType.code
-        
-        "json", "yaml", "yml", "xml", "toml", "ini", "conf", "config", "properties" ->
+
+        FileTypeCategory.Config ->
             Icons.Default.Settings to SemanticColors.FileType.config
-        
-        "md", "txt", "rst", "doc", "docx", "pdf" ->
+
+        FileTypeCategory.Document ->
             Icons.Default.Description to SemanticColors.FileType.document
-        
-        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp" ->
+
+        FileTypeCategory.Image ->
             Icons.Default.Image to SemanticColors.FileType.image
-        
-        "mp4", "avi", "mov", "mkv", "webm" ->
+
+        FileTypeCategory.Video ->
             Icons.Default.VideoFile to SemanticColors.FileType.video
-        
-        "mp3", "wav", "ogg", "flac", "m4a" ->
+
+        FileTypeCategory.Audio ->
             Icons.Default.AudioFile to SemanticColors.FileType.audio
-        
-        "zip", "tar", "gz", "rar", "7z" ->
+
+        FileTypeCategory.Archive ->
             Icons.Default.FolderZip to SemanticColors.FileType.archive
-        
-        "sh", "bash", "zsh", "fish" ->
+
+        FileTypeCategory.Shell ->
             Icons.Default.Terminal to SemanticColors.FileType.shell
-        
-        "gradle", "gradlew" ->
+
+        FileTypeCategory.Build ->
             Icons.Default.Build to SemanticColors.FileType.build
-        
-        "gitignore", "gitattributes" ->
+
+        FileTypeCategory.Git ->
             Icons.Default.AccountTree to SemanticColors.FileType.git
-        
-        "lock" ->
+
+        FileTypeCategory.Lock ->
             Icons.Default.Lock to SemanticColors.FileType.lock
-        
-        "env", "envrc" ->
+
+        FileTypeCategory.Env ->
             Icons.Default.Security to SemanticColors.FileType.env
-        
-        "html", "htm", "css", "scss", "sass", "less" ->
+
+        FileTypeCategory.Web ->
             Icons.Default.Web to SemanticColors.FileType.web
-        
-        "sql", "db", "sqlite" ->
+
+        FileTypeCategory.Database ->
             Icons.Default.Storage to SemanticColors.FileType.database
-        
+
         else -> Icons.AutoMirrored.Filled.InsertDriveFile to theme.textMuted
     }
 }
@@ -601,7 +837,7 @@ private fun SymbolResultItem(
     val (kindLabel, kindColor) = getSymbolKind(symbol.kind)
     // Extract short filename from URI
     val fileName = symbol.uri.substringAfterLast('/')
-    val lineNumber = symbol.range.startLine + 1  // Convert from 0-indexed
+    val lineNumber = symbol.range.startLine + 1 // Convert from 0-indexed
 
     Surface(
         modifier = Modifier
@@ -655,30 +891,30 @@ private fun SymbolResultItem(
 private fun getSymbolKind(kind: Int): Pair<String, Color> {
     val theme = LocalOpenCodeTheme.current
     return when (kind) {
-        1 -> "F" to theme.accent         // File
-        2 -> "M" to theme.info           // Module
-        3 -> "N" to theme.info           // Namespace
-        4 -> "P" to theme.warning        // Package
-        5 -> "C" to theme.warning        // Class
-        6 -> "M" to theme.accent         // Method
-        7 -> "P" to theme.info           // Property
-        8 -> "F" to theme.textMuted      // Field
-        9 -> "C" to theme.warning        // Constructor
-        10 -> "E" to theme.success       // Enum
-        11 -> "I" to theme.info          // Interface
-        12 -> "ƒ" to theme.accent        // Function
-        13 -> "V" to theme.text          // Variable
-        14 -> "K" to theme.textMuted     // Constant
-        15 -> "S" to theme.warning       // String
-        16 -> "#" to theme.info          // Number
-        17 -> "B" to theme.info          // Boolean
-        18 -> "A" to theme.warning       // Array
-        19 -> "O" to theme.warning       // Object
-        22 -> "E" to theme.success       // EnumMember
-        23 -> "S" to theme.warning       // Struct
-        25 -> "O" to theme.info          // Operator
-        26 -> "T" to theme.warning       // TypeParameter
-        else -> "◇" to theme.textMuted   // Default/unknown
+        1 -> "F" to theme.accent // File
+        2 -> "M" to theme.info // Module
+        3 -> "N" to theme.info // Namespace
+        4 -> "P" to theme.warning // Package
+        5 -> "C" to theme.warning // Class
+        6 -> "M" to theme.accent // Method
+        7 -> "P" to theme.info // Property
+        8 -> "F" to theme.textMuted // Field
+        9 -> "C" to theme.warning // Constructor
+        10 -> "E" to theme.success // Enum
+        11 -> "I" to theme.info // Interface
+        12 -> "ƒ" to theme.accent // Function
+        13 -> "V" to theme.text // Variable
+        14 -> "K" to theme.textMuted // Constant
+        15 -> "S" to theme.warning // String
+        16 -> "#" to theme.info // Number
+        17 -> "B" to theme.info // Boolean
+        18 -> "A" to theme.warning // Array
+        19 -> "O" to theme.warning // Object
+        22 -> "E" to theme.success // EnumMember
+        23 -> "S" to theme.warning // Struct
+        25 -> "O" to theme.info // Operator
+        26 -> "T" to theme.warning // TypeParameter
+        else -> "◇" to theme.textMuted // Default/unknown
     }
 }
 

@@ -1,8 +1,8 @@
 package dev.blazelight.p4oc.core.datastore
 
 import android.content.Context
-import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataMigration
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import dev.blazelight.p4oc.core.log.AppLog
@@ -38,12 +38,12 @@ class SettingsDataStore constructor(
         private val KEY_ALLOW_INSECURE = booleanPreferencesKey("allow_insecure_tls")
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_THEME_NAME = stringPreferencesKey("theme_name")
-        
+
         const val DEFAULT_THEME_NAME = "catppuccin"
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         private val KEY_RECENT_SERVERS = stringPreferencesKey("recent_servers")
         private val KEY_TAB_STATE = stringPreferencesKey("tab_state_v1")
-        
+
         // Visual settings keys
         private val KEY_FONT_SIZE = intPreferencesKey("font_size")
         private val KEY_LINE_SPACING = floatPreferencesKey("line_spacing")
@@ -58,12 +58,12 @@ class SettingsDataStore constructor(
 
         private val KEY_TOOL_WIDGET_DEFAULT_STATE = stringPreferencesKey("tool_widget_default_state")
         private val KEY_OPEN_SUB_AGENT_NEW_TAB = booleanPreferencesKey("open_sub_agent_new_tab")
-        
+
         // Model favorites and recents
         private val KEY_FAVORITE_MODELS = stringSetPreferencesKey("favorite_models")
         private val KEY_RECENT_MODELS = stringPreferencesKey("recent_models")
         private const val MAX_RECENT_MODELS = 10
-        
+
         // Notification settings keys
         private val KEY_NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         private val KEY_NOTIFY_PERMISSIONS = booleanPreferencesKey("notify_permissions")
@@ -89,6 +89,7 @@ class SettingsDataStore constructor(
 
     @Volatile
     private var cachedServerUrl: String = DEFAULT_LOCAL_URL
+
     @Volatile
     private var cachedUsername: String? = null
 
@@ -207,7 +208,13 @@ class SettingsDataStore constructor(
     /**
      * Save server config. Password is stored separately in CredentialStore.
      */
-    suspend fun setServerConfig(url: String, name: String, isLocal: Boolean, username: String? = null, password: String? = null) {
+    suspend fun setServerConfig(
+        url: String,
+        name: String,
+        isLocal: Boolean,
+        username: String? = null,
+        password: String? = null
+    ) {
         context.dataStore.edit { prefs ->
             prefs[KEY_SERVER_URL] = url
             prefs[KEY_SERVER_NAME] = name
@@ -298,7 +305,13 @@ class SettingsDataStore constructor(
     /**
      * Add a recent server. Password is stored in CredentialStore, not in the JSON.
      */
-    suspend fun addRecentServer(url: String, name: String, username: String? = null, password: String? = null, allowInsecure: Boolean = false) {
+    suspend fun addRecentServer(
+        url: String,
+        name: String,
+        username: String? = null,
+        password: String? = null,
+        allowInsecure: Boolean = false
+    ) {
         // Store password in encrypted storage (keyed by URL)
         if (password != null) {
             credentialStore.setServerPassword(url, password)
@@ -316,11 +329,11 @@ class SettingsDataStore constructor(
                     mutableListOf()
                 }
             }
-            
+
             existingServers.removeAll { it.url == url }
             existingServers.add(0, RecentServer(url, name, username, allowInsecure))
             val trimmed = existingServers.take(MAX_RECENT_SERVERS)
-            
+
             prefs[KEY_RECENT_SERVERS] = json.encodeToString(trimmed)
         }
     }
@@ -510,7 +523,9 @@ private fun String.toModelInput(): ModelInput? {
     val parts = split("/", limit = 2)
     return if (parts.size >= 2) {
         ModelInput(providerID = parts[0], modelID = parts.drop(1).joinToString("/"))
-    } else null
+    } else {
+        null
+    }
 }
 
 /**

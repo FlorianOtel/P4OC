@@ -8,7 +8,9 @@ internal object OfishShellWrapper {
      * opencode shell command. Base64 adds ~33% overhead, so upload chunk sizing
      * must leave room for the inflated outer command. Decode tries GNU then BSD.
      */
-    fun wrap(script: String): String = "printf %s ${base64(script.trimEnd()).shellSingleQuoted()} | (base64 -d 2>/dev/null || base64 -D) | sh"
+    fun wrap(script: String): String = "printf %s ${base64(
+        script.trimEnd()
+    ).shellSingleQuoted()} | (base64 -d 2>/dev/null || base64 -D) | sh"
 
     private fun base64(script: String): String = Base64.getEncoder().encodeToString(
         script.plus('\n').toByteArray(Charsets.UTF_8),

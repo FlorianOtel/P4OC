@@ -33,7 +33,9 @@ class SessionRepositoryMessageStateTest {
     fun `message updated preserves existing parts`() = runTest {
         val repository = repository()
         repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "hello"), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "hello"), delta = null)
+        )
 
         repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 200)))
 
@@ -46,7 +48,9 @@ class SessionRepositoryMessageStateTest {
     fun `part updated creates placeholder message`() = runTest {
         val repository = repository()
 
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "missing", text = "content"), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "missing", text = "content"), delta = null)
+        )
 
         val saved = repository.messages(sessionId).value.single()
         assertEquals("missing", saved.message.id)
@@ -58,9 +62,13 @@ class SessionRepositoryMessageStateTest {
     fun `part updated replaces existing part by id`() = runTest {
         val repository = repository()
         repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "old"), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "old"), delta = null)
+        )
 
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "new"), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "new"), delta = null)
+        )
 
         val part = repository.messages(sessionId).value.single().parts.single() as Part.Text
         assertEquals("new", part.text)
@@ -70,9 +78,13 @@ class SessionRepositoryMessageStateTest {
     fun `part updated appends delta and marks streaming`() = runTest {
         val repository = repository()
         repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "Hello"), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "Hello"), delta = null)
+        )
 
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "ignored"), delta = " world"))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "ignored"), delta = " world")
+        )
 
         val part = repository.messages(sessionId).value.single().parts.single() as Part.Text
         assertEquals("Hello world", part.text)
@@ -83,7 +95,12 @@ class SessionRepositoryMessageStateTest {
     fun `clear streaming flags sets all text parts non-streaming`() = runTest {
         val repository = repository()
         repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "a", isStreaming = true), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", text = "a", isStreaming = true),
+                delta = null
+            )
+        )
         repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(toolPart(id = "p2", messageId = "m1"), delta = null))
 
         repository.clearStreamingFlags(sessionId)
@@ -97,7 +114,9 @@ class SessionRepositoryMessageStateTest {
     fun `message and part removal update state`() = runTest {
         val repository = repository()
         repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
-        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "a"), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "a"), delta = null)
+        )
 
         repository.acceptEvent(OpenCodeEvent.PartRemoved(sessionID = "s1", messageID = "m1", partID = "p1"))
         assertTrue(repository.messages(sessionId).value.single().parts.isEmpty())

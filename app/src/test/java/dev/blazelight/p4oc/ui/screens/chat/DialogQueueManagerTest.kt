@@ -9,6 +9,10 @@ import dev.blazelight.p4oc.domain.model.QuestionRequest
 import io.mockk.every
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -40,7 +44,7 @@ class DialogQueueManagerTest {
     @Test
     fun enqueuePermission_addsPermissionByCallId() {
         val handle = SavedStateHandle()
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
         val permission = permission(id = "p1", callId = "call-1")
 
         manager.enqueuePermission(permission)
@@ -51,7 +55,7 @@ class DialogQueueManagerTest {
     @Test
     fun enqueuePermission_withNullCallIdDoesNotAddAnything() {
         val handle = SavedStateHandle()
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
         val permission = permission(id = "p1", callId = null)
 
         manager.enqueuePermission(permission)
@@ -62,7 +66,7 @@ class DialogQueueManagerTest {
     @Test
     fun clearPermission_removesMatchingPermissionById() {
         val handle = SavedStateHandle()
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
         val first = permission(id = "p1", callId = "call-1")
         val second = permission(id = "p2", callId = "call-2")
 
@@ -77,7 +81,7 @@ class DialogQueueManagerTest {
     @Test
     fun clearPermissionByRequestId_removesMatchingPermissionById() {
         val handle = SavedStateHandle()
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
         val first = permission(id = "request-1", callId = "call-1")
         val second = permission(id = "request-2", callId = "call-2")
 
@@ -98,7 +102,7 @@ class DialogQueueManagerTest {
             )
         )
 
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
 
         assertNull(manager.pendingQuestion.value)
         assertNull(handle.get<String>(KEY_PENDING_QUESTION))
@@ -120,21 +124,22 @@ class DialogQueueManagerTest {
     }
 
     @Test
-    fun enqueueQuestion_showsImmediately_whenNoCurrentQuestion() {
+    fun enqueueQuestion_showsImmediately_whenNoCurrentQuestion() = runTest {
         val handle = SavedStateHandle()
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
         val question = questionRequest(id = "q1")
 
         manager.enqueueQuestion(question)
+        advanceUntilIdle()
 
         assertEquals(question, manager.pendingQuestion.value)
         assertEquals(json.encodeToString(question), handle.get<String>(KEY_PENDING_QUESTION))
     }
 
     @Test
-    fun clearQuestion_advancesToNextInQueue() {
+    fun clearQuestion_advancesToNextInQueue() = runTest {
         val handle = SavedStateHandle()
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
         val first = questionRequest(id = "q1")
         val second = questionRequest(id = "q2")
 
@@ -143,20 +148,39 @@ class DialogQueueManagerTest {
         assertEquals(first, manager.pendingQuestion.value)
 
         manager.clearQuestion()
+        advanceUntilIdle()
+
         assertEquals(second, manager.pendingQuestion.value)
+        assertEquals(json.encodeToString(second), handle.get<String>(KEY_PENDING_QUESTION))
     }
 
     @Test
-    fun clearQuestion_clears_whenQueueEmpty() {
+    fun clearQuestion_clears_whenQueueEmpty() = runTest {
         val handle = SavedStateHandle()
-        val manager = DialogQueueManager(handle, json)
+        val manager = manager(handle)
         val only = questionRequest(id = "q1")
 
         manager.enqueueQuestion(only)
         manager.clearQuestion()
+        advanceUntilIdle()
 
         assertNull(manager.pendingQuestion.value)
         assertNull(handle.get<String>(KEY_PENDING_QUESTION))
+    }
+
+    @Test
+    fun clearQuestion_beforePersistenceCompletes_doesNotRestoreClearedQuestion() = runTest {
+        val handle = SavedStateHandle()
+        val manager = manager(handle)
+        val only = questionRequest(id = "q1")
+
+        manager.enqueueQuestion(only)
+        manager.clearQuestion()
+        advanceUntilIdle()
+
+        assertNull(manager.pendingQuestion.value)
+        assertNull(handle.get<String>(KEY_PENDING_QUESTION))
+        assertNull(handle.get<String>(KEY_PENDING_QUESTIONS_QUEUE))
     }
 
     private fun questionRequest(id: String): QuestionRequest {
@@ -171,6 +195,17 @@ class DialogQueueManagerTest {
                 )
             )
         )
+    }
+
+    private fun TestScope.manager(handle: SavedStateHandle): DialogQueueManager {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        return DialogQueueManager(handle, json, this, dispatcher)
+    }
+
+    private fun manager(handle: SavedStateHandle): DialogQueueManager {
+        val dispatcher = StandardTestDispatcher()
+        val scope = TestScope(dispatcher)
+        return DialogQueueManager(handle, json, scope, dispatcher)
     }
 
     private companion object {

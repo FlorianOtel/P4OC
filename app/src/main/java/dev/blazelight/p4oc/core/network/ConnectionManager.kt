@@ -1,22 +1,25 @@
 package dev.blazelight.p4oc.core.network
 
 import dev.blazelight.p4oc.BuildConfig
+import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
 import dev.blazelight.p4oc.data.remote.mapper.EventMapper
-import dev.blazelight.p4oc.domain.server.ServerGeneration
 import dev.blazelight.p4oc.domain.server.ScopedEvent
+import dev.blazelight.p4oc.domain.server.ServerGeneration
 import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -24,6 +27,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
 import okhttp3.Credentials
+import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -32,23 +36,29 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.concurrent.TimeUnit
 
-
 class ConnectionManager constructor(
     private val json: Json,
     private val eventMapper: EventMapper,
+    private val settingsDataStore: SettingsDataStore,
 ) {
     companion object {
         private const val TAG = "ConnectionManager"
+        private const val MAX_REQUESTS_PER_HOST = 20
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var sseForwardingJob: Job? = null
+    private var sseEscalationJob: Job? = null
     private var generationCounter: Long = 0L
     private val sharedConnectionPool = ConnectionPool(
         maxIdleConnections = 10,
         keepAliveDuration = 5,
         timeUnit = TimeUnit.MINUTES
     )
+    private val sharedDispatcher = Dispatcher().apply {
+        // SSE and terminal WebSockets are long-lived; leave headroom for REST calls.
+        maxRequestsPerHost = MAX_REQUESTS_PER_HOST
+    }
 
     private val _connection = MutableStateFlow<Connection?>(null)
     val connection: StateFlow<Connection?> = _connection.asStateFlow()
@@ -96,7 +106,9 @@ class ConnectionManager constructor(
                     ScopedEvent(
                         serverRef = serverRef,
                         generation = conn.generation,
-                        workspaceKey = directoryEvent.directory?.takeIf { it.isNotBlank() }?.let(WorkspaceKey::Directory) ?: WorkspaceKey.Global,
+                        workspaceKey = directoryEvent.directory?.takeIf {
+                            it.isNotBlank()
+                        }?.let(WorkspaceKey::Directory) ?: WorkspaceKey.Global,
                         event = directoryEvent.event,
                     )
                 }
@@ -154,6 +166,7 @@ class ConnectionManager constructor(
                     if (_connection.value?.eventSource === eventSource) {
                         AppLog.d(TAG, "SSE state forwarded: $sseState")
                         _connectionState.value = sseState
+                        handleSseStateForReconnectOwner(connection, sseState)
                     }
                 }
             }
@@ -190,14 +203,61 @@ class ConnectionManager constructor(
         return true
     }
 
+    fun onAppForegrounded() {
+        val connection = _connection.value ?: return
+        val state = _connectionState.value
+        if (state is ConnectionState.Connected || state is ConnectionState.Connecting) return
+
+        AppLog.d(TAG, "Foreground resume: SSE state is $state, refreshing SSE reconnect owner")
+        connection.eventSource.resetConsecutiveErrors()
+        reconnectSse(reason = "app_foreground")
+    }
+
     fun disconnect() {
         AppLog.d(TAG, "Disconnecting")
         sseForwardingJob?.cancel()
         sseForwardingJob = null
+        sseEscalationJob?.cancel()
+        sseEscalationJob = null
         _connection.value?.disconnect()
+        sharedConnectionPool.evictAll()
         _connection.value = null
         _authOkHttpClient.value = null
         _connectionState.value = ConnectionState.Disconnected
+    }
+
+    private fun handleSseStateForReconnectOwner(connection: Connection, state: ConnectionState) {
+        when (state) {
+            ConnectionState.Connected, ConnectionState.Connecting -> {
+                sseEscalationJob?.cancel()
+                sseEscalationJob = null
+            }
+            is ConnectionState.Error -> scheduleSseEscalation(connection, state)
+            ConnectionState.Disconnected -> {
+                sseEscalationJob?.cancel()
+                sseEscalationJob = null
+            }
+        }
+    }
+
+    private fun scheduleSseEscalation(connection: Connection, state: ConnectionState.Error) {
+        sseEscalationJob?.cancel()
+        sseEscalationJob = scope.launch {
+            val settings = settingsDataStore.connectionSettings.first()
+            if (!settings.autoReconnect) {
+                AppLog.w(TAG, "SSE error with autoReconnect=false; escalating to Disconnected")
+                if (_connection.value === connection && _connectionState.value is ConnectionState.Error) {
+                    connection.eventSource.disconnect()
+                }
+                return@launch
+            }
+
+            delay(settings.reconnectTimeoutSeconds * 1000L)
+            if (_connection.value === connection && _connectionState.value is ConnectionState.Error) {
+                AppLog.w(TAG, "SSE remained in Error after ${settings.reconnectTimeoutSeconds}s; escalating to Disconnected: ${state.message}")
+                connection.eventSource.disconnect()
+            }
+        }
     }
 
     /**
@@ -209,6 +269,7 @@ class ConnectionManager constructor(
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .connectionPool(sharedConnectionPool)
+            .dispatcher(sharedDispatcher)
 
         if (config.username != null && password != null) {
             builder.addInterceptor(createAuthInterceptor(config.username, password))
@@ -225,19 +286,23 @@ class ConnectionManager constructor(
     private fun buildOkHttpClient(base: OkHttpClient): OkHttpClient =
         base.newBuilder()
             .readTimeout(60, TimeUnit.SECONDS)
-            .addInterceptor(HttpLoggingInterceptor().apply {
-                level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.NONE
-                redactHeader("Authorization")
-            })
+            .addInterceptor(
+                HttpLoggingInterceptor().apply {
+                    level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.NONE
+                    redactHeader("Authorization")
+                }
+            )
             .build()
 
     private fun buildSseOkHttpClient(base: OkHttpClient): OkHttpClient =
         base.newBuilder()
             .readTimeout(0, TimeUnit.SECONDS)
-            .addInterceptor(HttpLoggingInterceptor().apply {
-                level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.HEADERS else HttpLoggingInterceptor.Level.NONE
-                redactHeader("Authorization")
-            })
+            .addInterceptor(
+                HttpLoggingInterceptor().apply {
+                    level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.HEADERS else HttpLoggingInterceptor.Level.NONE
+                    redactHeader("Authorization")
+                }
+            )
             .build()
 
     /**
@@ -246,7 +311,7 @@ class ConnectionManager constructor(
      */
     private fun buildWebSocketOkHttpClient(base: OkHttpClient): OkHttpClient =
         base.newBuilder()
-            .readTimeout(0, TimeUnit.SECONDS)  // No timeout for WebSocket
+            .readTimeout(0, TimeUnit.SECONDS) // No timeout for WebSocket
             .pingInterval(30, TimeUnit.SECONDS)
             .build()
 

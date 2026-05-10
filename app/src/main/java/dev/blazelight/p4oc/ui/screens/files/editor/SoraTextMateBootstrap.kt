@@ -2,6 +2,9 @@ package dev.blazelight.p4oc.ui.screens.files.editor
 
 import android.content.Context
 import android.util.Log
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import dev.blazelight.p4oc.ui.components.code.OpenCodeScopeColors
 import dev.blazelight.p4oc.ui.theme.opencode.OpenCodeTheme
 import io.github.rosemoe.sora.langs.textmate.registry.FileProviderRegistry
 import io.github.rosemoe.sora.langs.textmate.registry.GrammarRegistry
@@ -9,9 +12,6 @@ import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
 import io.github.rosemoe.sora.langs.textmate.registry.model.ThemeModel
 import io.github.rosemoe.sora.langs.textmate.registry.provider.AssetsFileResolver
 import org.eclipse.tm4e.core.registry.IThemeSource
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import dev.blazelight.p4oc.ui.components.code.OpenCodeScopeColors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicReference
 internal object SoraTextMateBootstrap {
 
     private const val TAG = "SoraTextMateBootstrap"
+
+    private const val DYNAMIC_THEME_PREFIX = "opencode-dynamic"
 
     /** Path to the bundled grammar manifest under `app/src/main/assets/`. */
     private const val LANGUAGES_CONFIG = "textmate/languages.json"
@@ -79,7 +81,7 @@ internal object SoraTextMateBootstrap {
      */
     @Synchronized
     fun applyTheme(theme: OpenCodeTheme): String {
-        val themeName = "opencode-${if (theme.isDark) "dark" else "light"}-${theme.name.hashCode()}"
+        val themeName = "$DYNAMIC_THEME_PREFIX-${if (theme.isDark) "dark" else "light"}"
         val registry = ThemeRegistry.getInstance()
         val json = buildThemeJson(themeName, theme)
         val source = IThemeSource.fromString(IThemeSource.ContentType.JSON, json)
@@ -138,5 +140,4 @@ internal object SoraTextMateBootstrap {
 }
         """.trimIndent()
     }
-
 }

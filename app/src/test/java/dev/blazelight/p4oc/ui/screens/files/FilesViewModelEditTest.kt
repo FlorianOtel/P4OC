@@ -10,6 +10,8 @@ import dev.blazelight.p4oc.data.files.FileWriteRequest
 import dev.blazelight.p4oc.data.files.FileWriteResult
 import dev.blazelight.p4oc.domain.model.FileContent
 import dev.blazelight.p4oc.domain.model.Symbol
+import dev.blazelight.p4oc.ui.screens.files.upload.UploadCoordinator
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -41,7 +43,7 @@ class FilesViewModelEditTest {
     @Test
     fun loadFileContent_initialisesEditBaseline() = runTest {
         val repo = FakeRepo(content = "hello\nworld", hash = "baseline")
-        val vm = FilesViewModel(repo)
+        val vm = FilesViewModel(repo, testUploadCoordinator(repo))
         vm.loadFileContent("a.txt")
         val edit = vm.editState.value
         assertEquals("a.txt", edit.path)
@@ -54,7 +56,7 @@ class FilesViewModelEditTest {
     @Test
     fun onEditorTextChange_marksDirtyAndPreservesOriginal() = runTest {
         val repo = FakeRepo(content = "first")
-        val vm = FilesViewModel(repo)
+        val vm = FilesViewModel(repo, testUploadCoordinator(repo))
         vm.loadFileContent("x")
         vm.onEditorTextChange("first edited")
         val edit = vm.editState.value
@@ -66,7 +68,7 @@ class FilesViewModelEditTest {
     @Test
     fun confirmSave_okClearsDirtyAndUpdatesOriginalAndReadView() = runTest {
         val repo = FakeRepo(content = "v1", hash = "baseline")
-        val vm = FilesViewModel(repo)
+        val vm = FilesViewModel(repo, testUploadCoordinator(repo))
         vm.loadFileContent("p")
         vm.onEditorTextChange("v2")
         vm.requestSave()
@@ -86,7 +88,7 @@ class FilesViewModelEditTest {
     @Test
     fun overwriteAnyway_sendsNullExpectedHashEvenIfBaselinePresent() = runTest {
         val repo = FakeRepo(content = "v1", hash = "baseline")
-        val vm = FilesViewModel(repo)
+        val vm = FilesViewModel(repo, testUploadCoordinator(repo))
         vm.loadFileContent("p")
         vm.onEditorTextChange("v2")
         vm.overwriteAnyway()
@@ -97,7 +99,7 @@ class FilesViewModelEditTest {
     @Test
     fun confirmSave_conflictRoutesToConflictState() = runTest {
         val repo = FakeRepo(content = "v1", writeResult = FileOperationResult.Conflict("stale", currentHash = "abc"))
-        val vm = FilesViewModel(repo)
+        val vm = FilesViewModel(repo, testUploadCoordinator(repo))
         vm.loadFileContent("p")
         vm.onEditorTextChange("v2")
         vm.requestSave()
@@ -112,7 +114,7 @@ class FilesViewModelEditTest {
     @Test
     fun discardEdits_resetsBufferAndBumpsGeneration() = runTest {
         val repo = FakeRepo(content = "orig")
-        val vm = FilesViewModel(repo)
+        val vm = FilesViewModel(repo, testUploadCoordinator(repo))
         vm.loadFileContent("p")
         val gen0 = vm.editState.value.contentGeneration
         vm.onEditorTextChange("dirty")
@@ -126,7 +128,7 @@ class FilesViewModelEditTest {
     @Test
     fun requestSaveWithoutChanges_isNoOp() = runTest {
         val repo = FakeRepo(content = "same")
-        val vm = FilesViewModel(repo)
+        val vm = FilesViewModel(repo, testUploadCoordinator(repo))
         vm.loadFileContent("p")
         vm.requestSave()
         assertNull(vm.editState.value.pendingSavePreview)
@@ -154,6 +156,12 @@ class FilesViewModelEditTest {
             return writeResult
         }
 
+        override suspend fun createDirectory(path: String): FileOperationResult<Unit> =
+            FileOperationResult.Ok(Unit)
+
+        override suspend fun renameFile(fromPath: String, toPath: String): FileOperationResult<Unit> =
+            FileOperationResult.Ok(Unit)
+
         override suspend fun deleteFile(path: String): FileOperationResult<Unit> =
             FileOperationResult.Ok(Unit)
 
@@ -162,4 +170,9 @@ class FilesViewModelEditTest {
 
         override suspend fun capabilities(): FileCapabilities = FileCapabilities(canWrite = true)
     }
+
+    private fun testUploadCoordinator(repo: FileRepository) = UploadCoordinator(
+        scope = CoroutineScope(Dispatchers.Main),
+        repositoryFactory = { repo },
+    )
 }

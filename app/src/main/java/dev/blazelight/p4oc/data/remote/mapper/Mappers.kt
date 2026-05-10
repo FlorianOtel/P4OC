@@ -492,7 +492,13 @@ object CommandMapper {
         model = dto.model,
         template = (dto.template as? JsonPrimitive)?.contentOrNull,
         subtask = dto.subtask ?: false,
-        mcp = dto.mcp ?: false
+        mcp = dto.mcp ?: false,
+        source = when {
+            dto.mcp == true -> CommandSource.Mcp
+            dto.subtask == true -> CommandSource.Subtask
+            dto.agent != null -> CommandSource.Skill
+            else -> CommandSource.Custom
+        }
     )
 }
 

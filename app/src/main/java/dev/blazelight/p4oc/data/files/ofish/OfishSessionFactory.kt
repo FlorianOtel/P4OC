@@ -1,6 +1,7 @@
 package dev.blazelight.p4oc.data.files.ofish
 
 import dev.blazelight.p4oc.core.log.AppLog
+import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.security.SecureRandom
@@ -28,6 +29,7 @@ internal class OfishSessionFactory(
         operationName: String,
         block: suspend (OfishSession) -> T,
     ): T {
+        sweepStaleSessionsIfDue()
         val title = OfishSessionNames.build(operationName, nowMs(), shortId())
         val created = client.createSession(title)
         val session = OfishSession(id = created.id, title = created.title)
@@ -38,7 +40,10 @@ internal class OfishSessionFactory(
             synchronized(activeSessionIds) { activeSessionIds -= session.id }
             withContext(NonCancellable) {
                 runCatching { client.deleteSession(session.id) }
-                    .onFailure { error -> AppLog.w(TAG, "Failed to delete OFISH session ${session.id}: ${error.message}") }
+                    .onFailure { error -> AppLog.w(
+                        TAG,
+                        "Failed to delete OFISH session ${session.id}: ${error.message}"
+                    ) }
             }
         }
     }
@@ -81,16 +86,49 @@ internal class OfishSessionFactory(
         }
     }
 
+    private suspend fun sweepStaleSessionsIfDue() {
+        val now = nowMs()
+        val workspaceKey = client.workspace.sweepKey()
+        val shouldSweep = synchronized(lastSweepByWorkspace) {
+            val lastSweepAt = lastSweepByWorkspace[workspaceKey]
+            if (lastSweepAt != null && now - lastSweepAt < SWEEP_INTERVAL_MILLIS) {
+                false
+            } else {
+                lastSweepByWorkspace[workspaceKey] = now
+                true
+            }
+        }
+        if (!shouldSweep) return
+
+        val report = sweepStaleSessions(maxAgeMillis = STALE_SESSION_AGE_MILLIS)
+        AppLog.i(
+            TAG,
+            "OFISH stale session sweep workspace=$workspaceKey scanned=${report.scanned} stale=${report.staleFound} deleted=${report.deleted} failed=${report.failed}",
+        )
+    }
+
     private companion object {
         const val TAG = "OfishSessionFactory"
         const val DEFAULT_SWEEP_LIMIT = 100
+        const val STALE_SESSION_AGE_MILLIS = 6 * 60 * 60 * 1000L
+        const val SWEEP_INTERVAL_MILLIS = 30 * 60 * 1000L
 
         private val RANDOM = SecureRandom()
+        private val lastSweepByWorkspace = mutableMapOf<String, Long>()
 
         fun randomShortId(): String {
             val bytes = ByteArray(4)
             RANDOM.nextBytes(bytes)
             return bytes.joinToString(separator = "") { byte -> "%02x".format(byte) }
+        }
+
+        fun dev.blazelight.p4oc.domain.workspace.Workspace.sweepKey(): String {
+            val workspacePart = when (val key = key) {
+                WorkspaceKey.Global -> "global"
+                is WorkspaceKey.Directory -> "directory:${key.value}"
+                is WorkspaceKey.SessionScoped -> "session:${key.sessionId.value}"
+            }
+            return "${server.endpointKey}|$workspacePart"
         }
     }
 }

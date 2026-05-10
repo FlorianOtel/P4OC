@@ -1,10 +1,8 @@
 package dev.blazelight.p4oc.ui.components.chat
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
@@ -16,9 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.data.remote.dto.AgentDto
@@ -26,19 +23,19 @@ import dev.blazelight.p4oc.data.remote.dto.ModelDto
 import dev.blazelight.p4oc.data.remote.dto.ModelInput
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
-import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
 
 @Composable
 private fun getAgentColor(agent: AgentDto?): Color {
     if (agent == null) return SemanticColors.AgentSelector.build
-    
+
     agent.color?.let { hex ->
         try {
             return Color(android.graphics.Color.parseColor(hex))
         } catch (_: Exception) {}
     }
-    
+
     return SemanticColors.AgentSelector.forName(agent.name)
 }
 
@@ -68,7 +65,7 @@ fun ModelAgentSelectorBar(
 ) {
     val theme = LocalOpenCodeTheme.current
     var showModelPicker by remember { mutableStateOf(false) }
-    
+
     val selectModelText = stringResource(R.string.select_model)
     val selectedModelName = remember(selectedModel, availableModels, selectModelText) {
         if (selectedModel == null) return@remember selectModelText
@@ -90,7 +87,7 @@ fun ModelAgentSelectorBar(
             if (availableAgents.isNotEmpty()) {
                 val currentAgent = availableAgents.find { it.name == selectedAgent }
                 val agentColor = getAgentColor(currentAgent)
-                
+
                 Surface(
                     onClick = {
                         val currentIndex = availableAgents.indexOfFirst { it.name == selectedAgent }
@@ -162,7 +159,7 @@ fun ModelAgentSelectorBar(
             selectedModel = selectedModel,
             favoriteModels = favoriteModels,
             recentModels = recentModels,
-            onModelSelected = { 
+            onModelSelected = {
                 onModelSelected(it)
                 showModelPicker = false
             },
@@ -209,7 +206,7 @@ fun ModelPickerDialog(
 
     val filteredModels = remember(enhancedModels, searchQuery, selectedCategory) {
         enhancedModels.filter { model ->
-            val matchesSearch = searchQuery.isBlank() || 
+            val matchesSearch = searchQuery.isBlank() ||
                 model.name.contains(searchQuery, ignoreCase = true) ||
                 model.model.providerID.contains(searchQuery, ignoreCase = true)
             val matchesCategory = selectedCategory == null || model.model.providerID == selectedCategory
@@ -334,8 +331,8 @@ fun ModelPickerDialog(
                         TuiFilterTab(
                             text = provider.lowercase(),
                             selected = selectedCategory == provider,
-                            onClick = { 
-                                selectedCategory = if (selectedCategory == provider) null else provider 
+                            onClick = {
+                                selectedCategory = if (selectedCategory == provider) null else provider
                             }
                         )
                     }
@@ -441,7 +438,9 @@ private fun TuiFilterTab(
         shape = RectangleShape,
         border = if (selected) {
             androidx.compose.foundation.BorderStroke(Sizing.strokeMd, theme.accent.copy(alpha = 0.5f))
-        } else null
+        } else {
+            null
+        }
     ) {
         Text(
             text = text,
@@ -473,7 +472,7 @@ private fun TuiModelListItem(
     onToggleFavorite: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     Surface(
         onClick = onSelect,
         color = if (isSelected) theme.accent.copy(alpha = 0.1f) else Color.Transparent,
@@ -492,7 +491,7 @@ private fun TuiModelListItem(
                 style = MaterialTheme.typography.bodyMedium,
                 color = theme.accent
             )
-            
+
             // Model info
             Column(modifier = Modifier.weight(1f)) {
                 Row(
@@ -508,7 +507,7 @@ private fun TuiModelListItem(
                         modifier = Modifier.weight(1f, fill = false)
                     )
                 }
-                
+
                 // Metadata row
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -549,7 +548,7 @@ private fun TuiModelListItem(
                     }
                 }
             }
-            
+
             // Favorite button
             IconButton(
                 onClick = onToggleFavorite,

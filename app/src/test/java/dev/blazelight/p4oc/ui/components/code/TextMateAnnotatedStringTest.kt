@@ -138,7 +138,10 @@ class TextMateAnnotatedStringTest {
             python = load(Registry(), File(root, "python/python.tmLanguage.json"))
             typescript = load(Registry(), File(root, "typescript/typescript.tmLanguage.json"))
             markdown = load(Registry(), File(root, "markdown/markdown.tmLanguage.json"))
-            assertNotNull(kotlin); assertNotNull(python); assertNotNull(typescript); assertNotNull(markdown)
+            assertNotNull(kotlin);
+            assertNotNull(python);
+            assertNotNull(typescript);
+            assertNotNull(markdown)
         }
     }
 }

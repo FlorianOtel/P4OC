@@ -180,6 +180,11 @@ class OfishFileRepositoryTest {
         override suspend fun writeFile(request: FileWriteRequest): FileOperationResult<FileWriteResult> =
             FileOperationResult.Ok(FileWriteResult(request.path))
 
+        override suspend fun createDirectory(path: String): FileOperationResult<Unit> = FileOperationResult.Ok(Unit)
+
+        override suspend fun renameFile(fromPath: String, toPath: String): FileOperationResult<Unit> =
+            FileOperationResult.Ok(Unit)
+
         override suspend fun deleteFile(path: String): FileOperationResult<Unit> = FileOperationResult.Ok(Unit)
 
         override suspend fun uploadFile(request: FileUploadRequest): FileOperationResult<FileUploadResult> =

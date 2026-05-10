@@ -40,7 +40,10 @@ class FilePathValidatorTest {
     @Test
     fun `mutation rejects root variants`() {
         listOf("", " ", ".", "/", "///").forEach { path ->
-            assertTrue("Expected mutation root to be rejected: $path", FilePathValidator.normalizeForMutation(path).isFailure)
+            assertTrue(
+                "Expected mutation root to be rejected: $path",
+                FilePathValidator.normalizeForMutation(path).isFailure
+            )
         }
     }
 

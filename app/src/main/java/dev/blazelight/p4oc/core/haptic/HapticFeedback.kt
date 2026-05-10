@@ -86,9 +86,15 @@ class HapticFeedback(private val context: Context) {
         VibrationPattern.None -> VibrationEffect.createOneShot(0L, 0)
         VibrationPattern.Tick -> VibrationEffect.createOneShot(TICK_DURATION_MS, VibrationEffect.DEFAULT_AMPLITUDE)
         VibrationPattern.Click -> VibrationEffect.createOneShot(CLICK_DURATION_MS, VibrationEffect.DEFAULT_AMPLITUDE)
-        VibrationPattern.HeavyClick -> VibrationEffect.createOneShot(HEAVY_CLICK_DURATION_MS, VibrationEffect.DEFAULT_AMPLITUDE)
+        VibrationPattern.HeavyClick -> VibrationEffect.createOneShot(
+            HEAVY_CLICK_DURATION_MS,
+            VibrationEffect.DEFAULT_AMPLITUDE
+        )
         VibrationPattern.DoubleClick -> VibrationEffect.createWaveform(longArrayOf(0L, 45L, 80L, 45L), -1)
-        VibrationPattern.LongPulse -> VibrationEffect.createOneShot(LONG_PULSE_DURATION_MS, VibrationEffect.DEFAULT_AMPLITUDE)
+        VibrationPattern.LongPulse -> VibrationEffect.createOneShot(
+            LONG_PULSE_DURATION_MS,
+            VibrationEffect.DEFAULT_AMPLITUDE
+        )
         VibrationPattern.DoubleLongPulse -> VibrationEffect.createWaveform(
             longArrayOf(0L, LONG_PULSE_DURATION_MS, 120L, LONG_PULSE_DURATION_MS),
             -1,

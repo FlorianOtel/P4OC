@@ -1,7 +1,5 @@
 package dev.blazelight.p4oc.ui.tabs
 
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -15,14 +13,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import dev.blazelight.p4oc.domain.model.SessionConnectionState
-import dev.blazelight.p4oc.domain.model.SessionStateColors
+import dev.blazelight.p4oc.domain.model.SessionPresence
+import dev.blazelight.p4oc.ui.components.status.SessionStatusDot
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
@@ -45,7 +43,7 @@ fun TabBar(
 ) {
     val theme = LocalOpenCodeTheme.current
     val listState = rememberLazyListState()
-    
+
     // Auto-scroll to active tab when it changes
     LaunchedEffect(activeTabId) {
         val activeIndex = tabs.indexOfFirst { it.id == activeTabId }
@@ -53,7 +51,7 @@ fun TabBar(
             listState.animateScrollToItem(activeIndex)
         }
     }
-    
+
     Surface(
         modifier = modifier.fillMaxWidth().testTag("tab_bar"),
         color = theme.background,
@@ -80,7 +78,7 @@ fun TabBar(
                     val title = tabTitles[tab.id] ?: "Tab"
                     val icon = tabIcons[tab.id] ?: Icons.Default.Tab
                     val connectionState = tabConnectionStates[tab.id]
-                    
+
                     TabIndicator(
                         title = title,
                         icon = icon,
@@ -91,7 +89,7 @@ fun TabBar(
                     )
                 }
             }
-            
+
             // Add button
             IconButton(
                 onClick = onAddClick,
@@ -122,29 +120,14 @@ private fun TabIndicator(
     modifier: Modifier = Modifier
 ) {
     val theme = LocalOpenCodeTheme.current
-    
-    // Pulse animation for BUSY and AWAITING_INPUT states
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.6f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = EaseInOut),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseAlpha"
-    )
-    
-    val shouldPulse = connectionState?.shouldPulse == true
-    val indicatorColor = SessionStateColors.forStateOrNull(connectionState)
-    val needsAttention = connectionState?.showsAttentionBadge == true
-    
+    val needsAttention = connectionState == SessionPresence.AWAITING_INPUT
+
     val backgroundColor = when {
-        needsAttention && !isActive -> theme.warning.copy(alpha = if (shouldPulse) pulseAlpha * 0.15f else 0.15f)
+        needsAttention && !isActive -> theme.warning.copy(alpha = 0.15f)
         isActive -> theme.backgroundElement
         else -> theme.background
     }
-    
+
     Surface(
         modifier = modifier
             .height(Sizing.tabHeight)
@@ -157,33 +140,11 @@ private fun TabIndicator(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
         ) {
-            // State indicator dot (only for chat tabs with connection state)
-            if (indicatorColor != null) {
-                Box(
-                    modifier = Modifier
-                        .size(if (isActive) Sizing.indicatorDotActive else Sizing.indicatorDot)
-                        .alpha(if (shouldPulse) pulseAlpha else 1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Circle,
-                        contentDescription = connectionState?.name,
-                        modifier = Modifier.size(if (isActive) Sizing.indicatorDotActive else Sizing.indicatorDot),
-                        tint = indicatorColor
-                    )
-                    
-                    // Badge for AWAITING_INPUT
-                    if (connectionState?.showsAttentionBadge == true) {
-                        Icon(
-                            imageVector = Icons.Default.PriorityHigh,
-                            contentDescription = "Needs attention",
-                            modifier = Modifier
-                                .size(Spacing.sm)
-                                .offset(x = Spacing.xs, y = -Spacing.xs),
-                            tint = theme.warning
-                        )
-                    }
-                }
+            if (connectionState != null) {
+                SessionStatusDot(
+                    presence = connectionState,
+                    size = if (isActive) Sizing.indicatorDotActive else Sizing.indicatorDot,
+                )
             } else {
                 // Icon for non-chat tabs
                 Icon(
@@ -193,7 +154,7 @@ private fun TabIndicator(
                     tint = if (isActive) theme.text else theme.textMuted
                 )
             }
-            
+
             // Truncated title
             Text(
                 text = title,
@@ -207,7 +168,7 @@ private fun TabIndicator(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = Sizing.panelWidthSm)
             )
-            
+
             // Close button only shows on the active tab.
             if (isActive) {
                 Icon(

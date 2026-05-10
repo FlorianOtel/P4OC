@@ -3,8 +3,8 @@ package dev.blazelight.p4oc.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.blazelight.p4oc.core.network.ConnectionManager
-import dev.blazelight.p4oc.data.remote.dto.ModelDto
 import dev.blazelight.p4oc.data.remote.dto.ProviderDto
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,7 +19,6 @@ data class ProviderConfigUiState(
     val currentModel: String? = null,
     val selectedProviderId: String? = null
 )
-
 
 class ProviderConfigViewModel constructor(
     private val connectionManager: ConnectionManager
@@ -42,7 +41,7 @@ class ProviderConfigViewModel constructor(
             try {
                 val providersResponse = api.getProviders()
                 val config = api.getConfig()
-                
+
                 _uiState.update { state ->
                     state.copy(
                         isLoading = false,
@@ -52,12 +51,14 @@ class ProviderConfigViewModel constructor(
                         error = null
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _uiState.update { 
+                _uiState.update {
                     it.copy(
-                        isLoading = false, 
+                        isLoading = false,
                         error = e.message ?: "Failed to load providers"
-                    ) 
+                    )
                 }
             }
         }
@@ -79,6 +80,8 @@ class ProviderConfigViewModel constructor(
                 val updatedConfig = currentConfig.copy(model = newModel)
                 api.updateConfig(updatedConfig)
                 _uiState.update { it.copy(currentModel = newModel) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message ?: "Failed to set model") }
             }

@@ -1,10 +1,10 @@
 package dev.blazelight.p4oc.ui.screens.chat
 
+import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.safeApiCall
-import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.data.remote.dto.AgentDto
 import dev.blazelight.p4oc.data.remote.dto.ModelDto
 import dev.blazelight.p4oc.data.remote.dto.ModelInput
@@ -90,7 +90,8 @@ class ModelAgentManager(
                     val lastUsedModel = recentModels.value.firstOrNull()
                     val selectedModel = if (lastUsedModel != null && models.any {
                             it.first == lastUsedModel.providerID && it.second.id == lastUsedModel.modelID
-                        }) {
+                        }
+                    ) {
                         lastUsedModel
                     } else {
                         defaultModel

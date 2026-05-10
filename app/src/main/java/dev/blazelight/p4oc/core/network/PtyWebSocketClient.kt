@@ -4,13 +4,13 @@ import dev.blazelight.p4oc.core.log.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -48,22 +48,23 @@ class PtyWebSocketClient constructor(
 
     private var currentWebSocket: WebSocket? = null
     private var currentPtyId: String? = null
-    
+
     // Track the last PTY ID for reconnection after background disconnect
     private var lastPtyId: String? = null
     private val reconnectAttempts = AtomicInteger(0)
+
     @Volatile
     private var userDisconnected: Boolean = false
-    
+
     // Generation counter to detect stale WebSocket callbacks.
     // Incremented on each connect(); callbacks check their captured generation
     // against the current value to avoid corrupting a newer connection.
     @Volatile
     private var generation: Long = 0L
-    
+
     // Lock to prevent race conditions in connect/disconnect
     private val connectionLock = Any()
-    
+
     // Fallback OkHttpClient for unauthenticated connections
     private val fallbackOkHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -121,71 +122,77 @@ class PtyWebSocketClient constructor(
             // The auth interceptor automatically adds Authorization headers.
             val wsClient = connectionManager.authOkHttpClient.value ?: fallbackOkHttpClient
 
-            currentWebSocket = wsClient.newWebSocket(request, object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    synchronized(connectionLock) {
-                        if (generation != gen) {
-                            AppLog.d(TAG, "Stale onOpen (gen=$gen, current=$generation), ignoring")
-                            webSocket.close(1000, "Stale connection")
-                            return
+            currentWebSocket = wsClient.newWebSocket(
+                request,
+                object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        synchronized(connectionLock) {
+                            if (generation != gen) {
+                                AppLog.d(TAG, "Stale onOpen (gen=$gen, current=$generation), ignoring")
+                                webSocket.close(1000, "Stale connection")
+                                return
+                            }
+                            AppLog.d(TAG, "WebSocket connected to $ptyId")
+                            reconnectAttempts.set(0)
+                            _connectionState.value = ConnectionState.Connected(ptyId)
                         }
-                        AppLog.d(TAG, "WebSocket connected to $ptyId")
-                        reconnectAttempts.set(0)
-                        _connectionState.value = ConnectionState.Connected(ptyId)
                     }
-                }
 
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (generation != gen) return
-                    AppLog.v(TAG, "Received: ${text.take(100)}${if (text.length > 100) "..." else ""}")
-                    scope.launch {
-                        _output.emit(text)
-                    }
-                }
-
-                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                    AppLog.d(TAG, "WebSocket closing: $code $reason")
-                    webSocket.close(1000, null)
-                }
-
-                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    AppLog.d(TAG, "WebSocket closed: $code $reason (gen=$gen)")
-                    val ptyIdForReconnect: String?
-                    synchronized(connectionLock) {
-                        if (generation != gen) {
-                            AppLog.d(TAG, "Stale onClosed (gen=$gen, current=$generation), ignoring")
-                            return
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        if (generation != gen) return
+                        AppLog.v(TAG, "Received: ${text.take(100)}${if (text.length > 100) "..." else ""}")
+                        // This is a bounded handoff to the terminal collector, not upstream
+                        // backpressure to OkHttp. If rendering falls behind far enough to
+                        // fill the buffer, drop the frame rather than spawning unbounded work.
+                        if (!_output.tryEmit(text)) {
+                            AppLog.w(TAG, "Dropped PTY output frame because terminal output buffer is full")
                         }
-                        currentWebSocket = null
-                        ptyIdForReconnect = currentPtyId
-                        currentPtyId = null
-                        _connectionState.value = ConnectionState.Disconnected
                     }
-                    // Attempt reconnection if not user-initiated
-                    if (!userDisconnected && ptyIdForReconnect != null) {
-                        scheduleReconnect(ptyIdForReconnect)
-                    }
-                }
 
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    AppLog.e(TAG, "WebSocket error: ${t.message} (gen=$gen)", t)
-                    val ptyIdForReconnect: String?
-                    synchronized(connectionLock) {
-                        if (generation != gen) {
-                            AppLog.d(TAG, "Stale onFailure (gen=$gen, current=$generation), ignoring")
-                            return
-                        }
-                        currentWebSocket = null
-                        ptyIdForReconnect = currentPtyId
-                        currentPtyId = null
-                        _connectionState.value = ConnectionState.Error(t.message ?: "Unknown error")
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                        AppLog.d(TAG, "WebSocket closing: $code $reason")
+                        webSocket.close(1000, null)
                     }
-                    // Attempt reconnection if not user-initiated
-                    if (!userDisconnected && ptyIdForReconnect != null) {
-                        scheduleReconnect(ptyIdForReconnect)
+
+                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                        AppLog.d(TAG, "WebSocket closed: $code $reason (gen=$gen)")
+                        val ptyIdForReconnect: String?
+                        synchronized(connectionLock) {
+                            if (generation != gen) {
+                                AppLog.d(TAG, "Stale onClosed (gen=$gen, current=$generation), ignoring")
+                                return
+                            }
+                            currentWebSocket = null
+                            ptyIdForReconnect = currentPtyId
+                            currentPtyId = null
+                            _connectionState.value = ConnectionState.Disconnected
+                        }
+                        // Attempt reconnection if not user-initiated
+                        if (!userDisconnected && ptyIdForReconnect != null) {
+                            scheduleReconnect(ptyIdForReconnect)
+                        }
+                    }
+
+                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                        AppLog.e(TAG, "WebSocket error: ${t.message} (gen=$gen)", t)
+                        val ptyIdForReconnect: String?
+                        synchronized(connectionLock) {
+                            if (generation != gen) {
+                                AppLog.d(TAG, "Stale onFailure (gen=$gen, current=$generation), ignoring")
+                                return
+                            }
+                            currentWebSocket = null
+                            ptyIdForReconnect = currentPtyId
+                            currentPtyId = null
+                            _connectionState.value = ConnectionState.Error(t.message ?: "Unknown error")
+                        }
+                        // Attempt reconnection if not user-initiated
+                        if (!userDisconnected && ptyIdForReconnect != null) {
+                            scheduleReconnect(ptyIdForReconnect)
+                        }
                     }
                 }
-            })
+            )
         }
     }
 
@@ -251,7 +258,7 @@ class PtyWebSocketClient constructor(
         }
     }
 
-    fun isConnected(): Boolean = currentWebSocket != null && 
+    fun isConnected(): Boolean = currentWebSocket != null &&
         _connectionState.value is ConnectionState.Connected
 
     fun getCurrentPtyId(): String? = currentPtyId

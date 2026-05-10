@@ -95,7 +95,7 @@ class ThemeLoaderTest {
     @Test
     fun `parseTheme parses catppuccin theme correctly`() {
         val theme = ThemeLoader.parseTheme(catppuccinThemeJson, "catppuccin", isDark = true)
-        
+
         assertEquals("catppuccin", theme.name)
         assertTrue(theme.isDark)
         // primary references "blue" -> #89b4fa
@@ -109,7 +109,7 @@ class ThemeLoaderTest {
     @Test
     fun `parseTheme resolves color references from defs`() {
         val theme = ThemeLoader.parseTheme(catppuccinThemeJson, "catppuccin", isDark = true)
-        
+
         // background references "base" -> #1e1e2e
         assertEquals(Color(0xFF1e1e2e), theme.background)
         // backgroundPanel references "mantle" -> #181825
@@ -121,7 +121,7 @@ class ThemeLoaderTest {
     @Test
     fun `parseTheme handles direct hex values`() {
         val theme = ThemeLoader.parseTheme(catppuccinThemeJson, "catppuccin", isDark = true)
-        
+
         // diffAddedBg is a direct hex: #1a2f1a
         assertEquals(Color(0xFF1a2f1a), theme.diffAddedBg)
         // diffRemovedBg is a direct hex: #2f1a1a
@@ -131,7 +131,7 @@ class ThemeLoaderTest {
     @Test
     fun `parseTheme parses all syntax colors`() {
         val theme = ThemeLoader.parseTheme(catppuccinThemeJson, "catppuccin", isDark = true)
-        
+
         // syntaxKeyword references "mauve" -> #cba6f7
         assertEquals(Color(0xFFcba6f7), theme.syntaxKeyword)
         // syntaxString references "green" -> #a6e3a1
@@ -143,7 +143,7 @@ class ThemeLoaderTest {
     @Test
     fun `parseTheme parses all markdown colors`() {
         val theme = ThemeLoader.parseTheme(catppuccinThemeJson, "catppuccin", isDark = true)
-        
+
         // markdownLink references "blue" -> #89b4fa
         assertEquals(Color(0xFF89b4fa), theme.markdownLink)
         // markdownCode references "peach" -> #fab387
@@ -153,7 +153,7 @@ class ThemeLoaderTest {
     @Test
     fun `parseTheme parses all diff colors`() {
         val theme = ThemeLoader.parseTheme(catppuccinThemeJson, "catppuccin", isDark = true)
-        
+
         // diffAdded references "green" -> #a6e3a1
         assertEquals(Color(0xFFa6e3a1), theme.diffAdded)
         // diffRemoved references "red" -> #f38ba8
@@ -164,7 +164,7 @@ class ThemeLoaderTest {
     fun `parseTheme handles dark mode boolean`() {
         val darkTheme = ThemeLoader.parseTheme(catppuccinThemeJson, "test", isDark = true)
         val lightTheme = ThemeLoader.parseTheme(catppuccinThemeJson, "test", isDark = false)
-        
+
         assertTrue(darkTheme.isDark)
         assertFalse(lightTheme.isDark)
     }
@@ -173,7 +173,7 @@ class ThemeLoaderTest {
     fun `parseTheme preserves theme name`() {
         val theme1 = ThemeLoader.parseTheme(catppuccinThemeJson, "custom-name", isDark = true)
         val theme2 = ThemeLoader.parseTheme(catppuccinThemeJson, "another-name", isDark = true)
-        
+
         assertEquals("custom-name", theme1.name)
         assertEquals("another-name", theme2.name)
     }

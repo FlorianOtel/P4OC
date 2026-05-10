@@ -47,6 +47,7 @@ fun FileViewerScreen(
     val editState by viewModel.editState.collectAsStateWithLifecycle()
     var showLineNumbers by remember { mutableStateOf(true) }
     var editMode by remember { mutableStateOf(false) }
+
     /** Pending discard prompt; routes to either "exit edit" or "navigate back". */
     var pendingDiscard by remember { mutableStateOf<DiscardIntent?>(null) }
 
@@ -99,10 +100,11 @@ fun FileViewerScreen(
                             .testTag("file_viewer_toggle_line_numbers")
                     ) {
                         Icon(
-                            imageVector = if (showLineNumbers)
+                            imageVector = if (showLineNumbers) {
                                 Icons.Default.FormatListNumbered
-                            else
-                                Icons.Default.FormatListNumberedRtl,
+                            } else {
+                                Icons.Default.FormatListNumberedRtl
+                            },
                             contentDescription = stringResource(R.string.cd_toggle_line_numbers),
                             modifier = Modifier.size(Sizing.iconAction)
                         )

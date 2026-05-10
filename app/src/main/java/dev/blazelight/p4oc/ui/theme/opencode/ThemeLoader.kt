@@ -2,23 +2,23 @@ package dev.blazelight.p4oc.ui.theme.opencode
 
 import android.content.Context
 import androidx.compose.ui.graphics.Color
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Loads and parses OpenCode theme.json files.
  * Handles color reference resolution and dark/light mode selection.
  */
 object ThemeLoader {
-    
+
     private val json = Json { ignoreUnknownKeys = true }
     private val themeCache = ConcurrentHashMap<String, OpenCodeTheme>()
 
-    private fun cacheKey(themeName: String, isDark: Boolean): String = "${themeName}_${isDark}"
+    private fun cacheKey(themeName: String, isDark: Boolean): String = "${themeName}_$isDark"
 
     fun getCachedTheme(themeName: String, isDark: Boolean): OpenCodeTheme? {
         return themeCache[cacheKey(themeName, isDark)]
@@ -38,7 +38,7 @@ object ThemeLoader {
     internal fun clearCacheForTest() {
         themeCache.clear()
     }
-    
+
     /**
      * Load a bundled theme from assets by name.
      */
@@ -51,7 +51,7 @@ object ThemeLoader {
         }
         return parseTheme(jsonString, themeName, isDark)
     }
-    
+
     /**
      * Parse a theme from JSON string.
      */
@@ -59,7 +59,7 @@ object ThemeLoader {
         val root = json.parseToJsonElement(jsonString).jsonObject
         val defs = root["defs"]?.jsonObject ?: JsonObject(emptyMap())
         val theme = root["theme"]?.jsonObject ?: error("Theme must have 'theme' object")
-        
+
         fun resolveRef(ref: String): Color {
             // Could be a direct hex or a reference to defs
             return if (ref.startsWith("#")) {
@@ -69,10 +69,10 @@ object ThemeLoader {
                 parseHexColor(resolved)
             }
         }
-        
+
         fun resolveColor(key: String): Color {
             val value = theme[key] ?: return Color.Magenta // Fallback for missing keys
-            
+
             return when (value) {
                 // String primitive - either direct hex or reference
                 is JsonPrimitive -> {
@@ -93,11 +93,11 @@ object ThemeLoader {
                 }
             }
         }
-        
+
         return OpenCodeTheme(
             name = themeName,
             isDark = isDark,
-            
+
             // Core
             primary = resolveColor("primary"),
             secondary = resolveColor("secondary"),
@@ -105,20 +105,20 @@ object ThemeLoader {
             text = resolveColor("text"),
             textMuted = resolveColor("textMuted"),
             background = resolveColor("background"),
-            
+
             // Status
             error = resolveColor("error"),
             warning = resolveColor("warning"),
             success = resolveColor("success"),
             info = resolveColor("info"),
-            
+
             // Surfaces
             backgroundPanel = resolveColor("backgroundPanel"),
             backgroundElement = resolveColor("backgroundElement"),
             border = resolveColor("border"),
             borderActive = resolveColor("borderActive"),
             borderSubtle = resolveColor("borderSubtle"),
-            
+
             // Diff
             diffAdded = resolveColor("diffAdded"),
             diffRemoved = resolveColor("diffRemoved"),
@@ -132,7 +132,7 @@ object ThemeLoader {
             diffLineNumber = resolveColor("diffLineNumber"),
             diffAddedLineNumberBg = resolveColor("diffAddedLineNumberBg"),
             diffRemovedLineNumberBg = resolveColor("diffRemovedLineNumberBg"),
-            
+
             // Markdown
             markdownText = resolveColor("markdownText"),
             markdownHeading = resolveColor("markdownHeading"),
@@ -148,7 +148,7 @@ object ThemeLoader {
             markdownImage = resolveColor("markdownImage"),
             markdownImageText = resolveColor("markdownImageText"),
             markdownCodeBlock = resolveColor("markdownCodeBlock"),
-            
+
             // Syntax
             syntaxComment = resolveColor("syntaxComment"),
             syntaxKeyword = resolveColor("syntaxKeyword"),
@@ -161,7 +161,7 @@ object ThemeLoader {
             syntaxPunctuation = resolveColor("syntaxPunctuation")
         )
     }
-    
+
     /**
      * Parse hex color string to Compose Color.
      * Supports #RGB, #RRGGBB, and #AARRGGBB formats.
@@ -193,7 +193,7 @@ object ThemeLoader {
             Color.Magenta
         }
     }
-    
+
     /**
      * Get list of available bundled theme names.
      */

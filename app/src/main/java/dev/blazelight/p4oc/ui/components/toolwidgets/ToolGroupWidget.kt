@@ -1,48 +1,41 @@
 package dev.blazelight.p4oc.ui.components.toolwidgets
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Part
 import dev.blazelight.p4oc.domain.model.ToolState
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
-import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.R
 
 /**
  * Aggregated tool state for display purposes
  */
 private enum class AggregateToolState {
-    RUNNING,    // At least one tool is running
-    PENDING,    // At least one tool is pending (needs approval)
-    ERROR,      // At least one tool errored
-    COMPLETED   // All tools completed successfully
+    RUNNING, // At least one tool is running
+    PENDING, // At least one tool is pending (needs approval)
+    ERROR, // At least one tool errored
+    COMPLETED // All tools completed successfully
 }
 
 /**
@@ -58,7 +51,7 @@ private data class ToolGroup(
 /**
  * Tool group widget with progressive disclosure.
  * Shows HUD-style summary that can expand to show individual widgets.
- * 
+ *
  * Oneline: ✓ Read ×3 | ✓ Edit ×2 | ⟳ Bash
  * Compact: HUD + compact tool rows
  * Expanded: HUD + full tool widgets
@@ -73,20 +66,20 @@ fun ToolGroupWidget(
     modifier: Modifier = Modifier
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     // HITL tools (pending state) always show expanded
     val hasPendingTools = tools.any { it.state is ToolState.Pending }
     val effectiveDefault = if (hasPendingTools) ToolWidgetState.EXPANDED else defaultState
-    
+
     var currentState by remember(tools.firstOrNull()?.callID) { mutableStateOf(effectiveDefault) }
-    
+
     // Update state if tools become pending (HITL)
     LaunchedEffect(hasPendingTools) {
         if (hasPendingTools && currentState == ToolWidgetState.ONELINE) {
             currentState = ToolWidgetState.COMPACT
         }
     }
-    
+
     // Group tools by name and determine aggregate state
     val toolGroups = remember(tools) {
         tools.groupBy { it.toolName }
@@ -99,18 +92,22 @@ fun ToolGroupWidget(
                 }
                 ToolGroup(name, toolList.size, state, toolList)
             }
-            .sortedWith(compareBy(
-                // Sort: running first, then pending, then error, then completed
-                { when (it.state) {
-                    AggregateToolState.RUNNING -> 0
-                    AggregateToolState.PENDING -> 1
-                    AggregateToolState.ERROR -> 2
-                    AggregateToolState.COMPLETED -> 3
-                }},
-                { it.name }
-            ))
+            .sortedWith(
+                compareBy(
+                    // Sort: running first, then pending, then error, then completed
+                    {
+                        when (it.state) {
+                            AggregateToolState.RUNNING -> 0
+                            AggregateToolState.PENDING -> 1
+                            AggregateToolState.ERROR -> 2
+                            AggregateToolState.COMPLETED -> 3
+                        } 
+                    },
+                    { it.name }
+                )
+            )
     }
-    
+
     // Build the one-liner HUD text: "✓ Read ×3 | ✓ Edit ×2 | ⟳ Bash"
     val hudText = remember(toolGroups, theme) {
         buildAnnotatedString {
@@ -120,14 +117,14 @@ fun ToolGroupWidget(
                         append(" | ")
                     }
                 }
-                
+
                 val (icon, color) = when (group.state) {
                     AggregateToolState.RUNNING -> "◐" to theme.warning
                     AggregateToolState.PENDING -> "○" to theme.secondary
                     AggregateToolState.ERROR -> "✗" to theme.error
                     AggregateToolState.COMPLETED -> "✓" to theme.success
                 }
-                
+
                 withStyle(SpanStyle(color = color)) {
                     append(icon)
                 }
@@ -143,7 +140,7 @@ fun ToolGroupWidget(
             }
         }
     }
-    
+
     Column(modifier = modifier.fillMaxWidth()) {
         // HUD summary row - only visible in ONELINE mode
         if (currentState == ToolWidgetState.ONELINE) {
@@ -170,7 +167,7 @@ fun ToolGroupWidget(
                 )
             }
         }
-        
+
         // Compact/Expanded details - show individual widgets
         AnimatedVisibility(
             visible = currentState != ToolWidgetState.ONELINE,
@@ -178,7 +175,7 @@ fun ToolGroupWidget(
             exit = shrinkVertically()
         ) {
             Column(
-                verticalArrangement = Arrangement.spacedBy(1.dp)  // 1.dp = minimal spacing, no token
+                verticalArrangement = Arrangement.spacedBy(1.dp) // 1.dp = minimal spacing, no token
             ) {
                 tools.forEach { tool ->
                     when (currentState) {
@@ -189,7 +186,7 @@ fun ToolGroupWidget(
                                 onClick = { currentState = currentState.next() },
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            
+
                             // Show approval buttons if pending
                             if (tool.state is ToolState.Pending) {
                                 PendingApprovalButtonsInline(

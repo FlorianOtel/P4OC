@@ -6,29 +6,27 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Todo
+import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
-import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
+import dev.blazelight.p4oc.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,7 +106,7 @@ fun TodoTrackerSheet(
                     }
                 }
             }
-            
+
             HorizontalDivider(color = theme.border)
 
             // Progress bar
@@ -276,10 +274,11 @@ private fun TuiTodoItem(todo: Todo) {
             .fillMaxWidth()
             .animateContentSize()
             .clickable(role = Role.Button) { expanded = !expanded },
-        color = if (isCompleted || isCancelled)
+        color = if (isCompleted || isCancelled) {
             theme.backgroundElement.copy(alpha = 0.5f)
-        else
-            theme.backgroundElement,
+        } else {
+            theme.backgroundElement
+        },
         shape = RectangleShape
     ) {
         Row(
@@ -307,10 +306,11 @@ private fun TuiTodoItem(todo: Todo) {
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = if (todo.status == "in_progress") FontWeight.Medium else FontWeight.Normal,
                     textDecoration = if (isCompleted || isCancelled) TextDecoration.LineThrough else null,
-                    color = if (isCompleted || isCancelled)
+                    color = if (isCompleted || isCancelled) {
                         theme.textMuted
-                    else
-                        theme.text,
+                    } else {
+                        theme.text
+                    },
                     maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis
                 )

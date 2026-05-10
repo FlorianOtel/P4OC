@@ -8,7 +8,7 @@ import java.util.UUID
 
 /**
  * Represents a single tab in the top-level tab system.
- * 
+ *
  * Each tab has its own navigation stack (NavController created inside the pager page)
  * allowing independent navigation within each tab. Tabs are generic containers -
  * any screen type can be shown in any tab.
@@ -16,14 +16,14 @@ import java.util.UUID
 data class TabState(
     /** Unique identifier for this tab */
     val id: String = UUID.randomUUID().toString(),
-    
-    /** 
+
+    /**
      * Session ID if this tab is currently showing a chat session.
      * Used for uniqueness check - only one tab can show a given session.
      * Null if showing non-chat content (Sessions list, Files, Terminal, Settings).
      */
     val sessionId: String? = null,
-    
+
     /**
      * Optional session title for display in tab bar.
      * Only populated when sessionId is set.
@@ -51,22 +51,22 @@ class TabInstance(
     val sessionTitle: String? get() = state.sessionTitle
     val workspaceDirectory: String? get() = state.workspaceDirectory
     val workspaceRevision: Int get() = state.workspaceRevision
-    
+
     /** Connection state for this tab (only relevant for chat tabs) */
     private val _connectionState = MutableStateFlow<SessionConnectionState?>(null)
     val connectionState: StateFlow<SessionConnectionState?> = _connectionState.asStateFlow()
-    
+
     /** Update the connection state for this tab */
     fun updateConnectionState(state: SessionConnectionState?) {
         _connectionState.value = state
     }
-    
+
     fun withState(newState: TabState): TabInstance {
         return TabInstance(newState, startRoute).also {
             it._connectionState.value = this._connectionState.value
         }
     }
-    
+
     fun withSessionId(sessionId: String?, sessionTitle: String? = null): TabInstance {
         return withState(state.copy(sessionId = sessionId, sessionTitle = sessionTitle))
     }

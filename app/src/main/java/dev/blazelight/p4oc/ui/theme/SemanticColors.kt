@@ -8,7 +8,7 @@ import androidx.compose.ui.graphics.Color
  * Uses theme colors where possible, with Material-derived fallbacks for specificity.
  */
 object SemanticColors {
-    
+
     // Git Status Colors - map to theme semantic colors
     object Git {
         val added: Color @Composable get() = LocalOpenCodeTheme.current.success
@@ -20,48 +20,48 @@ object SemanticColors {
         val unmerged: Color @Composable get() = LocalOpenCodeTheme.current.warning
         val unknown: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
     }
-    
+
     // File Type Colors - derived from theme accent palette
     object FileType {
         // Code files - use success (green-ish)
         val code: Color @Composable get() = LocalOpenCodeTheme.current.success
-        
+
         // Config files - use warning (orange-ish)
         val config: Color @Composable get() = LocalOpenCodeTheme.current.warning
-        
+
         // Documentation - use info (blue-ish)
         val document: Color @Composable get() = LocalOpenCodeTheme.current.info
-        
+
         // Media files - use accent/theme colors
         val image: Color @Composable get() = LocalOpenCodeTheme.current.accent
         val video: Color @Composable get() = LocalOpenCodeTheme.current.accent
         val audio: Color @Composable get() = LocalOpenCodeTheme.current.info
-        
+
         // Archives - use textMuted
         val archive: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
-        
+
         // Shell/Terminal - use secondary
         val shell: Color @Composable get() = LocalOpenCodeTheme.current.secondary
-        
+
         // Build files - use success
         val build: Color @Composable get() = LocalOpenCodeTheme.current.success
-        
+
         // Git files - use error (red-ish) for visibility
         val git: Color @Composable get() = LocalOpenCodeTheme.current.error
-        
+
         // Lock files - grey
         val lock: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
-        
+
         // Environment/secrets - orange for caution
         val env: Color @Composable get() = LocalOpenCodeTheme.current.warning
-        
+
         // Web files - use primary
         val web: Color @Composable get() = LocalOpenCodeTheme.current.primary
-        
+
         // Database - use accent
         val database: Color @Composable get() = LocalOpenCodeTheme.current.accent
     }
-    
+
     // Diff colors for code diff viewing - derive from theme
     object Diff {
         val addedBackground: Color @Composable get() = LocalOpenCodeTheme.current.diffAddedBg
@@ -69,13 +69,13 @@ object SemanticColors {
         val addedText: Color @Composable get() = LocalOpenCodeTheme.current.diffAdded
         val removedText: Color @Composable get() = LocalOpenCodeTheme.current.diffRemoved
     }
-    
+
     // Terminal colors - derive from theme
     object Terminal {
         val green: Color @Composable get() = LocalOpenCodeTheme.current.success
         val background: Color @Composable get() = LocalOpenCodeTheme.current.background
     }
-    
+
     // Agent type colors - derive from theme semantic tokens
     object Agent {
         val coder: Color @Composable get() = LocalOpenCodeTheme.current.info
@@ -87,7 +87,7 @@ object SemanticColors {
         val debugger: Color @Composable get() = LocalOpenCodeTheme.current.error
         val explorer: Color @Composable get() = LocalOpenCodeTheme.current.accent
         val default: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
-        
+
         @Composable
         fun forName(name: String): Color = when (name.lowercase()) {
             "coder", "coding" -> coder
@@ -101,18 +101,18 @@ object SemanticColors {
             else -> default
         }
     }
-    
+
     // UI accent colors
     object Accent {
         val favorite: Color @Composable get() = LocalOpenCodeTheme.current.warning
     }
-    
+
     // Status colors for general use
     object Status {
         val success: Color @Composable get() = LocalOpenCodeTheme.current.success
         val successBackground: Color @Composable get() = LocalOpenCodeTheme.current.success.copy(alpha = 0.2f)
     }
-    
+
     // Provider brand colors - intentionally hardcoded (brand identity)
     object Provider {
         val anthropic: Color get() = Color(0xFFD97706)
@@ -126,7 +126,7 @@ object SemanticColors {
         val xai: Color get() = Color(0xFF000000)
         val deepseek: Color get() = Color(0xFF0066FF)
         val default: Color get() = Color(0xFF78909C)
-        
+
         fun forName(name: String): Pair<Color, String> = when (name.lowercase()) {
             "anthropic" -> anthropic to "A"
             "openai" -> openai to "O"
@@ -141,7 +141,7 @@ object SemanticColors {
             else -> default to name.take(2).uppercase()
         }
     }
-    
+
     // MIME type colors for file attachments - derive from theme
     object MimeType {
         val image: Color @Composable get() = LocalOpenCodeTheme.current.success
@@ -152,7 +152,7 @@ object SemanticColors {
         val archive: Color @Composable get() = LocalOpenCodeTheme.current.warning
         val data: Color @Composable get() = LocalOpenCodeTheme.current.syntaxFunction
         val default: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
-        
+
         @Composable
         fun forMimeType(mimeType: String): Color = when {
             mimeType.startsWith("image/") -> image
@@ -165,7 +165,7 @@ object SemanticColors {
             else -> default
         }
     }
-    
+
     // Reason/status indicator colors - derive from theme
     object Reason {
         val success: Color @Composable get() = LocalOpenCodeTheme.current.success
@@ -173,7 +173,7 @@ object SemanticColors {
         val warning: Color @Composable get() = LocalOpenCodeTheme.current.warning
         val error: Color @Composable get() = LocalOpenCodeTheme.current.error
         val default: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
-        
+
         @Composable
         fun forReason(reason: String): Color = when (reason.lowercase()) {
             "end_turn", "stop" -> success
@@ -183,7 +183,7 @@ object SemanticColors {
             else -> default
         }
     }
-    
+
     // Permission type colors - derive from theme
     object Permission {
         val write: Color @Composable get() = LocalOpenCodeTheme.current.warning
@@ -191,7 +191,7 @@ object SemanticColors {
         val execute: Color @Composable get() = LocalOpenCodeTheme.current.error
         val delete: Color @Composable get() = LocalOpenCodeTheme.current.error
         val default: Color @Composable get() = LocalOpenCodeTheme.current.info
-        
+
         @Composable
         fun forType(type: String): Color = when (type.lowercase()) {
             "file.write", "file.edit" -> write
@@ -201,7 +201,7 @@ object SemanticColors {
             else -> default
         }
     }
-    
+
     // Context usage percentage colors - derive from theme
     object Usage {
         val critical: Color @Composable get() = LocalOpenCodeTheme.current.error
@@ -209,13 +209,13 @@ object SemanticColors {
         val medium: Color @Composable get() = LocalOpenCodeTheme.current.warning
         // Below 50% uses theme primary
     }
-    
+
     // Agent selector colors - derive from theme
     object AgentSelector {
         val build: Color @Composable get() = LocalOpenCodeTheme.current.info
         val plan: Color @Composable get() = LocalOpenCodeTheme.current.accent
         val default: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
-        
+
         @Composable
         fun forName(name: String): Color = when (name.lowercase()) {
             "build" -> build
@@ -223,7 +223,7 @@ object SemanticColors {
             else -> default
         }
     }
-    
+
     // Terminal extra keys bar colors - derive from theme
     object TerminalKeys {
         val background: Color @Composable get() = LocalOpenCodeTheme.current.background
@@ -232,19 +232,19 @@ object SemanticColors {
         val keyPressed: Color @Composable get() = LocalOpenCodeTheme.current.backgroundElement
         val activeModifier: Color @Composable get() = LocalOpenCodeTheme.current.success
     }
-    
+
     // Todo status colors - derive from theme
     object Todo {
         val pending: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
         val inProgress: Color @Composable get() = LocalOpenCodeTheme.current.info
         val completed: Color @Composable get() = LocalOpenCodeTheme.current.success
         val cancelled: Color @Composable get() = LocalOpenCodeTheme.current.error
-        
+
         val priorityHigh: Color @Composable get() = LocalOpenCodeTheme.current.error
         val priorityMedium: Color @Composable get() = LocalOpenCodeTheme.current.warning
         val priorityLow: Color @Composable get() = LocalOpenCodeTheme.current.success
         val priorityDefault: Color @Composable get() = LocalOpenCodeTheme.current.textMuted
-        
+
         @Composable
         fun forStatus(status: String): Color = when (status) {
             "pending" -> pending
@@ -253,7 +253,7 @@ object SemanticColors {
             "cancelled" -> cancelled
             else -> pending
         }
-        
+
         @Composable
         fun forPriority(priority: String): Color = when (priority.lowercase()) {
             "high" -> priorityHigh
@@ -262,7 +262,7 @@ object SemanticColors {
             else -> priorityDefault
         }
     }
-    
+
     // Syntax highlighting colors - derive from theme
     object Syntax {
         val comment: Color @Composable get() = LocalOpenCodeTheme.current.syntaxComment

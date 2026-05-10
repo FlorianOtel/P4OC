@@ -6,10 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material3.ripple
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -20,9 +20,8 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
@@ -232,8 +231,10 @@ fun TuiTextField(
         readOnly = readOnly,
         label = label?.let { { Text(it) } },
         placeholder = placeholder?.let { { Text(it, style = MaterialTheme.typography.bodyMedium) } },
-        leadingIcon = leadingIcon?.let { 
-            { Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconMd)) } 
+        leadingIcon = leadingIcon?.let {
+            {
+                Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconMd))
+            }
         },
         trailingIcon = trailingIcon,
         isError = isError,
@@ -283,7 +284,7 @@ fun TuiListItem(
             .fillMaxWidth()
             .padding(horizontal = Spacing.screenPadding, vertical = Spacing.sm)
     }
-    
+
     Row(
         modifier = clickableModifier,
         horizontalArrangement = Arrangement.spacedBy(Spacing.inlineSpacing),
@@ -299,7 +300,7 @@ fun TuiListItem(
                 modifier = Modifier.size(Sizing.iconMd)
             )
         }
-        
+
         // Text content
         Column(
             modifier = Modifier.weight(1f),
@@ -325,7 +326,7 @@ fun TuiListItem(
                 )
             }
         }
-        
+
         // Trailing content
         trailingContent?.invoke()
     }
@@ -414,7 +415,9 @@ fun TuiChip(
             enabled = enabled,
             shape = RectangleShape,
             leadingIcon = leadingIcon?.let {
-                { Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconSm)) }
+                {
+                    Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconSm))
+                }
             }
         )
     } else {
@@ -425,7 +428,9 @@ fun TuiChip(
             enabled = false,
             shape = RectangleShape,
             leadingIcon = leadingIcon?.let {
-                { Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconSm)) }
+                {
+                    Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconSm))
+                }
             }
         )
     }
@@ -632,7 +637,7 @@ fun TuiInputDialog(
     dismissText: String = "Cancel"
 ) {
     val (text, setText) = remember { androidx.compose.runtime.mutableStateOf(initialValue) }
-    
+
     TuiAlertDialog(
         onDismissRequest = onDismissRequest,
         title = title,
@@ -685,10 +690,14 @@ fun TuiDropdownMenuItem(
         onClick = onClick,
         modifier = modifier,
         leadingIcon = leadingIcon?.let {
-            { Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconMd)) }
+            {
+                Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconMd))
+            }
         },
         trailingIcon = trailingIcon?.let {
-            { Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconMd)) }
+            {
+                Icon(it, contentDescription = null, modifier = Modifier.size(Sizing.iconMd))
+            }
         },
         enabled = enabled,
         contentPadding = PaddingValues(horizontal = Spacing.lg, vertical = Spacing.sm)
@@ -895,7 +904,9 @@ fun TuiSwitch(
                         role = Role.Switch,
                         onValueChange = onCheckedChange
                     )
-                } else Modifier
+                } else {
+                    Modifier
+                }
             ),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1054,7 +1065,9 @@ private fun StepperButton(
                         role = Role.Button,
                         onClick = onClick
                     )
-                } else Modifier
+                } else {
+                    Modifier
+                }
             ),
         contentAlignment = Alignment.Center
     ) {

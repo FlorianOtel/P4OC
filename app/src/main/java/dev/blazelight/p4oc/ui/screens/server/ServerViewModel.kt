@@ -1,10 +1,10 @@
 package dev.blazelight.p4oc.ui.screens.server
 
-import dev.blazelight.p4oc.core.log.AppLog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.blazelight.p4oc.core.datastore.RecentServer
 import dev.blazelight.p4oc.core.datastore.SettingsDataStore
+import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.DiscoveredServer
 import dev.blazelight.p4oc.core.network.DiscoverySeed
@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val TAG = "ServerViewModel"
-
 
 class ServerViewModel constructor(
     private val settingsDataStore: SettingsDataStore,
@@ -49,17 +48,17 @@ class ServerViewModel constructor(
     private fun tryAutoReconnect() {
         viewModelScope.launch {
             val (lastConfig, password) = settingsDataStore.getLastConnection() ?: return@launch
-            
+
             AppLog.d(TAG, "Found last connection: ${lastConfig.url}")
-            _uiState.update { 
+            _uiState.update {
                 it.copy(
                     isConnecting = true,
                     remoteUrl = lastConfig.url
                 )
             }
-            
+
             val result = connectionManager.connect(lastConfig, password)
-            
+
             result.fold(
                 onSuccess = { projects ->
                     AppLog.d(TAG, "Auto-reconnect successful")
@@ -98,7 +97,7 @@ class ServerViewModel constructor(
     fun connectToRemote() {
         val state = _uiState.value
         AppLog.d(TAG, "connectToRemote called, url='${state.remoteUrl}'")
-        
+
         if (state.remoteUrl.isBlank()) {
             AppLog.w(TAG, "URL is blank, showing error")
             _uiState.update { it.copy(error = "Please enter a server URL") }
@@ -115,7 +114,7 @@ class ServerViewModel constructor(
                 return@launch
             }
             AppLog.d(TAG, "Connecting to normalized URL: $url")
-            
+
             val config = ServerConfig(
                 url = url,
                 name = "Remote Server",
@@ -146,12 +145,12 @@ class ServerViewModel constructor(
                 onFailure = { error ->
                     AppLog.e(TAG, "Connection failed: ${error.message}", error)
                     // Clear password from UI state on failure too - user can re-enter
-                    _uiState.update { 
+                    _uiState.update {
                         it.copy(
-                            isConnecting = false, 
+                            isConnecting = false,
                             password = "",
                             error = "Failed to connect: ${error.message}"
-                        ) 
+                        )
                     }
                 }
             )
@@ -256,7 +255,7 @@ data class ServerUiState(
 sealed class NavigationDestination {
     /** Navigate to unified sessions view */
     data object Sessions : NavigationDestination()
-    
+
     /** Navigate to project selector */
     data object Projects : NavigationDestination()
 }

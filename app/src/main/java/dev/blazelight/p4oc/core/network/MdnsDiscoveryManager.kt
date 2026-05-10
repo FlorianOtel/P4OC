@@ -15,19 +15,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.Inet6Address
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 private const val TAG = "MdnsDiscovery"
 private const val SERVICE_TYPE = "_http._tcp."
 private const val SERVICE_NAME_PREFIX = "opencode-"
-private const val DEFAULT_SERVER_PORT = 4096
 private const val SEED_PROBE_TIMEOUT_SECONDS = 2L
 private const val SEED_PROBE_CONCURRENCY = 4
 
@@ -125,6 +127,7 @@ class MdnsDiscoveryManager(private val context: Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var seedProbeJob: Job? = null
+    private var resolveParentJob: Job? = null
 
     private val strictProbeClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -149,10 +152,8 @@ class MdnsDiscoveryManager(private val context: Context) {
     private val _discoveryState = MutableStateFlow(DiscoveryState.IDLE)
     val discoveryState: StateFlow<DiscoveryState> = _discoveryState.asStateFlow()
 
-    /** Queue for sequential resolution (NSD can only resolve one at a time). */
-    private val resolveQueue = ConcurrentLinkedQueue<NsdServiceInfo>()
-    @Volatile
-    private var isResolving = false
+    /** NSD can only resolve one service at a time. */
+    private val resolveMutex = Mutex()
 
     private var activeListener: NsdManager.DiscoveryListener? = null
 
@@ -170,6 +171,7 @@ class MdnsDiscoveryManager(private val context: Context) {
 
         _discoveredServers.value = emptyList()
         _discoveryState.value = DiscoveryState.SCANNING
+        resolveParentJob = SupervisorJob()
 
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {
@@ -181,7 +183,7 @@ class MdnsDiscoveryManager(private val context: Context) {
                 AppLog.d(TAG, "Service found: $name")
                 if (name.startsWith(SERVICE_NAME_PREFIX, ignoreCase = true)) {
                     AppLog.d(TAG, "OpenCode service matched: $name, queuing resolve")
-                    enqueueResolve(serviceInfo)
+                    launchResolve(serviceInfo)
                 }
             }
 
@@ -216,6 +218,8 @@ class MdnsDiscoveryManager(private val context: Context) {
         } catch (e: Exception) {
             AppLog.e(TAG, "Failed to start discovery", e)
             activeListener = null
+            resolveParentJob?.cancel()
+            resolveParentJob = null
             _discoveryState.value = DiscoveryState.ERROR
         }
     }
@@ -226,6 +230,8 @@ class MdnsDiscoveryManager(private val context: Context) {
     fun stopDiscovery() {
         seedProbeJob?.cancel()
         seedProbeJob = null
+        resolveParentJob?.cancel()
+        resolveParentJob = null
 
         val listener = activeListener
         activeListener = null
@@ -238,8 +244,6 @@ class MdnsDiscoveryManager(private val context: Context) {
             }
         }
 
-        resolveQueue.clear()
-        isResolving = false
         _discoveryState.value = DiscoveryState.IDLE
     }
 
@@ -290,69 +294,67 @@ class MdnsDiscoveryManager(private val context: Context) {
         }
     }
 
-    private fun enqueueResolve(serviceInfo: NsdServiceInfo) {
-        resolveQueue.add(serviceInfo)
-        processResolveQueue()
+    private fun launchResolve(serviceInfo: NsdServiceInfo) {
+        val parent = resolveParentJob ?: return
+        scope.launch(parent) {
+            resolveMutex.withLock {
+                val resolvedInfo = resolveService(serviceInfo) ?: return@withLock
+                val server = resolvedInfo.toDiscoveredServer() ?: return@withLock
+
+                AppLog.d(TAG, "Resolved: ${server.serviceName} -> ${server.url}")
+
+                _discoveredServers.update { servers ->
+                    mergeDiscoveredServer(servers, server)
+                }
+            }
+        }
     }
 
-    @Synchronized
-    private fun processResolveQueue() {
-        if (isResolving) return
-        val next = resolveQueue.poll() ?: return
-        isResolving = true
-        resolveService(next)
-    }
-
-    private fun resolveService(serviceInfo: NsdServiceInfo) {
-        try {
-            nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+    private suspend fun resolveService(serviceInfo: NsdServiceInfo): NsdServiceInfo? {
+        return suspendCancellableCoroutine { continuation ->
+            val listener = object : NsdManager.ResolveListener {
                 override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
                     AppLog.w(TAG, "Resolve failed for ${info.serviceName}: errorCode=$errorCode")
-                    isResolving = false
-                    processResolveQueue()
+                    if (continuation.isActive) continuation.resume(null)
                 }
 
                 override fun onServiceResolved(info: NsdServiceInfo) {
-                    val host = info.host
-                    val port = info.port
-                    val hostAddress = host?.hostAddress
-                    if (hostAddress == null) {
-                        AppLog.w(TAG, "Resolved ${info.serviceName} but hostAddress is null, skipping")
-                        isResolving = false
-                        processResolveQueue()
-                        return
-                    }
-
-                    val formattedHost = if (host is Inet6Address) {
-                        "[${hostAddress.split("%").first()}]"
-                    } else {
-                        hostAddress
-                    }
-
-                    val url = ServerUrl.normalizeConnectUrl("http://$formattedHost:$port") ?: "http://$formattedHost:$port"
-                    val server = DiscoveredServer(
-                        serviceName = info.serviceName,
-                        host = formattedHost,
-                        port = port,
-                        url = url,
-                        source = DiscoverySource.MDNS,
-                        allowInsecure = false,
-                    )
-
-                    AppLog.d(TAG, "Resolved: ${server.serviceName} → $url")
-
-                    _discoveredServers.update { servers ->
-                        mergeDiscoveredServer(servers, server)
-                    }
-
-                    isResolving = false
-                    processResolveQueue()
+                    if (continuation.isActive) continuation.resume(info)
                 }
-            })
-        } catch (e: Exception) {
-            AppLog.e(TAG, "Error resolving service: ${e.message}", e)
-            isResolving = false
-            processResolveQueue()
+            }
+
+            try {
+                nsdManager.resolveService(serviceInfo, listener)
+            } catch (e: Exception) {
+                AppLog.e(TAG, "Error resolving service: ${e.message}", e)
+                if (continuation.isActive) continuation.resume(null)
+            }
         }
+    }
+
+    private fun NsdServiceInfo.toDiscoveredServer(): DiscoveredServer? {
+        val host = host
+        val port = port
+        val hostAddress = host?.hostAddress
+        if (hostAddress == null) {
+            AppLog.w(TAG, "Resolved $serviceName but hostAddress is null, skipping")
+            return null
+        }
+
+        val formattedHost = if (host is Inet6Address) {
+            "[${hostAddress.split("%").first()}]"
+        } else {
+            hostAddress
+        }
+
+        val url = ServerUrl.normalizeConnectUrl("http://$formattedHost:$port") ?: "http://$formattedHost:$port"
+        return DiscoveredServer(
+            serviceName = serviceName,
+            host = formattedHost,
+            port = port,
+            url = url,
+            source = DiscoverySource.MDNS,
+            allowInsecure = false,
+        )
     }
 }

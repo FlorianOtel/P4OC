@@ -1,26 +1,21 @@
 package dev.blazelight.p4oc.ui.screens.settings
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import org.koin.androidx.compose.koinViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ApiResult
@@ -28,19 +23,19 @@ import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.safeApiCall
 import dev.blazelight.p4oc.data.remote.dto.ModelInput
 import dev.blazelight.p4oc.data.remote.dto.SetActiveModelRequest
+import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import dev.blazelight.p4oc.ui.components.TuiSnackbar
+import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
-import dev.blazelight.p4oc.ui.components.TuiTopBar
-import dev.blazelight.p4oc.ui.components.TuiIconButton
-import dev.blazelight.p4oc.ui.components.TuiSnackbar
+import org.koin.androidx.compose.koinViewModel
 
 data class ModelInfo(
     val id: String,
@@ -64,18 +59,17 @@ data class ModelControlsState(
     val filterProvider: String? = null
 )
 
-
 class ModelControlsViewModel constructor(
     private val connectionManager: ConnectionManager
 ) : ViewModel() {
-    
+
     private val _state = MutableStateFlow(ModelControlsState())
     val state: StateFlow<ModelControlsState> = _state.asStateFlow()
-    
+
     init {
         loadModels()
     }
-    
+
     fun loadModels() {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
@@ -111,7 +105,7 @@ class ModelControlsViewModel constructor(
             }
         }
     }
-    
+
     fun toggleFavorite(modelId: String) {
         _state.update { state ->
             val newFavorites = if (state.favorites.contains(modelId)) {
@@ -125,7 +119,7 @@ class ModelControlsViewModel constructor(
             state.copy(favorites = newFavorites, models = newModels)
         }
     }
-    
+
     fun selectModel(modelId: String) {
         viewModelScope.launch {
             _state.update { it.copy(selectedModelId = modelId) }
@@ -141,15 +135,15 @@ class ModelControlsViewModel constructor(
             safeApiCall { api.setActiveModel(request) }
         }
     }
-    
+
     fun updateSearchQuery(query: String) {
         _state.update { it.copy(searchQuery = query) }
     }
-    
+
     fun setFilterProvider(providerId: String?) {
         _state.update { it.copy(filterProvider = providerId) }
     }
-    
+
     fun clearError() {
         _state.update { it.copy(error = null) }
     }
@@ -162,22 +156,22 @@ fun ModelControlsScreen(
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    
+
     val filteredModels = remember(state.models, state.searchQuery, state.filterProvider) {
         state.models.filter { model ->
-            val matchesSearch = state.searchQuery.isEmpty() || 
+            val matchesSearch = state.searchQuery.isEmpty() ||
                 model.name.contains(state.searchQuery, ignoreCase = true) ||
                 model.id.contains(state.searchQuery, ignoreCase = true)
-            val matchesProvider = state.filterProvider == null || 
+            val matchesProvider = state.filterProvider == null ||
                 model.providerId == state.filterProvider
             matchesSearch && matchesProvider
         }.sortedByDescending { it.isFavorite }
     }
-    
+
     val providers = remember(state.models) {
         state.models.map { it.providerId }.distinct()
     }
-    
+
     val theme = LocalOpenCodeTheme.current
     Scaffold(
         containerColor = theme.background,
@@ -190,7 +184,11 @@ fun ModelControlsScreen(
                         onClick = { viewModel.loadModels() },
                         modifier = Modifier.size(Sizing.iconButtonMd)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh), modifier = Modifier.size(Sizing.iconAction))
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.refresh),
+                            modifier = Modifier.size(Sizing.iconAction)
+                        )
                     }
                 }
             )
@@ -208,7 +206,7 @@ fun ModelControlsScreen(
                     .fillMaxWidth()
                     .padding(Spacing.xl)
             )
-            
+
             if (providers.size > 1) {
                 ProviderFilterChips(
                     providers = providers,
@@ -218,7 +216,7 @@ fun ModelControlsScreen(
                 )
                 Spacer(Modifier.height(Spacing.md))
             }
-            
+
             if (state.isLoading) {
                 TuiLoadingScreen()
             } else {
@@ -229,7 +227,7 @@ fun ModelControlsScreen(
                 ) {
                     val favoriteModels = filteredModels.filter { it.isFavorite }
                     val otherModels = filteredModels.filter { !it.isFavorite }
-                    
+
                     if (favoriteModels.isNotEmpty()) {
                         item {
                             val theme = LocalOpenCodeTheme.current
@@ -249,7 +247,7 @@ fun ModelControlsScreen(
                             )
                         }
                     }
-                    
+
                     if (otherModels.isNotEmpty()) {
                         item {
                             val theme = LocalOpenCodeTheme.current
@@ -273,7 +271,7 @@ fun ModelControlsScreen(
             }
         }
     }
-    
+
     state.error?.let { error ->
         TuiSnackbar(
             modifier = Modifier.padding(Spacing.xl),
@@ -352,15 +350,17 @@ private fun ModelCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onSelect,
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) 
+            containerColor = if (isSelected) {
                 theme.accent.copy(alpha = 0.2f)
-            else 
+            } else {
                 theme.backgroundElement
+            }
         ),
-        border = if (isSelected) 
-            CardDefaults.outlinedCardBorder() 
-        else 
+        border = if (isSelected) {
+            CardDefaults.outlinedCardBorder()
+        } else {
             null
+        }
     ) {
         Column(
             modifier = Modifier.padding(Spacing.xl),
@@ -383,7 +383,7 @@ private fun ModelCard(
                         color = theme.textMuted
                     )
                 }
-                
+
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     if (isSelected) {
                         Text(
@@ -401,7 +401,7 @@ private fun ModelCard(
                     }
                 }
             }
-            
+
             Row(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
@@ -434,7 +434,7 @@ private fun ModelCard(
                     )
                 }
             }
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -448,7 +448,11 @@ private fun ModelCard(
                 }
                 if (model.inputCostPer1k > 0 || model.outputCostPer1k > 0) {
                     Text(
-                        text = "$${String.format(java.util.Locale.US, "%.4f", model.inputCostPer1k)} / $${String.format(java.util.Locale.US, "%.4f", model.outputCostPer1k)}",
+                        text = "$${String.format(
+                            java.util.Locale.US,
+                            "%.4f",
+                            model.inputCostPer1k
+                        )} / $${String.format(java.util.Locale.US, "%.4f", model.outputCostPer1k)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = theme.textMuted
                     )

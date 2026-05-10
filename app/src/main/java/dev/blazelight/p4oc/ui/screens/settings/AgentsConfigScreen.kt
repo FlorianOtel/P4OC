@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,29 +13,28 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import org.koin.androidx.compose.koinViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.safeApiCall
-import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiAlertDialog
+import dev.blazelight.p4oc.ui.components.TuiButton
+import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
 import dev.blazelight.p4oc.ui.components.TuiTextButton
+import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
-import dev.blazelight.p4oc.ui.components.TuiTopBar
+import org.koin.androidx.compose.koinViewModel
 
 data class AgentInfo(
     val name: String,
@@ -54,18 +52,17 @@ data class AgentsConfigState(
     val selectedAgent: AgentInfo? = null
 )
 
-
 class AgentsConfigViewModel constructor(
     private val connectionManager: ConnectionManager
 ) : ViewModel() {
-    
+
     private val _state = MutableStateFlow(AgentsConfigState())
     val state: StateFlow<AgentsConfigState> = _state.asStateFlow()
-    
+
     init {
         loadAgents()
     }
-    
+
     fun loadAgents() {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
@@ -94,16 +91,11 @@ class AgentsConfigViewModel constructor(
             }
         }
     }
-    
+
     fun selectAgent(agent: AgentInfo?) {
         _state.update { it.copy(selectedAgent = agent) }
     }
-    
-    fun toggleAgent(agentName: String) {
-        // No-op: server API does not support toggling agents from client.
-        // Toggle removed from UI — agents show read-only status.
-    }
-    
+
     fun clearError() {
         _state.update { it.copy(error = null) }
     }
@@ -118,7 +110,7 @@ fun AgentsConfigScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val dismissLabel = stringResource(R.string.dismiss)
-    
+
     LaunchedEffect(state.error) {
         state.error?.let { error ->
             snackbarHostState.showSnackbar(
@@ -129,7 +121,7 @@ fun AgentsConfigScreen(
             viewModel.clearError()
         }
     }
-    
+
     val theme = LocalOpenCodeTheme.current
     Scaffold(
         containerColor = theme.background,
@@ -142,7 +134,11 @@ fun AgentsConfigScreen(
                         onClick = { viewModel.loadAgents() },
                         modifier = Modifier.size(Sizing.iconButtonMd)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh), modifier = Modifier.size(Sizing.iconAction))
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.refresh),
+                            modifier = Modifier.size(Sizing.iconAction)
+                        )
                     }
                 }
             )
@@ -197,10 +193,10 @@ fun AgentsConfigScreen(
                         modifier = Modifier.padding(bottom = Spacing.md)
                     )
                 }
-                
+
                 val builtInAgents = state.agents.filter { it.isBuiltIn }
                 val customAgents = state.agents.filter { !it.isBuiltIn }
-                
+
                 if (builtInAgents.isNotEmpty()) {
                     item {
                         val theme = LocalOpenCodeTheme.current
@@ -210,16 +206,15 @@ fun AgentsConfigScreen(
                             color = theme.accent
                         )
                     }
-                    
+
                     items(builtInAgents, key = { it.name }) { agent ->
                         AgentCard(
                             agent = agent,
-                            onToggle = { viewModel.toggleAgent(agent.name) },
                             onClick = { viewModel.selectAgent(agent) }
                         )
                     }
                 }
-                
+
                 if (customAgents.isNotEmpty()) {
                     item {
                         val theme = LocalOpenCodeTheme.current
@@ -230,16 +225,15 @@ fun AgentsConfigScreen(
                             color = theme.accent
                         )
                     }
-                    
+
                     items(customAgents, key = { it.name }) { agent ->
                         AgentCard(
                             agent = agent,
-                            onToggle = { viewModel.toggleAgent(agent.name) },
                             onClick = { viewModel.selectAgent(agent) }
                         )
                     }
                 }
-                
+
                 if (state.agents.isEmpty()) {
                     item {
                         EmptyAgentsView()
@@ -248,7 +242,7 @@ fun AgentsConfigScreen(
             }
         }
     }
-    
+
     state.selectedAgent?.let { agent ->
         AgentDetailDialog(
             agent = agent,
@@ -261,7 +255,6 @@ fun AgentsConfigScreen(
 @Composable
 private fun AgentCard(
     agent: AgentInfo,
-    onToggle: () -> Unit,
     onClick: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
@@ -292,7 +285,7 @@ private fun AgentCard(
                         tint = getAgentColor(agent.name)
                     )
                 }
-                
+
                 Column {
                     Text(
                         text = agent.name,
@@ -305,18 +298,18 @@ private fun AgentCard(
                         color = theme.textMuted,
                         maxLines = 2
                     )
-                    
+
                     if (agent.tools.isNotEmpty()) {
                         Spacer(Modifier.height(Spacing.xs))
                         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                             agent.tools.take(3).forEach { tool ->
                                 SuggestionChip(
                                     onClick = {},
-                                    label = { 
+                                    label = {
                                         Text(
-                                            tool, 
+                                            tool,
                                             style = MaterialTheme.typography.labelSmall
-                                        ) 
+                                        )
                                     },
                                     shape = RectangleShape,
                                     modifier = Modifier.height(Sizing.iconLg)
@@ -355,7 +348,7 @@ private fun AgentDetailDialog(
         }
     ) {
         Text(agent.description)
-        
+
         if (agent.tools.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.agents_tools),
@@ -382,7 +375,7 @@ private fun AgentDetailDialog(
                 }
             }
         }
-        
+
         agent.systemPrompt?.let { prompt ->
             Text(
                 text = stringResource(R.string.agents_system_prompt),

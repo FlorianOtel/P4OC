@@ -8,7 +8,7 @@ object OfishSessionNames {
     fun build(operationName: String, epochMs: Long, shortId: String): String {
         val sanitizedOperation = sanitizeOperation(operationName)
         val sanitizedShortId = shortId.replace(UNSAFE_OPERATION_CHARS, "").take(12).ifBlank { "id" }
-        return "${PREFIX}${sanitizedOperation}_${epochMs}_${sanitizedShortId}"
+        return "${PREFIX}${sanitizedOperation}_${epochMs}_$sanitizedShortId"
     }
 
     fun isOfishTitle(title: String?): Boolean = title?.startsWith(PREFIX) == true

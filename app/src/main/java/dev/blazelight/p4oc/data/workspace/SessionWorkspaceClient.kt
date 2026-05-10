@@ -2,6 +2,7 @@ package dev.blazelight.p4oc.data.workspace
 
 import dev.blazelight.p4oc.data.remote.dto.CreateSessionRequest
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
+import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
 import dev.blazelight.p4oc.data.remote.dto.SessionDto
 import dev.blazelight.p4oc.data.remote.dto.SessionStatusDto
 import dev.blazelight.p4oc.data.remote.dto.UpdateSessionRequest
@@ -35,4 +36,8 @@ interface SessionWorkspaceClient {
     suspend fun unshareSession(id: String): SessionDto
 
     suspend fun summarizeSession(id: String): Boolean
+
+    suspend fun sendMessageAsync(sessionId: String, request: SendMessageRequest)
+
+    suspend fun abortSession(id: String): Boolean
 }

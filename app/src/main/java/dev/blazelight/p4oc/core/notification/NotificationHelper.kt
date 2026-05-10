@@ -12,7 +12,6 @@ import dev.blazelight.p4oc.MainActivity
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.log.AppLog
 
-
 private const val TAG = "NotificationHelper"
 
 class NotificationHelper constructor(
@@ -39,11 +38,11 @@ class NotificationHelper constructor(
         private fun completionNotificationId(sessionId: String): Int =
             (sessionId.hashCode() and 0x0FFFFFFF) or COMPLETION_ID_MASK
     }
-    
+
     init {
         createNotificationChannel()
     }
-    
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val inputChannel = NotificationChannel(
@@ -69,7 +68,7 @@ class NotificationHelper constructor(
             notificationManager.createNotificationChannel(completionChannel)
         }
     }
-    
+
     fun showPermissionNotification(sessionId: String, title: String) {
         val notificationId = permissionNotificationId(sessionId)
         val intent = Intent(context, MainActivity::class.java).apply {

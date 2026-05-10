@@ -12,6 +12,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.InputStream
 
 internal fun interface UploadChunkBytesProvider {
     suspend fun get(capabilities: OfishCapabilities): Int
@@ -91,6 +92,31 @@ internal class OfishMutationClient(
         }.getOrElse { error -> FileOperationResult.Failed("OFISH delete failed", error) }
     }
 
+    @Suppress("ReturnCount")
+    suspend fun createDirectory(path: String): FileOperationResult<Unit> {
+        val normalizedPath = normalizedPathOrFailure(path) ?: return mutationPathFailure(path)
+        availableCapabilitiesOrFailure()?.let { return it }
+
+        return runCatching {
+            sessionFactory.withSession(OPERATION_MKDIR) { session ->
+                execute(session.id, commandBuilder.mkdir(normalizedPath)).toCreateDirectoryResult()
+            }
+        }.getOrElse { error -> FileOperationResult.Failed("OFISH folder creation failed", error) }
+    }
+
+    @Suppress("ReturnCount")
+    suspend fun renameFile(fromPath: String, toPath: String): FileOperationResult<Unit> {
+        val normalizedFromPath = normalizedPathOrFailure(fromPath) ?: return mutationPathFailure(fromPath)
+        val normalizedToPath = normalizedPathOrFailure(toPath) ?: return mutationPathFailure(toPath)
+        availableCapabilitiesOrFailure()?.let { return it }
+
+        return runCatching {
+            sessionFactory.withSession(OPERATION_RENAME) { session ->
+                execute(session.id, commandBuilder.rename(normalizedFromPath, normalizedToPath)).toRenameResult()
+            }
+        }.getOrElse { error -> FileOperationResult.Failed("OFISH rename failed", error) }
+    }
+
     suspend fun uploadFile(request: FileUploadRequest): FileOperationResult<FileUploadResult> {
         val path = normalizeMutationPath(request.path).getOrElse { error ->
             return FileOperationResult.Failed(error.message ?: INVALID_PATH_MESSAGE, error)
@@ -123,25 +149,29 @@ internal class OfishMutationClient(
 
         var finished = false
         try {
-            val chunkBytes = try {
-                uploadChunkBytes.get(capabilities)
-            } catch (error: OfishUploadChunkProbeUnavailableException) {
-                return FileOperationResult.Failed(error.message ?: "OFISH upload chunk probe failed", error)
-            }
+            val chunkBytes = uploadChunkBytes.get(capabilities)
             require(chunkBytes > 0) { "upload chunk size must be greater than zero" }
-            var offset = 0
-            while (offset < request.bytes.size) {
-                val end = minOf(offset + chunkBytes, request.bytes.size)
-                val chunk = request.bytes.copyOfRange(offset, end)
-                when (val chunkStatus = execute(sessionId, commandBuilder.uploadChunk(uploadToken, chunk, capabilities))) {
-                    is OfishMutationStatus.Ok -> Unit
-                    else -> return chunkStatus.toUploadResult(path)
+            request.openStream().use { stream ->
+                var uploaded = 0L
+                while (true) {
+                    val chunk = stream.readChunk(chunkBytes)
+                    if (chunk.isEmpty()) break
+                    uploaded += chunk.size
+                    when (
+                        val chunkStatus = execute(
+                            sessionId,
+                            commandBuilder.uploadChunk(uploadToken, chunk, capabilities)
+                        )
+                    ) {
+                        is OfishMutationStatus.Ok -> Unit
+                        else -> return chunkStatus.toUploadResult(path)
+                    }
+                    request.onBytesUploaded?.invoke(uploaded)
                 }
-                offset = end
-                request.onBytesUploaded?.invoke(offset.toLong())
             }
 
-            val finishStatus = execute(sessionId, commandBuilder.uploadFinish(path, uploadToken, request.expectedHash, capabilities))
+            val finishStatus =
+                execute(sessionId, commandBuilder.uploadFinish(path, uploadToken, request.expectedHash, capabilities))
             val result = finishStatus.toUploadResult(path)
             if (result is FileOperationResult.Ok) finished = true
             return result
@@ -149,15 +179,34 @@ internal class OfishMutationClient(
             if (!finished) {
                 withContext(NonCancellable) {
                     runCatching { execute(sessionId, commandBuilder.uploadAbort(uploadToken)) }
-                        .onFailure { error -> AppLog.w(TAG, "Failed to abort OFISH upload temp file: ${error.message}") }
+                        .onFailure { error ->
+                            AppLog.w(
+                                TAG,
+                                "Failed to abort OFISH upload temp file: ${error.message}"
+                            )
+                        }
                 }
             }
         }
     }
 
+    private fun normalizedPathOrFailure(path: String): String? = normalizeMutationPath(path).getOrNull()
+
+    private fun mutationPathFailure(path: String): FileOperationResult.Failed {
+        val error = normalizeMutationPath(path).exceptionOrNull()
+        return FileOperationResult.Failed(error?.message ?: INVALID_PATH_MESSAGE, error)
+    }
+
+    private suspend fun availableCapabilitiesOrFailure(): FileOperationResult.Failed? {
+        val error = availableCapabilities().exceptionOrNull() ?: return null
+        return FileOperationResult.Failed(error.message ?: UNAVAILABLE_MESSAGE, error)
+    }
+
     private fun validateUploadToken(uploadToken: String, destinationPath: String): Result<String> {
         if (uploadToken.isBlank()) return Result.failure(UnsafeUploadTokenException("Empty OFISH upload token"))
-        if (uploadToken.startsWith("/")) return Result.failure(UnsafeUploadTokenException("Absolute OFISH upload token is not allowed"))
+        if (uploadToken.startsWith("/")) {
+            return Result.failure(UnsafeUploadTokenException("Absolute OFISH upload token is not allowed"))
+        }
         val normalized = FilePathValidator.normalizeForMutation(uploadToken).getOrElse { error ->
             return Result.failure(UnsafeUploadTokenException(error.message ?: "Unsafe OFISH upload token", error))
         }
@@ -194,18 +243,36 @@ internal class OfishMutationClient(
 
     private suspend fun availableCapabilities(): Result<OfishCapabilities> = when (val result = capabilityCache.get()) {
         is OfishProbeResult.Available -> Result.success(result.capabilities)
-        is OfishProbeResult.Missing -> Result.failure(OfishUnavailableException("OFISH file mutations unavailable: ${result.missing.joinToString()}", null))
+        is OfishProbeResult.Missing -> Result.failure(
+            OfishUnavailableException("OFISH file mutations unavailable: ${result.missing.joinToString()}", null)
+        )
         is OfishProbeResult.Failed -> Result.failure(OfishUnavailableException(result.message, result.cause))
     }
 
     private fun normalizeMutationPath(path: String): Result<String> = FilePathValidator.normalizeForMutation(path)
 
+    private fun InputStream.readChunk(maxBytes: Int): ByteArray {
+        val buffer = ByteArray(maxBytes)
+        var offset = 0
+        while (offset < maxBytes) {
+            val read = read(buffer, offset, maxBytes - offset)
+            if (read < 0) break
+            if (read == 0) continue
+            offset += read
+        }
+        return if (offset == buffer.size) buffer else buffer.copyOf(offset)
+    }
+
     private fun OfishMutationStatus.toWriteResult(path: String): FileOperationResult<FileWriteResult> = when (this) {
         is OfishMutationStatus.Ok -> FileOperationResult.Ok(FileWriteResult(path = path, hash = hash))
         is OfishMutationStatus.Conflict -> FileOperationResult.Conflict("File was modified before write", actualHash)
         OfishMutationStatus.Missing -> FileOperationResult.Conflict("File does not exist", currentHash = null)
-        is OfishMutationStatus.PreconditionFailed -> FileOperationResult.Failed("Write precondition failed${reasonSuffix()}")
-        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed("OFISH file mutations unavailable: ${missing.joinToString()}")
+        is OfishMutationStatus.PreconditionFailed -> FileOperationResult.Failed(
+            "Write precondition failed${reasonSuffix()}"
+        )
+        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed(
+            "OFISH file mutations unavailable: ${missing.joinToString()}"
+        )
         is OfishMutationStatus.Failed -> FileOperationResult.Failed(messageWithReason())
         is OfishMutationStatus.Malformed -> FileOperationResult.Failed(message)
         OfishMutationStatus.Deleted -> FileOperationResult.Failed("Unexpected OFISH write delete status")
@@ -215,21 +282,63 @@ internal class OfishMutationClient(
         OfishMutationStatus.Deleted -> FileOperationResult.Ok(Unit)
         OfishMutationStatus.Missing -> FileOperationResult.Failed("File does not exist")
         is OfishMutationStatus.PreconditionFailed -> FileOperationResult.Failed(
-            if (reason == "directory") "Directory deletion is not supported" else "Delete precondition failed${reasonSuffix()}"
+            "Delete precondition failed${reasonSuffix()}"
         )
-        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed("OFISH file mutations unavailable: ${missing.joinToString()}")
+        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed(
+            "OFISH file mutations unavailable: ${missing.joinToString()}"
+        )
         is OfishMutationStatus.Failed -> FileOperationResult.Failed(messageWithReason())
         is OfishMutationStatus.Malformed -> FileOperationResult.Failed(message)
         is OfishMutationStatus.Conflict -> FileOperationResult.Conflict("File was modified before delete", actualHash)
         is OfishMutationStatus.Ok -> FileOperationResult.Failed("Unexpected OFISH delete ok status")
     }
 
+    private fun OfishMutationStatus.toCreateDirectoryResult(): FileOperationResult<Unit> = when (this) {
+        is OfishMutationStatus.Ok -> FileOperationResult.Ok(Unit)
+        is OfishMutationStatus.Conflict -> FileOperationResult.Conflict(
+            "A file or folder already exists at that path",
+            actualHash,
+        )
+        is OfishMutationStatus.PreconditionFailed -> FileOperationResult.Failed(
+            "Folder creation precondition failed${reasonSuffix()}"
+        )
+        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed(
+            "OFISH file mutations unavailable: ${missing.joinToString()}"
+        )
+        is OfishMutationStatus.Failed -> FileOperationResult.Failed(messageWithReason())
+        is OfishMutationStatus.Malformed -> FileOperationResult.Failed(message)
+        OfishMutationStatus.Missing -> FileOperationResult.Failed("Unexpected OFISH folder creation missing status")
+        OfishMutationStatus.Deleted -> FileOperationResult.Failed("Unexpected OFISH folder creation delete status")
+    }
+
+    private fun OfishMutationStatus.toRenameResult(): FileOperationResult<Unit> = when (this) {
+        is OfishMutationStatus.Ok -> FileOperationResult.Ok(Unit)
+        OfishMutationStatus.Missing -> FileOperationResult.Failed("File does not exist")
+        is OfishMutationStatus.Conflict -> FileOperationResult.Conflict(
+            "A file or folder already exists at the destination",
+            actualHash,
+        )
+        is OfishMutationStatus.PreconditionFailed -> FileOperationResult.Failed(
+            "Rename precondition failed${reasonSuffix()}"
+        )
+        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed(
+            "OFISH file mutations unavailable: ${missing.joinToString()}"
+        )
+        is OfishMutationStatus.Failed -> FileOperationResult.Failed(messageWithReason())
+        is OfishMutationStatus.Malformed -> FileOperationResult.Failed(message)
+        OfishMutationStatus.Deleted -> FileOperationResult.Failed("Unexpected OFISH rename delete status")
+    }
+
     private fun OfishMutationStatus.toUploadResult(path: String): FileOperationResult<FileUploadResult> = when (this) {
         is OfishMutationStatus.Ok -> FileOperationResult.Ok(FileUploadResult(path = path, hash = hash))
         is OfishMutationStatus.Conflict -> FileOperationResult.Conflict("File was modified before upload", actualHash)
         OfishMutationStatus.Missing -> FileOperationResult.Conflict("File does not exist", currentHash = null)
-        is OfishMutationStatus.PreconditionFailed -> FileOperationResult.Failed("Upload precondition failed${reasonSuffix()}")
-        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed("OFISH file mutations unavailable: ${missing.joinToString()}")
+        is OfishMutationStatus.PreconditionFailed -> FileOperationResult.Failed(
+            "Upload precondition failed${reasonSuffix()}"
+        )
+        is OfishMutationStatus.CapabilitiesMissing -> FileOperationResult.Failed(
+            "OFISH file mutations unavailable: ${missing.joinToString()}"
+        )
         is OfishMutationStatus.Failed -> FileOperationResult.Failed(messageWithReason())
         is OfishMutationStatus.Malformed -> FileOperationResult.Failed(message)
         OfishMutationStatus.Deleted -> FileOperationResult.Failed("Unexpected OFISH upload delete status")
@@ -246,6 +355,8 @@ internal class OfishMutationClient(
         const val UNAVAILABLE_MESSAGE = "OFISH file mutations unavailable"
         const val OPERATION_WRITE = "write"
         const val OPERATION_DELETE = "delete"
+        const val OPERATION_MKDIR = "mkdir"
+        const val OPERATION_RENAME = "rename"
         const val OPERATION_UPLOAD = "upload"
         const val OPERATION_HASH = "hash"
         const val UPLOAD_TOKEN_PREFIX = ".ofish.upload."

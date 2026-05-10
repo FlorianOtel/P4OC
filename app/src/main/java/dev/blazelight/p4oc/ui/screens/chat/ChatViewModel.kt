@@ -1,40 +1,40 @@
 package dev.blazelight.p4oc.ui.screens.chat
 
-import dev.blazelight.p4oc.core.log.AppLog
-import android.webkit.MimeTypeMap
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.blazelight.p4oc.core.datastore.NotificationSettings
+import dev.blazelight.p4oc.core.datastore.SettingsDataStore
+import dev.blazelight.p4oc.core.haptic.HapticFeedback
+import dev.blazelight.p4oc.core.log.AppLog
+import dev.blazelight.p4oc.core.mime.FilenameMimeType
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.ConnectionState
 import dev.blazelight.p4oc.core.network.safeApiCall
-import dev.blazelight.p4oc.core.datastore.NotificationSettings
-import dev.blazelight.p4oc.core.datastore.SettingsDataStore
-import dev.blazelight.p4oc.core.haptic.HapticFeedback
-import dev.blazelight.p4oc.data.session.SessionRepositoryImpl
-import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.data.remote.dto.ExecuteCommandRequest
+import dev.blazelight.p4oc.data.remote.dto.ModelInput
 import dev.blazelight.p4oc.data.remote.dto.PartInputDto
 import dev.blazelight.p4oc.data.remote.dto.PermissionResponseRequest
 import dev.blazelight.p4oc.data.remote.dto.QuestionReplyRequest
-import dev.blazelight.p4oc.data.remote.dto.ModelInput
 import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
 import dev.blazelight.p4oc.data.remote.mapper.CommandMapper
 import dev.blazelight.p4oc.data.remote.mapper.SessionMapper
 import dev.blazelight.p4oc.data.remote.mapper.TodoMapper
+import dev.blazelight.p4oc.data.session.SessionRepositoryImpl
+import dev.blazelight.p4oc.data.session.SessionUiState
+import dev.blazelight.p4oc.data.session.presence
+import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.domain.model.*
-import dev.blazelight.p4oc.domain.model.SessionConnectionState as TabConnectionState
 import dev.blazelight.p4oc.domain.session.SessionId
-import dev.blazelight.p4oc.domain.workspace.RelativePath
-import dev.blazelight.p4oc.domain.workspace.WorkspacePath
-import dev.blazelight.p4oc.domain.workspace.toAttachmentUrl
 import dev.blazelight.p4oc.ui.components.chat.SelectedFile
 import dev.blazelight.p4oc.ui.navigation.Screen
+import dev.blazelight.p4oc.ui.screens.files.upload.UploadCoordinator
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import java.io.File
+import java.net.URI
 import java.util.UUID
 
 /**
@@ -46,6 +46,7 @@ class ChatViewModel constructor(
     private val savedStateHandle: SavedStateHandle,
     private val workspaceClient: WorkspaceClient,
     private val sessionRepository: SessionRepositoryImpl,
+    private val uploadCoordinator: UploadCoordinator,
     private val connectionManager: ConnectionManager,
     private val settingsDataStore: SettingsDataStore,
     private val hapticFeedback: HapticFeedback,
@@ -54,26 +55,24 @@ class ChatViewModel constructor(
     private val sessionId: String = savedStateHandle.get<String>(Screen.Chat.ARG_SESSION_ID)
         ?: throw IllegalArgumentException("sessionId is required for ChatViewModel")
 
-    // Child session IDs (subagent sessions whose parentID == this sessionId)
-    private val childSessionIds = mutableSetOf<String>()
-
-    private fun isOwnedSession(eventSessionId: String): Boolean =
-        eventSessionId == sessionId || eventSessionId in childSessionIds
-
     // JSON serializer for SavedStateHandle persistence
     private val json = Json { ignoreUnknownKeys = true }
 
     // --- Sub-managers ---
-    val dialogManager = DialogQueueManager(savedStateHandle, json)
+    val dialogManager = DialogQueueManager(savedStateHandle, json, viewModelScope)
     val modelAgentManager = ModelAgentManager(connectionManager, settingsDataStore, viewModelScope)
-    val filePickerManager = FilePickerManager(workspaceClient, viewModelScope)
+    val filePickerManager = FilePickerManager(workspaceClient, viewModelScope, uploadCoordinator)
 
     // --- Core state ---
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+    private val _sessionMissing = MutableSharedFlow<Unit>(replay = 1)
+    val sessionMissing: SharedFlow<Unit> = _sessionMissing.asSharedFlow()
 
     /** Convenience alias — ChatScreen reads this directly. */
     val messages: StateFlow<List<MessageWithParts>> = sessionRepository.messages(SessionId(sessionId))
+    private val repositorySessionState: StateFlow<dev.blazelight.p4oc.data.session.SessionUiState> =
+        sessionRepository.sessionUiState(SessionId(sessionId))
 
     val connectionState: StateFlow<ConnectionState> = connectionManager.connectionState
 
@@ -83,18 +82,23 @@ class ChatViewModel constructor(
     // Track whether this tab has unread responses (LLM finished but user hasn't viewed)
     private val _hasUnreadResponse = MutableStateFlow(false)
     val hasUnreadResponse: StateFlow<Boolean> = _hasUnreadResponse.asStateFlow()
+    private val _isActiveTab = MutableStateFlow(false)
 
     /**
-     * Session connection state for tab indicator display.
-     * - BUSY: LLM is processing, streaming, or tools are running
-     * - AWAITING_INPUT: LLM finished but user hasn't viewed (tab not active)
-     * - IDLE: User has viewed the response
+     * UI presence for tab indicators. Awaiting input is reserved for real
+     * permission/question prompts; unread responses are a separate state.
      */
-    val sessionConnectionState: StateFlow<TabConnectionState> = combine(
-        _uiState.map { it.isBusy }.distinctUntilChanged(),
+    val sessionConnectionState: StateFlow<SessionPresence> = combine(
+        repositorySessionState,
+        dialogManager.pendingQuestion,
+        dialogManager.pendingPermissionsByCallId,
         _hasUnreadResponse,
         messages
-    ) { isBusy, hasUnread, msgs ->
+    ) { repositoryState: SessionUiState,
+        pendingQuestion: QuestionRequest?,
+        pendingPermissionsByCallId: Map<String, Permission>,
+        hasUnread: Boolean,
+        msgs: List<MessageWithParts> ->
         val hasRunningTools = msgs.any { msg ->
             msg.parts.any { part -> part is Part.Tool && part.state is ToolState.Running }
         }
@@ -102,12 +106,15 @@ class ChatViewModel constructor(
             msg.parts.any { part -> part is Part.Text && part.isStreaming }
         }
 
-        when {
-            isBusy || hasRunningTools || hasStreamingText -> TabConnectionState.BUSY
-            hasUnread -> TabConnectionState.AWAITING_INPUT
-            else -> TabConnectionState.IDLE
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TabConnectionState.IDLE)
+        repositoryState.copy(
+            pendingQuestion = pendingQuestion,
+            pendingPermissionsByCallId = pendingPermissionsByCallId,
+        ).presence(
+            hasUnread = hasUnread,
+            hasStreamingText = hasStreamingText,
+            hasRunningTools = hasRunningTools,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SessionPresence.IDLE)
 
     val visualSettings = settingsDataStore.visualSettings
         .stateIn(viewModelScope, SharingStarted.Eagerly, dev.blazelight.p4oc.core.datastore.VisualSettings())
@@ -125,16 +132,24 @@ class ChatViewModel constructor(
          * These are hardcoded based on OpenCode documentation.
          */
         private val BUILTIN_COMMANDS = listOf(
-            Command(name = "compact", description = "Compact the conversation to reduce context size"),
-            Command(name = "clear", description = "Clear the conversation history"),
-            Command(name = "new", description = "Start a new conversation"),
-            Command(name = "undo", description = "Undo the last change"),
-            Command(name = "redo", description = "Redo the last undone change"),
-            Command(name = "share", description = "Share the current conversation"),
-            Command(name = "init", description = "Initialize OpenCode for this project"),
-            Command(name = "help", description = "Show help information"),
-            Command(name = "connect", description = "Connect to a provider"),
-            Command(name = "bug", description = "Report a bug"),
+            Command(
+                name = "compact",
+                description = "Compact the conversation to reduce context size",
+                source = CommandSource.BuiltIn
+            ),
+            Command(name = "clear", description = "Clear the conversation history", source = CommandSource.BuiltIn),
+            Command(name = "new", description = "Start a new conversation", source = CommandSource.BuiltIn),
+            Command(name = "undo", description = "Undo the last change", source = CommandSource.BuiltIn),
+            Command(name = "redo", description = "Redo the last undone change", source = CommandSource.BuiltIn),
+            Command(name = "share", description = "Share the current conversation", source = CommandSource.BuiltIn),
+            Command(
+                name = "init",
+                description = "Initialize OpenCode for this project",
+                source = CommandSource.BuiltIn
+            ),
+            Command(name = "help", description = "Show help information", source = CommandSource.BuiltIn),
+            Command(name = "connect", description = "Connect to a provider", source = CommandSource.BuiltIn),
+            Command(name = "bug", description = "Report a bug", source = CommandSource.BuiltIn),
         )
     }
 
@@ -150,7 +165,12 @@ class ChatViewModel constructor(
     // --- Public API (delegating) ---
 
     fun markAsRead() {
+        _isActiveTab.value = true
         _hasUnreadResponse.value = false
+    }
+
+    fun markInactive() {
+        _isActiveTab.value = false
     }
 
     fun updateInput(text: String) {
@@ -174,7 +194,11 @@ class ChatViewModel constructor(
                     loadVcsInfo()
                 }
                 is ApiResult.Error -> {
-                    _uiState.update { it.copy(error = "Failed to load session") }
+                    if (result.code == 404) {
+                        _sessionMissing.emit(Unit)
+                    } else {
+                        _uiState.update { it.copy(error = "Failed to load session") }
+                    }
                 }
             }
         }
@@ -194,8 +218,12 @@ class ChatViewModel constructor(
                 }
                 is ApiResult.Error -> {
                     AppLog.e(TAG, "Failed to load messages: ${result.message}", result.throwable)
-                    _uiState.update {
-                        it.copy(isLoading = false, error = "Failed to load messages")
+                    if (result.code == 404) {
+                        _sessionMissing.emit(Unit)
+                    } else {
+                        _uiState.update {
+                            it.copy(isLoading = false, error = "Failed to load messages")
+                        }
                     }
                 }
             }
@@ -211,104 +239,39 @@ class ChatViewModel constructor(
         }
     }
 
-    // --- SSE event routing ---
+    // --- Repository-owned session event state ---
 
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun observeEvents() {
         viewModelScope.launch {
-            AppLog.d(TAG, "observeEvents: Starting to collect SSE events")
-            connectionManager.scopedEvents
-                .filter { scopedEvent ->
-                    scopedEvent.serverRef == workspaceClient.workspace.server &&
-                    scopedEvent.generation == workspaceClient.generation &&
-                    scopedEvent.workspaceKey == workspaceClient.workspace.key
-                }
-                .collect { scopedEvent ->
-                    AppLog.d(TAG, "observeEvents: Received ${scopedEvent.event::class.simpleName}")
-                    handleEvent(scopedEvent.event)
-                }
+            repositorySessionState.collect { state -> applyRepositorySessionState(state) }
         }
     }
 
-    private fun handleEvent(event: OpenCodeEvent) {
-        when (event) {
-            is OpenCodeEvent.PermissionRequested -> {
-                if (isOwnedSession(event.permission.sessionID)) {
-                    dialogManager.enqueuePermission(event.permission)
-                }
-            }
-            is OpenCodeEvent.QuestionAsked -> {
-                if (isOwnedSession(event.request.sessionID)) {
-                    dialogManager.enqueueQuestion(event.request)
-                }
-            }
-            is OpenCodeEvent.SessionCreated -> {
-                if (event.session.parentID == sessionId) {
-                    childSessionIds.add(event.session.id)
-                }
-            }
-            is OpenCodeEvent.SessionStatusChanged -> {
-                if (event.sessionID == sessionId) {
-                    val wasBusy = _uiState.value.isBusy
-                    val isBusy = event.status is SessionStatus.Busy || event.status is SessionStatus.Retry
-                    _uiState.update { it.copy(isBusy = isBusy, isSending = false) }
+    private var lastResponseCompletedToken = 0L
 
-                    // Clear streaming flags when session becomes idle
-                    if (wasBusy && !isBusy) {
-                        viewModelScope.launch { sessionRepository.clearStreamingFlags(SessionId(sessionId)) }
-                        _hasUnreadResponse.value = true
-                        handleResponseCompleted()
-                    }
+    private fun applyRepositorySessionState(state: dev.blazelight.p4oc.data.session.SessionUiState) {
+        dialogManager.setPermissionsByCallId(state.pendingPermissionsByCallId)
+        dialogManager.setPendingQuestion(state.pendingQuestion)
 
-                    // Send queued message when session becomes idle
-                    if (!isBusy) {
-                        sendQueuedMessageIfAny()
-                    }
-                }
+        val isBusy = state.status is SessionStatus.Busy || state.status is SessionStatus.Retry
+        val errorMessage = state.error?.takeUnless { it.isAborted() }?.toHumanMessage()
+        _uiState.update {
+            it.copy(
+                session = state.session ?: it.session,
+                isBusy = isBusy,
+                isSending = if (state.status != null) false else it.isSending,
+                todos = state.todos,
+                error = errorMessage ?: it.error,
+            )
+        }
+
+        if (state.responseCompletedToken > lastResponseCompletedToken) {
+            lastResponseCompletedToken = state.responseCompletedToken
+            if (state.error?.isAborted() != true) {
+                _hasUnreadResponse.value = !_isActiveTab.value
+                handleResponseCompleted()
             }
-            is OpenCodeEvent.SessionUpdated -> {
-                if (event.session.id == sessionId) {
-                    _uiState.update { it.copy(session = event.session) }
-                }
-            }
-            is OpenCodeEvent.SessionError -> {
-                if (event.sessionID == sessionId) {
-                    AppLog.e(TAG, "Session error: ${event.error?.message}")
-                    if (event.error?.isAborted() == true) {
-                        sessionRepository.clearStreamingFlags(SessionId(sessionId))
-                        _uiState.update { it.copy(isBusy = false, isSending = false, error = null) }
-                        return
-                    }
-                    _uiState.update {
-                        it.copy(
-                            isBusy = false,
-                            isSending = false,
-                            error = event.error?.toHumanMessage() ?: "An error occurred"
-                        )
-                    }
-                }
-            }
-            is OpenCodeEvent.SessionIdle -> {
-                if (event.sessionID == sessionId) {
-                    val wasBusy = _uiState.value.isBusy
-                    AppLog.d(TAG, "Session became idle")
-                    viewModelScope.launch { sessionRepository.clearStreamingFlags(SessionId(sessionId)) }
-                    _uiState.update { it.copy(isBusy = false, isSending = false) }
-                    if (wasBusy) handleResponseCompleted()
-                    sendQueuedMessageIfAny()
-                }
-            }
-            is OpenCodeEvent.TodoUpdated -> {
-                if (event.sessionID == sessionId) {
-                    _uiState.update { it.copy(todos = event.todos) }
-                }
-            }
-            is OpenCodeEvent.PermissionReplied -> {
-                if (isOwnedSession(event.sessionID)) {
-                    dialogManager.clearPermissionByRequestId(event.requestID)
-                }
-            }
-            else -> {}
+            if (!isBusy) sendQueuedMessageIfAny()
         }
     }
 
@@ -323,6 +286,10 @@ class ChatViewModel constructor(
         val text = _uiState.value.inputText.trim()
         val attachedFiles = filePickerManager.attachedFiles.value
         if (text.isEmpty() && attachedFiles.isEmpty()) return
+        if (attachedFiles.isEmpty() && text.startsWith("/")) {
+            sendSlashCommand(text)
+            return
+        }
 
         val selectedAgent = modelAgentManager.selectedAgent.value
         val selectedModel = modelAgentManager.selectedModel.value
@@ -337,7 +304,7 @@ class ChatViewModel constructor(
                 model = selectedModel
             )
 
-            val result = safeApiCall { workspaceClient.sendMessageAsync(sessionId, request) }
+            val result = sessionRepository.sendMessageAsync(SessionId(sessionId), request).await().toApiResult()
             when (result) {
                 is ApiResult.Success -> {
                     AppLog.d(TAG, "sendMessage: Async call succeeded, waiting for SSE events")
@@ -354,6 +321,15 @@ class ChatViewModel constructor(
                 }
             }
         }
+    }
+
+    private fun sendSlashCommand(text: String) {
+        val commandText = text.removePrefix("/")
+        val commandName = commandText.substringBefore(" ").trim()
+        if (commandName.isEmpty()) return
+        val arguments = commandText.substringAfter(" ", "").trim()
+        _uiState.update { it.copy(inputText = "") }
+        executeCommand(commandName, arguments)
     }
 
     fun queueMessage() {
@@ -408,7 +384,7 @@ class ChatViewModel constructor(
                 model = queued.model
             )
 
-            val result = safeApiCall { workspaceClient.sendMessageAsync(sessionId, request) }
+            val result = sessionRepository.sendMessageAsync(SessionId(sessionId), request).await().toApiResult()
             when (result) {
                 is ApiResult.Success -> {
                     AppLog.d(TAG, "sendQueuedMessageIfAny: Queued message sent successfully")
@@ -433,21 +409,23 @@ class ChatViewModel constructor(
             parts.add(PartInputDto(type = "text", text = text))
         }
         files.forEach { file ->
-            parts.add(PartInputDto(
-                type = "file",
-                filename = file.name,
-                mime = file.mimeType ?: mimeTypeForFilename(file.name),
-                url = WorkspacePath.Relative(RelativePath(file.path))
-                    .toAttachmentUrl()
-            ))
+            parts.add(
+                PartInputDto(
+                    type = "file",
+                    filename = file.name,
+                    mime = file.mimeType ?: FilenameMimeType.resolveOrOctetStream(file.name),
+                    url = file.toOpenCodeFileUrl()
+                )
+            )
         }
         return parts
     }
 
-    private fun mimeTypeForFilename(filename: String): String {
-        val extension = filename.substringAfterLast('.', missingDelimiterValue = "").lowercase()
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
-            ?: "application/octet-stream"
+    private fun SelectedFile.toOpenCodeFileUrl(): String {
+        val workspaceDirectory = workspaceClient.workspace.directory
+            ?: throw IllegalStateException("Cannot attach workspace file without a workspace directory")
+        val absolutePath = File(workspaceDirectory, path).normalize().path
+        return URI("file", null, absolutePath, null).toASCIIString()
     }
 
     // --- Permission / question responses ---
@@ -456,8 +434,12 @@ class ChatViewModel constructor(
         viewModelScope.launch {
             val request = PermissionResponseRequest(reply = response)
             when (val result = safeApiCall { workspaceClient.respondToPermission(permissionId, request) }) {
-                is ApiResult.Success -> dialogManager.clearPermission(permissionId)
-                is ApiResult.Error -> _uiState.update { it.copy(error = "Failed to respond to permission: ${result.message}") }
+                is ApiResult.Success -> sessionRepository.clearPermission(SessionId(sessionId), permissionId)
+                is ApiResult.Error -> _uiState.update {
+                    it.copy(
+                        error = "Failed to respond to permission: ${result.message}"
+                    )
+                }
             }
         }
     }
@@ -466,39 +448,66 @@ class ChatViewModel constructor(
         viewModelScope.launch {
             val request = QuestionReplyRequest(answers = answers)
             when (val result = safeApiCall { workspaceClient.respondToQuestion(requestId, request) }) {
-                is ApiResult.Success -> dialogManager.clearQuestion()
-                is ApiResult.Error -> _uiState.update { it.copy(error = "Failed to answer question: ${result.message}") }
+                is ApiResult.Success -> sessionRepository.clearQuestion(SessionId(sessionId))
+                is ApiResult.Error -> _uiState.update {
+                    it.copy(
+                        error = "Failed to answer question: ${result.message}"
+                    )
+                }
             }
         }
     }
 
     fun dismissQuestion() {
-        dialogManager.clearQuestion()
+        sessionRepository.clearQuestion(SessionId(sessionId))
     }
 
     // --- Commands & Todos ---
 
     fun loadCommands() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingCommands = true) }
+            _uiState.update {
+                it.copy(
+                    isLoadingCommands = true,
+                    commandLoadError = null,
+                    commands = it.commands.ifEmpty { BUILTIN_COMMANDS }
+                )
+            }
             val result = safeApiCall { workspaceClient.listCommands() }
             when (result) {
                 is ApiResult.Success -> {
                     AppLog.d(TAG, "loadCommands: Got ${result.data.size} commands from API")
                     val apiCommands = result.data.map { CommandMapper.mapToDomain(it) }
                     val allCommands = (BUILTIN_COMMANDS + apiCommands).distinctBy { it.name }
-                    _uiState.update { it.copy(commands = allCommands, isLoadingCommands = false) }
+                    _uiState.update {
+                        it.copy(
+                            commands = allCommands,
+                            isLoadingCommands = false,
+                            hasLoadedWorkspaceCommands = true,
+                            commandLoadError = null
+                        )
+                    }
                 }
                 is ApiResult.Error -> {
                     AppLog.e(TAG, "loadCommands failed: ${result.message}", result.throwable)
                     _uiState.update {
                         it.copy(
-                            commands = BUILTIN_COMMANDS,
-                            isLoadingCommands = false
+                            commands = it.commands.ifEmpty { BUILTIN_COMMANDS },
+                            isLoadingCommands = false,
+                            hasLoadedWorkspaceCommands = false,
+                            commandLoadError = result.message.ifBlank { "Unable to load workspace commands" }
                         )
                     }
                 }
             }
+        }
+    }
+
+    fun refreshCommandsIfNeeded(force: Boolean = false) {
+        val state = _uiState.value
+        if (state.isLoadingCommands) return
+        if (force || !state.hasLoadedWorkspaceCommands) {
+            loadCommands()
         }
     }
 
@@ -547,7 +556,7 @@ class ChatViewModel constructor(
             val result = safeApiCall { workspaceClient.revertSession(sessionId, request) }
             when (result) {
                 is ApiResult.Success -> {
-                    loadSession()  // Refresh to get updated revert state
+                    loadSession() // Refresh to get updated revert state
                 }
                 is ApiResult.Error -> {
                     _uiState.update { it.copy(error = "Failed to revert: ${result.message}") }
@@ -561,7 +570,7 @@ class ChatViewModel constructor(
             val result = safeApiCall { workspaceClient.unrevertSession(sessionId) }
             when (result) {
                 is ApiResult.Success -> {
-                    loadSession()  // Refresh to clear revert state
+                    loadSession() // Refresh to clear revert state
                 }
                 is ApiResult.Error -> {
                     _uiState.update { it.copy(error = "Failed to unrevert: ${result.message}") }
@@ -574,7 +583,7 @@ class ChatViewModel constructor(
 
     fun abortSession() {
         viewModelScope.launch {
-            when (val result = safeApiCall { workspaceClient.abortSession(sessionId) }) {
+            when (val result = sessionRepository.abortSession(SessionId(sessionId)).await().toApiResult()) {
                 is ApiResult.Success -> {
                     sessionRepository.clearStreamingFlags(SessionId(sessionId))
                     _uiState.update { it.copy(isBusy = false, isSending = false) }
@@ -592,11 +601,13 @@ class ChatViewModel constructor(
         return trimmed.ifBlank { "Unable to stop run" }
     }
 
-    private fun dev.blazelight.p4oc.domain.model.MessageError.isAborted(): Boolean =
-        name == "MessageAbortedError" || message.equals("Aborted", ignoreCase = true)
-
     private fun dev.blazelight.p4oc.domain.model.MessageError.toHumanMessage(): String =
         message?.toHumanAbortError() ?: "An error occurred"
+
+    private fun <T> Result<T>.toApiResult(): ApiResult<T> = fold(
+        onSuccess = { ApiResult.Success(it) },
+        onFailure = { ApiResult.Error(message = it.message ?: "Unknown error", throwable = it) }
+    )
 }
 
 /**
@@ -612,6 +623,8 @@ data class ChatUiState(
     val error: String? = null,
     val commands: List<Command> = emptyList(),
     val isLoadingCommands: Boolean = false,
+    val hasLoadedWorkspaceCommands: Boolean = false,
+    val commandLoadError: String? = null,
     val todos: List<Todo> = emptyList(),
     val isLoadingTodos: Boolean = false,
     val queuedMessages: List<QueuedMessage> = emptyList()

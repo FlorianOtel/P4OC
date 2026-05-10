@@ -1,0 +1,49 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml"
+  },
+  "include": [
+    "*.gradle.kts",
+    "gradle.properties",
+    "settings.gradle.kts",
+    "detekt.yml",
+    "mise.toml",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "RELEASE_NOTES.md",
+    "TESTING.md",
+    "app/**/*.kt",
+    "app/**/*.kts",
+    "app/src/main/AndroidManifest.xml",
+    "app/src/main/res/**/*.xml",
+    "app/src/test/**",
+    "app/src/androidTest/**",
+    "macrobenchmark/**/*.kt",
+    "macrobenchmark/**/*.kts",
+    "scripts/**",
+    "docs/**"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      ".bfg-report/**",
+      ".github/**",
+      ".opencode/**",
+      ".sisyphus/**",
+      ".tickets/**",
+      "build/**",
+      "app/build/**",
+      "gradle/**",
+      "mappings/**",
+      "openspec/**",
+      "screenshots/**",
+      "app/src/main/assets/textmate/**",
+      "repomix-output.xml",
+      "window_dump.xml"
+    ]
+  }
+}

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import dev.blazelight.p4oc.domain.model.Message
 import dev.blazelight.p4oc.domain.model.MessageWithParts
 import dev.blazelight.p4oc.domain.model.Permission
+import dev.blazelight.p4oc.ui.components.chat.AssistantMessages
 import dev.blazelight.p4oc.ui.components.chat.ChatMessage
 import dev.blazelight.p4oc.ui.components.toolwidgets.ToolWidgetState
 
@@ -21,13 +22,13 @@ internal sealed class MessageBlock {
  */
 internal fun groupMessagesIntoBlocks(messages: List<MessageWithParts>): List<MessageBlock> {
     if (messages.isEmpty()) return emptyList()
-    
+
     val blocks = mutableListOf<MessageBlock>()
     var i = 0
-    
+
     while (i < messages.size) {
         val current = messages[i]
-        
+
         if (current.message is Message.User) {
             blocks.add(MessageBlock.UserBlock(current))
             i++
@@ -41,7 +42,7 @@ internal fun groupMessagesIntoBlocks(messages: List<MessageWithParts>): List<Mes
             blocks.add(MessageBlock.AssistantBlock(assistantMessages))
         }
     }
-    
+
     return blocks
 }
 
@@ -70,14 +71,8 @@ internal fun MessageBlockView(
             )
         }
         is MessageBlock.AssistantBlock -> {
-            val allParts = block.messages.flatMap { it.parts }
-            val mergedMessageWithParts = MessageWithParts(
-                message = block.messages.first().message,
-                parts = allParts
-            )
-            
-            ChatMessage(
-                messageWithParts = mergedMessageWithParts,
+            AssistantMessages(
+                messagesWithParts = block.messages,
                 onToolApprove = onToolApprove,
                 onToolDeny = onToolDeny,
                 onToolAlways = onToolAlways,

@@ -13,19 +13,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Part
 import dev.blazelight.p4oc.domain.model.ToolState
+import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
-import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -44,10 +44,10 @@ fun BashWidgetExpanded(
     val theme = LocalOpenCodeTheme.current
     val state = tool.state
     val (icon, color) = getStateIconColor(state, theme)
-    
+
     // Extract command from input
     val command = extractJsonParam(state.input, "command") ?: "bash"
-    
+
     // Extract output from result
     val output = when (state) {
         is ToolState.Completed -> state.output.take(2000)
@@ -55,7 +55,7 @@ fun BashWidgetExpanded(
         is ToolState.Error -> state.error
         else -> null
     }
-    
+
     Column(
         modifier = modifier
             .then(if (onClick != null) Modifier.clickable(onClick = onClick, role = Role.Button) else Modifier)
@@ -88,7 +88,7 @@ fun BashWidgetExpanded(
                 TuiLoadingIndicator()
             }
         }
-        
+
         // Output preview (scrollable, max height ~100dp)
         if (!output.isNullOrBlank()) {
             Box(
@@ -113,7 +113,7 @@ fun BashWidgetExpanded(
                 )
             }
         }
-        
+
         // Pending approval buttons
         if (state is ToolState.Pending) {
             PendingApprovalButtons(
@@ -137,14 +137,14 @@ fun ReadWidgetExpanded(
     val theme = LocalOpenCodeTheme.current
     val state = tool.state
     val (icon, color) = getStateIconColor(state, theme)
-    
+
     // Extract file path from input
     val filePath = extractJsonParam(state.input, "filePath")
         ?: extractJsonParam(state.input, "path")
         ?: extractJsonParam(state.input, "relative_path")
         ?: "file"
     val fileName = filePath.substringAfterLast("/")
-    
+
     // Extract content from output
     val content = when (state) {
         is ToolState.Completed -> state.output.take(2000)
@@ -152,7 +152,7 @@ fun ReadWidgetExpanded(
         is ToolState.Error -> state.error
         else -> null
     }
-    
+
     Column(
         modifier = modifier
             .then(if (onClick != null) Modifier.clickable(onClick = onClick, role = Role.Button) else Modifier)
@@ -183,7 +183,7 @@ fun ReadWidgetExpanded(
                 TuiLoadingIndicator()
             }
         }
-        
+
         // Full path (muted)
         Text(
             text = filePath,
@@ -195,7 +195,7 @@ fun ReadWidgetExpanded(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        
+
         // Content preview (scrollable, max height ~100dp)
         if (!content.isNullOrBlank()) {
             Box(
@@ -236,19 +236,19 @@ fun EditWidgetExpanded(
     val theme = LocalOpenCodeTheme.current
     val state = tool.state
     val (icon, color) = getStateIconColor(state, theme)
-    
+
     // Extract file path from input
     val filePath = extractJsonParam(state.input, "filePath")
         ?: extractJsonParam(state.input, "path")
         ?: extractJsonParam(state.input, "relative_path")
         ?: "file"
     val fileName = filePath.substringAfterLast("/")
-    
+
     // Extract diff info
     val oldString = extractJsonParam(state.input, "oldString")
     val newString = extractJsonParam(state.input, "newString")
     val codeEdit = extractJsonParam(state.input, "code_edit")
-    
+
     Column(
         modifier = modifier
             .then(if (onClick != null) Modifier.clickable(onClick = onClick, role = Role.Button) else Modifier)
@@ -275,18 +275,18 @@ fun EditWidgetExpanded(
                 color = theme.text
             )
             Spacer(Modifier.weight(1f))
-            
+
             // Show diff stats if available
             getDiffStatsFromTool(tool)?.let { (added, removed) ->
                 Text("+$added", style = MaterialTheme.typography.labelSmall, color = theme.success)
                 Text("-$removed", style = MaterialTheme.typography.labelSmall, color = theme.error)
             }
-            
+
             if (state is ToolState.Running) {
                 TuiLoadingIndicator()
             }
         }
-        
+
         // Full path (muted)
         Text(
             text = filePath,
@@ -298,15 +298,15 @@ fun EditWidgetExpanded(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        
+
         // Show edit preview (old → new or code_edit)
         val previewContent = when {
             codeEdit != null -> codeEdit.take(500)
-            oldString != null && newString != null -> 
+            oldString != null && newString != null ->
                 "- ${oldString.take(100)}\n+ ${newString.take(100)}"
             else -> null
         }
-        
+
         if (previewContent != null) {
             Box(
                 modifier = Modifier
@@ -347,7 +347,7 @@ fun DefaultWidgetExpanded(
     val theme = LocalOpenCodeTheme.current
     val state = tool.state
     val (icon, color) = getStateIconColor(state, theme)
-    
+
     // Extract any output
     val output = when (state) {
         is ToolState.Completed -> state.output.take(1000)
@@ -355,7 +355,7 @@ fun DefaultWidgetExpanded(
         is ToolState.Error -> state.error
         else -> null
     }
-    
+
     Column(
         modifier = modifier
             .then(if (onClick != null) Modifier.clickable(onClick = onClick, role = Role.Button) else Modifier)
@@ -386,7 +386,7 @@ fun DefaultWidgetExpanded(
                 TuiLoadingIndicator()
             }
         }
-        
+
         // Input preview (show first few params)
         val inputPreview = state.input.entries.take(2).joinToString(", ") { (k, v) ->
             "$k: ${v.toString().take(30)}"
@@ -403,7 +403,7 @@ fun DefaultWidgetExpanded(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        
+
         // Output preview
         if (!output.isNullOrBlank()) {
             Box(
@@ -425,7 +425,7 @@ fun DefaultWidgetExpanded(
                 )
             }
         }
-        
+
         // Pending approval buttons
         if (state is ToolState.Pending) {
             PendingApprovalButtons(
@@ -452,12 +452,12 @@ fun TaskWidgetExpanded(
     val theme = LocalOpenCodeTheme.current
     val state = tool.state
     val (icon, color) = getStateIconColor(state, theme)
-    
+
     // Extract task info from input
     val description = extractJsonParam(state.input, "description") ?: "Sub-agent task"
     val subagentType = extractJsonParam(state.input, "subagent_type") ?: "general"
     val sessionId = extractSubSessionId(tool, state)
-    
+
     // Extract output/result
     val output = when (state) {
         is ToolState.Completed -> state.output.take(500)
@@ -465,7 +465,7 @@ fun TaskWidgetExpanded(
         is ToolState.Error -> state.error
         else -> null
     }
-    
+
     Column(
         modifier = modifier
             .then(if (onClick != null) Modifier.clickable(onClick = onClick, role = Role.Button) else Modifier)
@@ -507,7 +507,7 @@ fun TaskWidgetExpanded(
                 TuiLoadingIndicator()
             }
         }
-        
+
         // Description
         Text(
             text = description,
@@ -518,7 +518,7 @@ fun TaskWidgetExpanded(
             maxLines = 3,
             overflow = TextOverflow.Ellipsis
         )
-        
+
         // Output preview (if completed or error)
         if (!output.isNullOrBlank() && state !is ToolState.Running) {
             Box(
@@ -540,7 +540,7 @@ fun TaskWidgetExpanded(
                 )
             }
         }
-        
+
         // Open in Tab button (if session_id available)
         if (sessionId != null && onOpenSubSession != null) {
             OutlinedButton(
@@ -560,7 +560,7 @@ fun TaskWidgetExpanded(
                 Text(stringResource(R.string.open_sub_agent), style = MaterialTheme.typography.labelSmall)
             }
         }
-        
+
         // Pending approval buttons
         if (state is ToolState.Pending) {
             PendingApprovalButtons(
@@ -609,7 +609,7 @@ private fun PendingApprovalButtons(
 
 @Composable
 private fun getStateIconColor(
-    state: ToolState, 
+    state: ToolState,
     theme: dev.blazelight.p4oc.ui.theme.opencode.OpenCodeTheme
 ): Pair<String, androidx.compose.ui.graphics.Color> {
     return when (state) {
@@ -661,9 +661,9 @@ private fun getDiffStatsFromTool(tool: Part.Tool): Pair<Int, Int>? {
         is ToolState.Error -> state.metadata
         else -> null
     } ?: return null
-    
+
     val added = metadata["linesAdded"]?.jsonPrimitive?.content?.toIntOrNull() ?: return null
     val removed = metadata["linesRemoved"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-    
+
     return added to removed
 }

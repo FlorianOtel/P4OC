@@ -9,7 +9,7 @@ import androidx.compose.ui.graphics.Color
 data class OpenCodeTheme(
     val name: String,
     val isDark: Boolean,
-    
+
     // Core (6 required)
     val primary: Color,
     val secondary: Color,
@@ -17,20 +17,20 @@ data class OpenCodeTheme(
     val text: Color,
     val textMuted: Color,
     val background: Color,
-    
+
     // Status (4)
     val error: Color,
     val warning: Color,
     val success: Color,
     val info: Color,
-    
+
     // Surfaces (5)
     val backgroundPanel: Color,
     val backgroundElement: Color,
     val border: Color,
     val borderActive: Color,
     val borderSubtle: Color,
-    
+
     // Diff (12 tokens)
     val diffAdded: Color,
     val diffRemoved: Color,
@@ -44,7 +44,7 @@ data class OpenCodeTheme(
     val diffLineNumber: Color,
     val diffAddedLineNumberBg: Color,
     val diffRemovedLineNumberBg: Color,
-    
+
     // Markdown (14 tokens)
     val markdownText: Color,
     val markdownHeading: Color,
@@ -60,7 +60,7 @@ data class OpenCodeTheme(
     val markdownImage: Color,
     val markdownImageText: Color,
     val markdownCodeBlock: Color,
-    
+
     // Syntax (9 tokens)
     val syntaxComment: Color,
     val syntaxKeyword: Color,

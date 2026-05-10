@@ -6,8 +6,11 @@ import dev.blazelight.p4oc.data.remote.dto.ProjectDto
 import dev.blazelight.p4oc.data.session.RepoState
 import dev.blazelight.p4oc.data.session.SessionRepositoryImpl
 import dev.blazelight.p4oc.domain.model.Session
+import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.domain.model.SessionStatus
+import dev.blazelight.p4oc.domain.model.resolveSessionPresence
 import dev.blazelight.p4oc.domain.session.SessionId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,10 +32,15 @@ class SessionListViewModel constructor(
                     state.copy(
                         isLoading = repoState is RepoState.Hydrating,
                         sessions = snapshot.sessions.values
-                            .map { workspaceSession -> workspaceSession.session.toSessionWithProject(snapshot.projects) }
+                            .map { workspaceSession -> workspaceSession.session.toSessionWithProject(
+                                snapshot.projects
+                            ) }
                             .sortedByDescending { it.session.updatedAt },
                         projects = snapshot.projects.map(::toProjectInfo).sortedByDescending { it.worktree },
                         sessionStatuses = snapshot.statuses,
+                        sessionPresences = snapshot.statuses.mapValues { (_, status) -> resolveSessionPresence(
+                            status
+                        ) },
                         error = (repoState as? RepoState.Stale)?.reason ?: state.error,
                     )
                 }
@@ -51,10 +59,17 @@ class SessionListViewModel constructor(
                         it.copy(
                             isLoading = false,
                             sessions = snapshot.sessions.values
-                                .map { workspaceSession -> workspaceSession.session.toSessionWithProject(snapshot.projects) }
+                                .map { workspaceSession -> workspaceSession.session.toSessionWithProject(
+                                    snapshot.projects
+                                ) }
                                 .sortedByDescending { session -> session.session.updatedAt },
-                            projects = snapshot.projects.map(::toProjectInfo).sortedByDescending { project -> project.worktree },
+                            projects = snapshot.projects.map(
+                                ::toProjectInfo
+                            ).sortedByDescending { project -> project.worktree },
                             sessionStatuses = snapshot.statuses,
+                            sessionPresences = snapshot.statuses.mapValues { (_, status) -> resolveSessionPresence(
+                                status
+                            ) },
                             error = null,
                         )
                     }
@@ -71,7 +86,10 @@ class SessionListViewModel constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 if (directory != null && directory != sessionRepository.workspace.directory) {
-                    _uiState.update { it.copy(isLoading = false, error = "Switch to $directory before creating a session") }
+                    _uiState.update { it.copy(
+                        isLoading = false,
+                        error = "Switch to $directory before creating a session"
+                    ) }
                     return@launch
                 }
                 val created = sessionRepository.createSession(title)
@@ -82,6 +100,8 @@ class SessionListViewModel constructor(
                         newSessionDirectory = created.session.directory,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, error = "Failed to create session: ${e.message}") }
             }
@@ -92,6 +112,8 @@ class SessionListViewModel constructor(
         viewModelScope.launch {
             try {
                 sessionRepository.deleteSession(SessionId(sessionId))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "Failed to delete session: ${e.message}") }
             }
@@ -106,6 +128,8 @@ class SessionListViewModel constructor(
         viewModelScope.launch {
             try {
                 sessionRepository.renameSession(SessionId(sessionId), newTitle)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "Failed to rename: ${e.message}") }
             }
@@ -117,6 +141,8 @@ class SessionListViewModel constructor(
             try {
                 val updated = sessionRepository.shareSession(SessionId(sessionId))
                 _uiState.update { it.copy(shareUrl = updated.session.shareUrl) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "Failed to share session: ${e.message}") }
             }
@@ -127,6 +153,8 @@ class SessionListViewModel constructor(
         viewModelScope.launch {
             try {
                 sessionRepository.unshareSession(SessionId(sessionId))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "Failed to unshare: ${e.message}") }
             }
@@ -141,6 +169,8 @@ class SessionListViewModel constructor(
         viewModelScope.launch {
             try {
                 sessionRepository.summarizeSession(SessionId(sessionId))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "Failed to summarize: ${e.message}") }
             }
@@ -171,6 +201,7 @@ data class SessionListUiState(
     val isLoading: Boolean = false,
     val sessions: List<SessionWithProject> = emptyList(),
     val sessionStatuses: Map<String, SessionStatus> = emptyMap(),
+    val sessionPresences: Map<String, SessionPresence> = emptyMap(),
     val projects: List<ProjectInfo> = emptyList(),
     val newSessionId: String? = null,
     val newSessionDirectory: String? = null,

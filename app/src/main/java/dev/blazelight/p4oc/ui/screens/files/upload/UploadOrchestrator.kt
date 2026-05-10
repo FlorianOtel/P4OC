@@ -3,7 +3,6 @@ package dev.blazelight.p4oc.ui.screens.files.upload
 import dev.blazelight.p4oc.data.files.FileOperationResult
 import dev.blazelight.p4oc.data.files.FileRepository
 import dev.blazelight.p4oc.data.files.FileUploadRequest
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,14 +16,13 @@ import kotlinx.coroutines.flow.update
  * Retry policy: only [FileOperationResult.Failed] outcomes are retried (up to
  * [maxAttempts] total attempts). [FileOperationResult.Conflict] is treated as
  * a terminal user-actionable failure for that item — we do not blindly retry
- * past hash conflicts. This is whole-file retry; the OFISH layer aborts its
- * temp file on every failed chunk, so there is no remote partial state to
+ * past hash conflicts. Retry reopens the source stream; the OFISH layer aborts
+ * its temp file on every failed chunk, so there is no remote partial state to
  * preserve.
  */
 class UploadOrchestrator(
     private val fileRepository: FileRepository,
     private val source: UploadSource,
-    private val maxBytes: Long = DEFAULT_MAX_BYTES,
     private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
     private val retryDelayMillis: (attempt: Int) -> Long = ::defaultBackoff,
     private val now: () -> Long = System::currentTimeMillis,
@@ -115,42 +113,21 @@ class UploadOrchestrator(
 
     private suspend fun uploadOne(index: Int) {
         val item = _state.value.items.getOrNull(index) ?: return
-        updateItem(index) { it.copy(phase = UploadPhase.Reading, attempts = 0) }
-
-        val bytes = try {
-            source.readBytes(item.sourceId, maxBytes)
-        } catch (cancellation: CancellationException) {
-            // Never swallow coroutine cancellation as a normal read failure;
-            // markCancelled() will set the phase appropriately.
-            throw cancellation
-        } catch (tooBig: UploadTooLargeException) {
-            // The 25 MiB cap is enforced because FileRepository.uploadFile
-            // takes a ByteArray; we read the whole payload into memory.
-            updateItem(index) {
-                it.copy(phase = UploadPhase.Failed(
-                    "File exceeds ${formatFileSize(tooBig.maxBytes)} upload limit"
-                ))
-            }
-            return
-        } catch (t: Throwable) {
-            updateItem(index) {
-                it.copy(phase = UploadPhase.Failed(t.message ?: "Failed to read file"))
-            }
-            return
-        }
-
-        updateItem(index) { it.copy(phase = UploadPhase.Uploading, bytesTotal = bytes.size.toLong(), bytesUploaded = 0L) }
-
         var lastFailure: String? = null
         for (attempt in 1..maxAttempts) {
-            updateItem(index) { it.copy(attempts = attempt) }
+            updateItem(index) { it.copy(phase = UploadPhase.Reading, attempts = attempt, bytesUploaded = 0L) }
             val request = FileUploadRequest(
                 path = item.destinationPath,
-                bytes = bytes,
+                contentLength = item.bytesTotal,
+                openStream = { source.openStream(item.sourceId) },
                 expectedHash = null,
                 onBytesUploaded = { uploaded ->
                     updateItem(index) { current ->
-                        current.copy(bytesUploaded = uploaded.coerceIn(0L, current.bytesTotal))
+                        val total = if (current.bytesTotal > 0L) current.bytesTotal else uploaded
+                        current.copy(
+                            bytesTotal = total,
+                            bytesUploaded = if (total > 0L) uploaded.coerceIn(0L, total) else uploaded,
+                        )
                     }
                 },
             )
@@ -190,13 +167,6 @@ class UploadOrchestrator(
     companion object {
         const val DEFAULT_MAX_ATTEMPTS = 3
 
-        /**
-         * Per-file size cap (25 MiB). Picked because [FileRepository.uploadFile]
-         * accepts a `ByteArray`, so the full payload is buffered in memory
-         * before being chunked by the OFISH layer. Raising this requires a
-         * streaming upload API.
-         */
-        const val DEFAULT_MAX_BYTES: Long = 25L * 1024L * 1024L
         const val DEFAULT_MIME = "application/octet-stream"
         const val CANCELLED_MESSAGE = "cancelled"
 

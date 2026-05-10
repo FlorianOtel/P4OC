@@ -1,12 +1,16 @@
 package dev.blazelight.p4oc.fakes
 
+import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
 import dev.blazelight.p4oc.data.session.RepoState
 import dev.blazelight.p4oc.data.session.SessionRepository
+import dev.blazelight.p4oc.data.session.SessionUiState
 import dev.blazelight.p4oc.data.session.Snapshot
-import dev.blazelight.p4oc.domain.model.OpenCodeEvent
 import dev.blazelight.p4oc.domain.model.MessageWithParts
+import dev.blazelight.p4oc.domain.model.OpenCodeEvent
 import dev.blazelight.p4oc.domain.session.SessionId
 import dev.blazelight.p4oc.domain.session.WorkspaceSession
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,7 +51,21 @@ class FakeSessionRepository(
 
     override fun messages(sessionId: SessionId): StateFlow<List<MessageWithParts>> = MutableStateFlow(emptyList())
 
+    override fun sessionUiState(sessionId: SessionId): StateFlow<SessionUiState> = MutableStateFlow(SessionUiState())
+
+    override fun clearPermission(sessionId: SessionId, permissionId: String) = Unit
+
+    override fun clearPermissionByRequestId(sessionId: SessionId, requestId: String) = Unit
+
+    override fun clearQuestion(sessionId: SessionId) = Unit
+
     override suspend fun loadMessages(sessionId: SessionId, limit: Int?) = Unit
+
+    override fun sendMessageAsync(sessionId: SessionId, request: SendMessageRequest): Deferred<Result<Unit>> =
+        CompletableDeferred(Result.success(Unit))
+
+    override fun abortSession(sessionId: SessionId): Deferred<Result<Boolean>> =
+        CompletableDeferred(Result.success(true))
 
     override fun clearStreamingFlags(sessionId: SessionId) = Unit
 

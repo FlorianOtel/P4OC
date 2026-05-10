@@ -12,32 +12,30 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
-import org.koin.androidx.compose.koinViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.datastore.RecentServer
 import dev.blazelight.p4oc.core.network.DiscoveredServer
 import dev.blazelight.p4oc.core.network.DiscoveryState
-import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
+import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
+import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,12 +73,12 @@ fun ServerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Text(
                         "[ ${stringResource(R.string.server_connect_title)} ]",
                         fontFamily = FontFamily.Monospace,
                         color = theme.text
-                    ) 
+                    )
                 },
                 actions = {
                     IconButton(
@@ -214,7 +212,10 @@ private fun RemoteServerSection(
                 value = url,
                 onValueChange = onUrlChange,
                 label = { Text(stringResource(R.string.field_server_url), fontFamily = FontFamily.Monospace) },
-                placeholder = { Text(stringResource(R.string.field_server_url_placeholder), fontFamily = FontFamily.Monospace) },
+                placeholder = { Text(
+                    stringResource(R.string.field_server_url_placeholder),
+                    fontFamily = FontFamily.Monospace
+                ) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag("server_url_input"),
                 shape = RectangleShape,
@@ -243,8 +244,11 @@ private fun RemoteServerSection(
                 label = { Text(stringResource(R.string.field_password), fontFamily = FontFamily.Monospace) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                visualTransformation = if (passwordVisible) 
-                    VisualTransformation.None else PasswordVisualTransformation(),
+                visualTransformation = if (passwordVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 shape = RectangleShape,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -463,7 +467,7 @@ private fun RecentServersSection(
     onRemoveServer: (RecentServer) -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     Surface(
         color = theme.backgroundElement,
         shape = RectangleShape
@@ -478,7 +482,7 @@ private fun RecentServersSection(
                 fontFamily = FontFamily.Monospace,
                 color = theme.text
             )
-            
+
             servers.forEach { server ->
                 Row(
                     modifier = Modifier

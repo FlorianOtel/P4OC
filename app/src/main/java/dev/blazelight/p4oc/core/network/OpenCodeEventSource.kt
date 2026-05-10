@@ -12,13 +12,18 @@ import dev.blazelight.p4oc.data.remote.dto.EventDataDto
 import dev.blazelight.p4oc.data.remote.dto.GlobalEventDto
 import dev.blazelight.p4oc.data.remote.mapper.EventMapper
 import dev.blazelight.p4oc.domain.model.OpenCodeEvent
-import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.net.URI
@@ -41,18 +46,13 @@ class OpenCodeEventSource(
         private const val MAX_CONSECUTIVE_ERRORS = 15
     }
 
-    private val _events = MutableSharedFlow<OpenCodeEvent>(
-        replay = 0,
-        extraBufferCapacity = 256,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
+    private val eventPumpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val eventChannel = Channel<QueuedEvent>(capacity = Channel.UNLIMITED)
+
+    private val _events = MutableSharedFlow<OpenCodeEvent>(replay = 0)
     val events: SharedFlow<OpenCodeEvent> = _events.asSharedFlow()
 
-    private val _directoryEvents = MutableSharedFlow<DirectoryEvent>(
-        replay = 0,
-        extraBufferCapacity = 256,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
+    private val _directoryEvents = MutableSharedFlow<DirectoryEvent>(replay = 0)
     val directoryEvents: SharedFlow<DirectoryEvent> = _directoryEvents.asSharedFlow()
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -72,6 +72,18 @@ class OpenCodeEventSource(
     private var isShutdown = false
 
     private val consecutiveErrors = AtomicInteger(0)
+
+    init {
+        eventPumpScope.launch {
+            for (queued in eventChannel) {
+                if (queued.generation != null && !isActiveGeneration(queued.generation)) continue
+                _events.emit(queued.event)
+                if (queued.directory != null || queued.includeDirectoryEvent) {
+                    _directoryEvents.emit(DirectoryEvent(directory = queued.directory, event = queued.event))
+                }
+            }
+        }
+    }
 
     fun connect() {
         val besRef: BackgroundEventSource
@@ -104,6 +116,8 @@ class OpenCodeEventSource(
             _connectionState.value = ConnectionState.Disconnected
         }
         toClose?.closeSafely()
+        eventPumpScope.cancel("OpenCodeEventSource shut down")
+        eventChannel.close()
     }
 
     fun reconnect() {
@@ -180,16 +194,18 @@ class OpenCodeEventSource(
 
         return BackgroundEventSource.Builder(handler, eventSourceBuilder)
             .threadBaseName("OpenCodeSSE")
-            .connectionErrorHandler(ConnectionErrorHandler { t ->
-                // Decision-only — do NOT emit events here to avoid duplicates with onError/onClosed.
-                if (isShutdown || !isActiveGeneration(gen)) {
-                    AppLog.d(TAG, "Connection error after shutdown/stale → SHUTDOWN (${t.message})")
-                    ConnectionErrorHandler.Action.SHUTDOWN
-                } else {
-                    AppLog.d(TAG, "Connection error, library will retry: ${t.message}")
-                    ConnectionErrorHandler.Action.PROCEED
+            .connectionErrorHandler(
+                ConnectionErrorHandler { t ->
+                    // Decision-only — do NOT emit events here to avoid duplicates with onError/onClosed.
+                    if (isShutdown || !isActiveGeneration(gen)) {
+                        AppLog.d(TAG, "Connection error after shutdown/stale → SHUTDOWN (${t.message})")
+                        ConnectionErrorHandler.Action.SHUTDOWN
+                    } else {
+                        AppLog.d(TAG, "Connection error, library will retry: ${t.message}")
+                        ConnectionErrorHandler.Action.PROCEED
+                    }
                 }
-            })
+            )
             .build()
     }
 
@@ -197,27 +213,21 @@ class OpenCodeEventSource(
     private fun isActiveGeneration(gen: Long): Boolean =
         !isShutdown && generation == gen
 
-    private fun parseAndEmitEvent(data: String) {
+    private fun parseAndEmitEvent(data: String, gen: Long) {
         try {
             val globalEvent = json.decodeFromString<GlobalEventDto>(data)
             val event = eventMapper.mapToEvent(globalEvent.payload)
             if (event != null) {
-                val emitted = emitMappedEvent(event, globalEvent.directory)
-                AppLog.d(TAG, "Event emitted: ${event::class.simpleName}, success=$emitted")
-                if (!emitted) {
-                    AppLog.w(TAG, "Dropped event (buffer full): ${event::class.simpleName}")
-                }
+                enqueueMappedEvent(event, globalEvent.directory, gen)
+                AppLog.d(TAG, "Event queued: ${event::class.simpleName}")
             }
         } catch (e: Exception) {
             try {
                 val eventData = json.decodeFromString<EventDataDto>(data)
                 val event = eventMapper.mapToEvent(eventData)
                 if (event != null) {
-                    val emitted = emitMappedEvent(event, directory = null)
-                    AppLog.d(TAG, "Event emitted (fallback): ${event::class.simpleName}, success=$emitted")
-                    if (!emitted) {
-                        AppLog.w(TAG, "Dropped event (buffer full, fallback): ${event::class.simpleName}")
-                    }
+                    enqueueMappedEvent(event, directory = null, gen)
+                    AppLog.d(TAG, "Event queued (fallback): ${event::class.simpleName}")
                 }
             } catch (e2: Exception) {
                 if (!data.contains("server.heartbeat") && !data.contains("server.connected")) {
@@ -227,20 +237,22 @@ class OpenCodeEventSource(
         }
     }
 
-    private fun emitEvent(event: OpenCodeEvent) {
-        val emitted = _events.tryEmit(event)
-        if (!emitted) {
-            AppLog.w(TAG, "Dropped lifecycle event (buffer full): ${event::class.simpleName}")
+    private fun enqueueEvent(event: OpenCodeEvent, gen: Long? = null) {
+        val result = eventChannel.trySend(
+            QueuedEvent(event = event, directory = null, includeDirectoryEvent = false, generation = gen)
+        )
+        if (result.isFailure) {
+            AppLog.e(TAG, "Failed to queue event: ${event::class.simpleName}", result.exceptionOrNull())
         }
     }
 
-    private fun emitMappedEvent(event: OpenCodeEvent, directory: String?): Boolean {
-        val eventEmitted = _events.tryEmit(event)
-        val scopedEmitted = _directoryEvents.tryEmit(DirectoryEvent(directory = directory, event = event))
-        if (!scopedEmitted) {
-            AppLog.w(TAG, "Dropped directory event (buffer full): ${event::class.simpleName}")
+    private fun enqueueMappedEvent(event: OpenCodeEvent, directory: String?, gen: Long) {
+        val result = eventChannel.trySend(
+            QueuedEvent(event = event, directory = directory, includeDirectoryEvent = true, generation = gen)
+        )
+        if (result.isFailure) {
+            AppLog.e(TAG, "Failed to queue mapped event: ${event::class.simpleName}", result.exceptionOrNull())
         }
-        return eventEmitted && scopedEmitted
     }
 
     /**
@@ -268,14 +280,14 @@ class OpenCodeEventSource(
             errorFiredSinceOpen = false
             consecutiveErrors.set(0)
             _connectionState.value = ConnectionState.Connected
-            emitEvent(OpenCodeEvent.Connected)
+            enqueueEvent(OpenCodeEvent.Connected, gen)
         }
 
         override fun onMessage(event: String, messageEvent: MessageEvent) {
             if (!isActiveGeneration(gen)) return
             val data = messageEvent.data
             AppLog.v(TAG, "SSE message received: event=$event, length=${data.length}")
-            parseAndEmitEvent(data)
+            parseAndEmitEvent(data, gen)
         }
 
         override fun onComment(comment: String) {
@@ -294,10 +306,16 @@ class OpenCodeEventSource(
             // Clean close without preceding error (e.g., server shutdown)
             val closedCount = consecutiveErrors.incrementAndGet()
             if (closedCount >= MAX_CONSECUTIVE_ERRORS) {
-                AppLog.w(TAG, "SSE stream closed (onClosed), $closedCount consecutive errors – escalating to Disconnected")
+                AppLog.w(
+                    TAG,
+                    "SSE stream closed (onClosed), $closedCount consecutive errors – escalating to Disconnected"
+                )
                 _connectionState.value = ConnectionState.Disconnected
             } else {
-                AppLog.d(TAG, "SSE stream closed (onClosed), consecutiveErrors=$closedCount, library may auto-reconnect")
+                AppLog.d(
+                    TAG,
+                    "SSE stream closed (onClosed), consecutiveErrors=$closedCount, library may auto-reconnect"
+                )
                 // Don't set Error state here to avoid UI flicker during auto-retries
             }
         }
@@ -307,13 +325,24 @@ class OpenCodeEventSource(
             errorFiredSinceOpen = true
             val errorCount = consecutiveErrors.incrementAndGet()
             if (errorCount >= MAX_CONSECUTIVE_ERRORS) {
-                AppLog.e(TAG, "SSE error (onError): ${t.message}, $errorCount consecutive errors – escalating to Disconnected", t)
+                AppLog.e(
+                    TAG,
+                    "SSE error (onError): ${t.message}, $errorCount consecutive errors – escalating to Disconnected",
+                    t
+                )
                 _connectionState.value = ConnectionState.Disconnected
             } else {
                 AppLog.e(TAG, "SSE error (onError): ${t.message}, consecutiveErrors=$errorCount", t)
                 _connectionState.value = ConnectionState.Error(t.message)
             }
-            emitEvent(OpenCodeEvent.Error(t))
+            enqueueEvent(OpenCodeEvent.Error(t), gen)
         }
     }
+
+    private data class QueuedEvent(
+        val event: OpenCodeEvent,
+        val directory: String?,
+        val includeDirectoryEvent: Boolean,
+        val generation: Long?,
+    )
 }

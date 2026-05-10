@@ -22,7 +22,7 @@ import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 @Composable
 fun rememberOpenCodeMarkdownColors(): MarkdownColors {
     val theme = LocalOpenCodeTheme.current
-    
+
     return markdownColor(
         text = theme.markdownText,
         codeBackground = theme.backgroundElement,
@@ -37,7 +37,7 @@ fun rememberOpenCodeMarkdownColors(): MarkdownColors {
 @Composable
 fun rememberTertiaryMarkdownColors(): MarkdownColors {
     val theme = LocalOpenCodeTheme.current
-    
+
     return markdownColor(
         text = theme.success,
         codeBackground = theme.backgroundElement,
@@ -53,12 +53,12 @@ fun rememberTertiaryMarkdownColors(): MarkdownColors {
 @Composable
 fun rememberOpenCodeMarkdownTypography(): MarkdownTypography {
     val materialTypography = MaterialTheme.typography
-    
+
     // Body style - reuse for consistency
     val bodyStyle = materialTypography.bodyMedium.copy(
         lineHeight = 20.sp,
     )
-    
+
     return markdownTypography(
         // Headings - subtle size differences (Glow-inspired)
         // Distinguished by weight more than massive size jumps
@@ -86,11 +86,11 @@ fun rememberOpenCodeMarkdownTypography(): MarkdownTypography {
             fontWeight = FontWeight.Medium,
             lineHeight = 18.sp,
         ),
-        
+
         // Body text - compact
         text = bodyStyle,
         paragraph = bodyStyle,
-        
+
         // Code - monospace
         code = TextStyle(
             fontFamily = FontFamily.Monospace,
@@ -101,20 +101,20 @@ fun rememberOpenCodeMarkdownTypography(): MarkdownTypography {
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
         ),
-        
+
         // Lists - same as body
         list = bodyStyle,
         ordered = bodyStyle,
         bullet = bodyStyle,
-        
+
         // Quotes - same as body (italic handled by renderer)
         quote = bodyStyle,
-        
+
         // Table - slightly smaller
         table = materialTypography.bodySmall.copy(
             lineHeight = 18.sp,
         ),
-        
+
         // Links - subtle underline, slightly bolder (Glow-inspired)
         // Same size as body text, not huge like default
         textLink = TextLinkStyles(

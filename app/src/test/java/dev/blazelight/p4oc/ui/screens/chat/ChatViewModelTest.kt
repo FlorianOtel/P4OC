@@ -6,19 +6,20 @@ import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.datastore.VisualSettings
 import dev.blazelight.p4oc.core.haptic.HapticFeedback
 import dev.blazelight.p4oc.core.log.AppLog
+import dev.blazelight.p4oc.core.network.Connection
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.ConnectionState
-import dev.blazelight.p4oc.core.network.Connection
-import dev.blazelight.p4oc.core.network.ServerConfig
 import dev.blazelight.p4oc.core.network.OpenCodeApi
 import dev.blazelight.p4oc.core.network.OpenCodeEventSource
+import dev.blazelight.p4oc.core.network.ServerConfig
+import dev.blazelight.p4oc.data.files.FileRepository
+import dev.blazelight.p4oc.data.files.FileRepositoryFactory
+import dev.blazelight.p4oc.data.remote.dto.CommandDto
+import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
+import dev.blazelight.p4oc.data.remote.mapper.MessageMapper
 import dev.blazelight.p4oc.data.server.ActiveServerApiProvider
 import dev.blazelight.p4oc.data.session.SessionRepositoryImpl
 import dev.blazelight.p4oc.data.workspace.WorkspaceClient
-import dev.blazelight.p4oc.data.remote.mapper.MessageMapper
-import dev.blazelight.p4oc.domain.server.ScopedEvent
-import dev.blazelight.p4oc.domain.server.ServerGeneration
-import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.model.Message
 import dev.blazelight.p4oc.domain.model.MessageWithParts
 import dev.blazelight.p4oc.domain.model.OpenCodeEvent
@@ -27,15 +28,24 @@ import dev.blazelight.p4oc.domain.model.Permission
 import dev.blazelight.p4oc.domain.model.Question
 import dev.blazelight.p4oc.domain.model.QuestionRequest
 import dev.blazelight.p4oc.domain.model.Session
+import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.domain.model.SessionStatus
 import dev.blazelight.p4oc.domain.model.TokenUsage
+import dev.blazelight.p4oc.domain.server.ScopedEvent
+import dev.blazelight.p4oc.domain.server.ServerGeneration
+import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.workspace.Workspace
+import dev.blazelight.p4oc.ui.components.chat.SelectedFile
 import dev.blazelight.p4oc.ui.navigation.Screen
+import dev.blazelight.p4oc.ui.screens.files.upload.UploadCoordinator
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.slot
 import io.mockk.unmockkObject
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -49,6 +59,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.json.buildJsonObject
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -59,6 +70,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TestWatcher
 import org.junit.runner.Description
+import retrofit2.HttpException
 import retrofit2.Response
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -105,8 +117,6 @@ class ChatViewModelTest {
             generation = ServerGeneration(0L),
             apiProvider = ActiveServerApiProvider { _, _ -> api },
         )
-        sessionRepository = SessionRepositoryImpl(workspaceClient, messageMapper)
-
         every { connectionManager.connectionState } returns MutableStateFlow(ConnectionState.Disconnected)
         every { connectionManager.getApi() } returns api
         every { connectionManager.getEventSource() } returns eventSource
@@ -230,8 +240,18 @@ class ChatViewModelTest {
     fun sessionStatusChanged_idle_clearsStreamingFlags() = runTest {
         val vm = createViewModel()
         emitEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", sessionId = "session-1", createdAt = 1)))
-        emitEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "Hello"), delta = null))
-        emitEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "ignored"), delta = " world"))
+        emitEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "Hello"),
+                delta = null
+            )
+        )
+        emitEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "ignored"),
+                delta = " world"
+            )
+        )
         emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Busy))
         flushMessages()
 
@@ -240,6 +260,48 @@ class ChatViewModelTest {
 
         val text = vm.currentMessages().single().parts.single() as Part.Text
         assertFalse(text.isStreaming)
+    }
+
+    @Test
+    fun responseCompletion_onActiveTab_doesNotMarkUnread() = runTest {
+        val vm = createViewModel()
+        vm.markAsRead()
+
+        emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Busy))
+        emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Idle))
+        flushMessages()
+
+        assertFalse(vm.hasUnreadResponse.value)
+        assertEquals(SessionPresence.IDLE, vm.sessionConnectionState.value)
+    }
+
+    @Test
+    fun responseCompletion_onInactiveComposedTab_keepsLocalUnreadFlagUntilTabAggregatorMarksUnread() = runTest {
+        val vm = createViewModel()
+        vm.markAsRead()
+        vm.markInactive()
+
+        emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Busy))
+        emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Idle))
+        flushMessages()
+
+        assertTrue(vm.hasUnreadResponse.value)
+        assertEquals(SessionPresence.IDLE, vm.sessionConnectionState.value)
+    }
+
+    @Test
+    fun markAsRead_clearsUnreadAfterReturningToTab() = runTest {
+        val vm = createViewModel()
+        vm.markInactive()
+        emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Busy))
+        emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Idle))
+        flushMessages()
+
+        vm.markAsRead()
+        flushMessages()
+
+        assertFalse(vm.hasUnreadResponse.value)
+        assertEquals(SessionPresence.IDLE, vm.sessionConnectionState.value)
     }
 
     @Test
@@ -272,6 +334,31 @@ class ChatViewModelTest {
         assertEquals("hello", vm.uiState.value.inputText)
         assertFalse(vm.uiState.value.isSending)
         assertTrue(vm.uiState.value.error?.contains("boom") == true)
+    }
+
+    @Test
+    fun sendMessage_sendsBackendFileUrls_forWorkspaceAttachmentsWithSpecialCharacters() = runTest {
+        val vm = createViewModel()
+        val request = slot<SendMessageRequest>()
+        coEvery { api.sendMessageAsync(any(), capture(request), any()) } returns Unit
+        vm.filePickerManager.restoreAttachedFiles(
+            listOf(
+                SelectedFile(
+                    name = "hash#query?.kt",
+                    path = "src/My File %/ümlaut/こんにちは/hash#query?.kt",
+                    mimeType = "text/plain",
+                )
+            )
+        )
+
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        coVerify { api.sendMessageAsync("session-1", any(), "/test") }
+        assertEquals(
+            "file:/test/src/My%20File%20%25/%C3%BCmlaut/%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF/hash%23query%3F.kt",
+            request.captured.parts.single().url,
+        )
     }
 
     @Test
@@ -335,8 +422,18 @@ class ChatViewModelTest {
 
         coEvery { api.abortSession(any(), any()) } returns Response.success(Unit)
         emitEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", sessionId = "session-1", createdAt = 1)))
-        emitEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "Hi"), delta = null))
-        emitEvent(OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "ignored"), delta = "!"))
+        emitEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "Hi"),
+                delta = null
+            )
+        )
+        emitEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", sessionId = "session-1", text = "ignored"),
+                delta = "!"
+            )
+        )
         emitEvent(OpenCodeEvent.SessionStatusChanged("session-1", SessionStatus.Busy))
         flushMessages()
 
@@ -379,11 +476,53 @@ class ChatViewModelTest {
         assertNull(vm.uiState.value.error)
     }
 
+    @Test
+    fun loadSession_notFound_emitsSessionMissing() = runTest {
+        coEvery { api.getSession("session-1", any()) } throws httpNotFound()
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        assertTrue(vm.sessionMissing.replayCache.isNotEmpty())
+        assertNull(vm.uiState.value.error)
+    }
+
+    @Test
+    fun loadCommands_failureKeepsBuiltIns_andAllowsRetryForWorkspaceCommands() = runTest {
+        val vm = createViewModel()
+        coEvery { api.listCommands(any()) } throws RuntimeException("network down")
+
+        vm.loadCommands()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.commands.any { it.name == "help" })
+        assertFalse(vm.uiState.value.hasLoadedWorkspaceCommands)
+        assertEquals("network down", vm.uiState.value.commandLoadError)
+
+        coEvery { api.listCommands(any()) } returns listOf(
+            CommandDto(name = "workspace", description = "Workspace command")
+        )
+
+        vm.refreshCommandsIfNeeded()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.commands.any { it.name == "workspace" })
+        assertTrue(vm.uiState.value.hasLoadedWorkspaceCommands)
+        assertNull(vm.uiState.value.commandLoadError)
+    }
+
     private fun TestScope.createViewModel(): ChatViewModel {
+        sessionRepository = SessionRepositoryImpl(
+            workspaceClient,
+            messageMapper,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val fileRepository = testFileRepository()
         val vm = ChatViewModel(
             savedStateHandle = SavedStateHandle(mapOf(Screen.Chat.ARG_SESSION_ID to "session-1")),
             workspaceClient = workspaceClient,
             sessionRepository = sessionRepository,
+            uploadCoordinator = testUploadCoordinator(fileRepository),
             connectionManager = connectionManager,
             settingsDataStore = settingsDataStore,
             hapticFeedback = hapticFeedback,
@@ -391,6 +530,13 @@ class ChatViewModelTest {
         advanceUntilIdle()
         return vm
     }
+
+    private fun testFileRepository(): FileRepository = FileRepositoryFactory.create(workspaceClient)
+
+    private fun testUploadCoordinator(repo: FileRepository) = UploadCoordinator(
+        scope = CoroutineScope(Dispatchers.Main),
+        repositoryFactory = { repo },
+    )
 
     private fun TestScope.flushMessages() {
         advanceUntilIdle()
@@ -476,6 +622,10 @@ class ChatViewModelTest {
             )
         )
     }
+
+    private fun httpNotFound(): HttpException = HttpException(
+        Response.error<Unit>(404, "".toResponseBody(null))
+    )
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

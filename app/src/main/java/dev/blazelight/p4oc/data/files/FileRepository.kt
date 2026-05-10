@@ -11,12 +11,15 @@ import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.domain.model.FileContent
 import dev.blazelight.p4oc.domain.model.FileNode
 import dev.blazelight.p4oc.domain.model.Symbol
+import java.io.InputStream
 
 interface FileRepository {
     suspend fun listFiles(path: String): FileOperationResult<FileList>
     suspend fun readFile(path: String): FileOperationResult<FileContent>
     suspend fun searchSymbols(query: String): FileOperationResult<List<Symbol>>
     suspend fun writeFile(request: FileWriteRequest): FileOperationResult<FileWriteResult>
+    suspend fun createDirectory(path: String): FileOperationResult<Unit>
+    suspend fun renameFile(fromPath: String, toPath: String): FileOperationResult<Unit>
     suspend fun deleteFile(path: String): FileOperationResult<Unit>
     suspend fun uploadFile(request: FileUploadRequest): FileOperationResult<FileUploadResult>
     suspend fun capabilities(): FileCapabilities
@@ -44,6 +47,8 @@ data class FileCapabilities(
     val canRead: Boolean = true,
     val canList: Boolean = true,
     val canWrite: Boolean = false,
+    val canCreateDirectory: Boolean = false,
+    val canRename: Boolean = false,
     val canDelete: Boolean = false,
     val canUpload: Boolean = false,
 )
@@ -61,7 +66,8 @@ data class FileWriteResult(
 
 data class FileUploadRequest(
     val path: String,
-    val bytes: ByteArray,
+    val contentLength: Long,
+    val openStream: suspend () -> InputStream,
     val expectedHash: String? = null,
     val onBytesUploaded: (suspend (Long) -> Unit)? = null,
 )
@@ -123,6 +129,17 @@ class WorkspaceFileRepository internal constructor(
 
     override suspend fun writeFile(request: FileWriteRequest): FileOperationResult<FileWriteResult> {
         return unsupportedMutationResult(request.path)
+    }
+
+    override suspend fun createDirectory(path: String): FileOperationResult<Unit> {
+        return unsupportedMutationResult(path)
+    }
+
+    override suspend fun renameFile(fromPath: String, toPath: String): FileOperationResult<Unit> {
+        FilePathValidator.normalizeForMutation(toPath).getOrElse { error ->
+            return FileOperationResult.Failed(error.message ?: INVALID_PATH_MESSAGE, error)
+        }
+        return unsupportedMutationResult(fromPath)
     }
 
     override suspend fun deleteFile(path: String): FileOperationResult<Unit> {

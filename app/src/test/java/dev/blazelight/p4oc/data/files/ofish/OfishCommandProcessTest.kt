@@ -84,20 +84,6 @@ class OfishCommandProcessTest {
     }
 
     @Test
-    fun `upload chunk probe verifies payload and cleans temp file`() {
-        assumeShellAvailable()
-        val root = temporaryFolder.newFolder()
-        val command = OfishUploadChunkProbeCommandBuilder(
-            payloadBytes = { size -> ByteArray(size) { index -> index.toByte() } },
-        ).probe(128, capabilities)
-
-        val output = runShell(command, root)
-
-        assertTrue(OfishMutationParser.parse(output) is OfishMutationStatus.Ok)
-        assertTrue(root.listFiles()?.none { it.name.startsWith(".ofish.chunk-probe.") } ?: true)
-    }
-
-    @Test
     fun `capability probe command runs under zsh invoking sh wrapper`() {
         assumeShellAvailable()
         assumeZshAvailable()
@@ -119,11 +105,15 @@ class OfishCommandProcessTest {
         val token = (init as OfishMutationStatus.Ok).uploadToken ?: error("missing token")
 
         bytes.toList().chunked(4).forEach { chunk ->
-            val status = OfishMutationParser.parse(builder.uploadChunk(token, chunk.toByteArray(), capabilities).runIn(root))
+            val status = OfishMutationParser.parse(
+                builder.uploadChunk(token, chunk.toByteArray(), capabilities).runIn(root)
+            )
             assertTrue(status is OfishMutationStatus.Ok)
         }
 
-        val finish = OfishMutationParser.parse(builder.uploadFinish("out/file.bin", token, null, capabilities).runIn(root))
+        val finish = OfishMutationParser.parse(
+            builder.uploadFinish("out/file.bin", token, null, capabilities).runIn(root)
+        )
 
         assertTrue(finish is OfishMutationStatus.Ok)
         assertArrayEquals(bytes, File(root, "out/file.bin").readBytes())

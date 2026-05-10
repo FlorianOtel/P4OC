@@ -1,37 +1,40 @@
 package dev.blazelight.p4oc.ui.screens.settings
 
-import androidx.compose.foundation.layout.*
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import android.content.Intent
-import android.net.Uri
-import org.koin.androidx.compose.koinViewModel
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.BuildConfig
 import dev.blazelight.p4oc.R
+import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
+import dev.blazelight.p4oc.ui.components.TuiTopBar
+import dev.blazelight.p4oc.ui.components.status.SessionStatusDot
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.components.TuiTopBar
+import kotlinx.coroutines.launch
+import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +54,7 @@ fun SettingsScreen(
     val isConnected by viewModel.isConnected.collectAsStateWithLifecycle()
     var showDisconnectDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showHelpDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val theme = LocalOpenCodeTheme.current
@@ -156,6 +160,15 @@ fun SettingsScreen(
             )
 
             SettingsItem(
+                icon = Icons.AutoMirrored.Filled.HelpOutline,
+                title = stringResource(R.string.settings_help),
+                subtitle = stringResource(R.string.settings_help_desc),
+                onClick = { showHelpDialog = true },
+                showChevron = true,
+                testTag = "settings_help_item"
+            )
+
+            SettingsItem(
                 icon = Icons.Default.Info,
                 title = stringResource(R.string.settings_about),
                 subtitle = stringResource(R.string.settings_version_format, BuildConfig.VERSION_NAME),
@@ -214,7 +227,11 @@ fun SettingsScreen(
                     color = theme.text
                 )
                 Text(
-                    text = stringResource(R.string.settings_about_build_info, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
+                    text = stringResource(
+                        R.string.settings_about_build_info,
+                        BuildConfig.VERSION_NAME,
+                        BuildConfig.VERSION_CODE
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = theme.textMuted
                 )
@@ -243,6 +260,150 @@ fun SettingsScreen(
                     Text(stringResource(R.string.settings_licenses))
                 }
             }
+        }
+    }
+
+    if (showHelpDialog) {
+        dev.blazelight.p4oc.ui.components.TuiAlertDialog(
+            onDismissRequest = { showHelpDialog = false },
+            icon = Icons.AutoMirrored.Filled.HelpOutline,
+            title = stringResource(R.string.settings_help),
+            confirmButton = {
+                dev.blazelight.p4oc.ui.components.TuiTextButton(onClick = { showHelpDialog = false }) {
+                    Text(stringResource(R.string.close))
+                }
+            }
+        ) {
+            StatusLegend()
+        }
+    }
+}
+
+@Composable
+private fun StatusLegend() {
+    val theme = LocalOpenCodeTheme.current
+
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+        Text(
+            text = stringResource(R.string.status_legend_title),
+            style = MaterialTheme.typography.titleSmall,
+            color = theme.text
+        )
+        StatusLegendRow(
+            presence = SessionPresence.IDLE,
+            label = stringResource(R.string.status_legend_idle_label),
+            description = stringResource(R.string.status_legend_idle_desc)
+        )
+        StatusLegendRow(
+            presence = SessionPresence.BUSY,
+            label = stringResource(R.string.status_legend_running_label),
+            description = stringResource(R.string.status_legend_running_desc),
+            suffix = stringResource(R.string.status_legend_may_pulse)
+        )
+        StatusLegendRow(
+            presence = SessionPresence.AWAITING_INPUT,
+            label = stringResource(R.string.status_legend_awaiting_label),
+            description = stringResource(R.string.status_legend_awaiting_desc),
+            suffix = stringResource(R.string.status_legend_may_pulse)
+        )
+        StatusLegendRow(
+            presence = SessionPresence.RETRYING,
+            label = stringResource(R.string.status_legend_retrying_label),
+            description = stringResource(R.string.status_legend_retrying_desc),
+            suffix = stringResource(R.string.status_legend_may_pulse)
+        )
+        StatusLegendRow(
+            presence = SessionPresence.UNREAD,
+            label = stringResource(R.string.status_legend_unread_label),
+            description = stringResource(R.string.status_legend_unread_desc)
+        )
+        StatusLegendRow(
+            presence = SessionPresence.ERROR,
+            label = stringResource(R.string.status_legend_error_label),
+            description = stringResource(R.string.status_legend_error_desc)
+        )
+        StatusLegendRow(
+            presence = SessionPresence.BACKGROUND,
+            label = stringResource(R.string.status_legend_background_label),
+            description = stringResource(R.string.status_legend_background_desc)
+        )
+        StatusLegendRow(
+            color = theme.warning,
+            label = stringResource(R.string.status_legend_dirty_label),
+            description = stringResource(R.string.status_legend_dirty_desc)
+        )
+    }
+}
+
+@Composable
+private fun StatusLegendRow(
+    presence: SessionPresence,
+    label: String,
+    description: String,
+    suffix: String? = null
+) {
+    StatusLegendRowContent(
+        dot = {
+            SessionStatusDot(
+                presence = presence,
+                size = Sizing.indicatorDotActive,
+                modifier = Modifier.padding(top = Spacing.sm)
+            )
+        },
+        label = label,
+        description = description,
+        suffix = suffix,
+    )
+}
+
+@Composable
+private fun StatusLegendRow(
+    color: Color,
+    label: String,
+    description: String,
+    suffix: String? = null
+) {
+    StatusLegendRowContent(
+        dot = {
+            Icon(
+                imageVector = Icons.Default.Circle,
+                contentDescription = label,
+                modifier = Modifier
+                    .padding(top = Spacing.sm)
+                    .size(Sizing.indicatorDotActive),
+                tint = color,
+            )
+        },
+        label = label,
+        description = description,
+        suffix = suffix,
+    )
+}
+
+@Composable
+private fun StatusLegendRowContent(
+    dot: @Composable () -> Unit,
+    label: String,
+    description: String,
+    suffix: String? = null
+) {
+    val theme = LocalOpenCodeTheme.current
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+        verticalAlignment = Alignment.Top
+    ) {
+        dot()
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (suffix == null) label else "$label ($suffix)",
+                style = MaterialTheme.typography.bodyMedium,
+                color = theme.text
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = theme.textMuted
+            )
         }
     }
 }
@@ -277,7 +438,9 @@ private fun SettingsItem(
                 .then(
                     if (onClick != null && enabled) {
                         Modifier.clickable(role = Role.Button, onClick = onClick)
-                    } else Modifier
+                    } else {
+                        Modifier
+                    }
                 )
                 .padding(horizontal = Spacing.lg, vertical = Spacing.mdLg),
             verticalAlignment = Alignment.CenterVertically,
@@ -322,5 +485,3 @@ private fun SettingsItem(
         color = theme.borderSubtle
     )
 }
-
-

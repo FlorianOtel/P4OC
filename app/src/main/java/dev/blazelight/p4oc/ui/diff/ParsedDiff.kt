@@ -1,6 +1,8 @@
 package dev.blazelight.p4oc.ui.diff
 
 import com.github.difflib.UnifiedDiffUtils
+import com.github.difflib.patch.AbstractDelta
+import com.github.difflib.patch.DeltaType
 import com.github.difflib.patch.Patch
 
 internal data class ParsedDiff(
@@ -84,9 +86,9 @@ internal object ParsedDiffParser {
         val hunkHeaderCount = lines.count { it.startsWith("@@") }
         val canonicalPatch = canonicalPatchFor(lines, headerInfo, hunkHeaderCount) ?: return null
 
-        val hunks = parseHunks(lines)
+        val hunkHeaders = collectHunkSections(lines)
+        val hunks = mapPatchToHunks(canonicalPatch, hunkHeaders)
         if (hunks.isEmpty()) return null
-        if (canonicalPatch.getDeltas().size != hunks.size) return null
 
         return ParsedFileDiff(
             oldFileName = headerInfo.oldFileName,
@@ -148,43 +150,91 @@ internal object ParsedDiffParser {
         )
     }
 
-    private fun parseHunks(lines: List<String>): List<ParsedHunk> {
-        val hunks = mutableListOf<ParsedHunk>()
-        var currentHunk: HunkBuilder? = null
-        var insideHunk = false
+    private fun mapPatchToHunks(
+        patch: Patch<String>,
+        headers: List<ParsedHunkHeader>
+    ): List<ParsedHunk> {
+        val deltas = patch.getDeltas()
+        if (deltas.size != headers.size) return emptyList()
+        return deltas.zip(headers).map { (delta, header) -> mapDeltaToHunk(delta, header) }
+    }
 
-        fun flushHunk() {
-            currentHunk?.build()?.let { hunks.add(it) }
-            currentHunk = null
-        }
+    private fun mapDeltaToHunk(delta: AbstractDelta<String>, header: ParsedHunkHeader): ParsedHunk {
+        val lines = buildList {
+            add(
+                ParsedDiffLine(
+                    type = ParsedDiffLineType.HEADER,
+                    content = header.header,
+                    oldLineNumber = null,
+                    newLineNumber = null
+                )
+            )
 
-        for (line in lines) {
-            when {
-                line.startsWith("@@") -> {
-                    flushHunk()
-                    val parsedHeader = parseHunkHeader(line) ?: continue
-                    currentHunk = HunkBuilder(
-                        header = line,
-                        oldStart = parsedHeader.oldStart,
-                        oldCount = parsedHeader.oldCount,
-                        newStart = parsedHeader.newStart,
-                        newCount = parsedHeader.newCount
-                    )
-                    currentHunk?.addHeaderLine()
-                    insideHunk = true
+            var oldLine = header.oldStart.coerceAtLeast(1)
+            var newLine = header.newStart.coerceAtLeast(1)
+
+            header.bodyLines.forEach { line ->
+                when {
+                    line.startsWith("\\") -> Unit
+                    line.startsWith("+") -> {
+                        val content = line.drop(1)
+                        if (content in delta.target.lines || delta.type == DeltaType.INSERT || delta.type == DeltaType.CHANGE) {
+                            add(ParsedDiffLine(ParsedDiffLineType.ADDED, content, null, newLine++))
+                        }
+                    }
+                    line.startsWith("-") -> {
+                        val content = line.drop(1)
+                        if (content in delta.source.lines || delta.type == DeltaType.DELETE || delta.type == DeltaType.CHANGE) {
+                            add(ParsedDiffLine(ParsedDiffLineType.REMOVED, content, oldLine++, null))
+                        }
+                    }
+                    line.startsWith(" ") -> {
+                        val content = line.drop(1)
+                        add(ParsedDiffLine(ParsedDiffLineType.CONTEXT, content, oldLine++, newLine++))
+                    }
+                    line.isEmpty() -> {
+                        add(ParsedDiffLine(ParsedDiffLineType.CONTEXT, "", oldLine++, newLine++))
+                    }
                 }
-                insideHunk && line.startsWith("\\") -> Unit
-                insideHunk -> currentHunk?.addDiffLine(line)
             }
         }
 
-        flushHunk()
+        return ParsedHunk(
+            header = header.header,
+            oldStart = header.oldStart,
+            oldCount = header.oldCount,
+            newStart = header.newStart,
+            newCount = header.newCount,
+            lines = lines
+        )
+    }
+
+    private fun collectHunkSections(lines: List<String>): List<ParsedHunkHeader> {
+        val hunks = mutableListOf<ParsedHunkHeader>()
+        var current: ParsedHunkHeader? = null
+
+        fun flush() {
+            current?.let { hunks.add(it) }
+            current = null
+        }
+
+        for (line in lines) {
+            if (line.startsWith("@@")) {
+                flush()
+                current = parseHunkHeader(line)
+            } else {
+                current = current?.let { it.copy(bodyLines = it.bodyLines + line) }
+            }
+        }
+        flush()
+
         return hunks
     }
 
     private fun parseHunkHeader(header: String): ParsedHunkHeader? {
         val match = hunkHeaderRegex.find(header) ?: return null
         return ParsedHunkHeader(
+            header = header,
             oldStart = match.groupValues[1].toIntOrNull() ?: return null,
             oldCount = match.groupValues[2].takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 1,
             newStart = match.groupValues[3].toIntOrNull() ?: return null,
@@ -208,91 +258,13 @@ internal object ParsedDiffParser {
     )
 
     private data class ParsedHunkHeader(
+        val header: String,
         val oldStart: Int,
         val oldCount: Int,
         val newStart: Int,
-        val newCount: Int
+        val newCount: Int,
+        val bodyLines: List<String> = emptyList()
     )
-
-    private class HunkBuilder(
-        private val header: String,
-        private val oldStart: Int,
-        private val oldCount: Int,
-        private val newStart: Int,
-        private val newCount: Int
-    ) {
-        private val lines = mutableListOf<ParsedDiffLine>()
-        private var oldLine = oldStart.coerceAtLeast(1)
-        private var newLine = newStart.coerceAtLeast(1)
-
-        fun addHeaderLine() {
-            lines.add(
-                ParsedDiffLine(
-                    type = ParsedDiffLineType.HEADER,
-                    content = header,
-                    oldLineNumber = null,
-                    newLineNumber = null
-                )
-            )
-        }
-
-        fun addDiffLine(line: String) {
-            if (line.startsWith("\\")) return
-
-            when {
-                line.startsWith("+") -> {
-                    lines.add(
-                        ParsedDiffLine(
-                            type = ParsedDiffLineType.ADDED,
-                            content = line.drop(1),
-                            oldLineNumber = null,
-                            newLineNumber = newLine++
-                        )
-                    )
-                }
-                line.startsWith("-") -> {
-                    lines.add(
-                        ParsedDiffLine(
-                            type = ParsedDiffLineType.REMOVED,
-                            content = line.drop(1),
-                            oldLineNumber = oldLine++,
-                            newLineNumber = null
-                        )
-                    )
-                }
-                line.startsWith(" ") -> {
-                    val content = line.drop(1)
-                    lines.add(
-                        ParsedDiffLine(
-                            type = ParsedDiffLineType.CONTEXT,
-                            content = content,
-                            oldLineNumber = oldLine++,
-                            newLineNumber = newLine++
-                        )
-                    )
-                }
-                line.isEmpty() -> {
-                    lines.add(
-                        ParsedDiffLine(
-                            type = ParsedDiffLineType.CONTEXT,
-                            content = "",
-                            oldLineNumber = oldLine++,
-                            newLineNumber = newLine++
-                        )
-                    )
-                }
-            }
-        }
-
-        fun build(): ParsedHunk = ParsedHunk(
-            header = header,
-            oldStart = oldStart,
-            oldCount = oldCount,
-            newStart = newStart,
-            newCount = newCount,
-            lines = lines.toList()
-        )
-    }
 }
 
 internal fun ParsedDiff.primaryFile(): ParsedFileDiff? = files.firstOrNull()

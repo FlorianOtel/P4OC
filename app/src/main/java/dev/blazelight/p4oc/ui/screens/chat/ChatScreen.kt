@@ -12,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -19,13 +21,16 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
-import org.koin.androidx.compose.koinViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ConnectionState
-import dev.blazelight.p4oc.domain.model.MessageWithParts
-import dev.blazelight.p4oc.domain.model.Part
 import dev.blazelight.p4oc.domain.model.SessionConnectionState
+import dev.blazelight.p4oc.domain.model.SessionPresence
+import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
+import dev.blazelight.p4oc.ui.components.TuiDropdownMenuItem
+import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import dev.blazelight.p4oc.ui.components.TuiSnackbar
+import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.components.chat.ChatInputBar
 import dev.blazelight.p4oc.ui.components.chat.FilePickerDialog
 import dev.blazelight.p4oc.ui.components.chat.JumpToBottomButton
@@ -33,21 +38,16 @@ import dev.blazelight.p4oc.ui.components.chat.ModelAgentSelectorBar
 import dev.blazelight.p4oc.ui.components.chat.QueuedMessagesStrip
 import dev.blazelight.p4oc.ui.components.command.CommandPalette
 import dev.blazelight.p4oc.ui.components.question.InlineQuestionCard
+import dev.blazelight.p4oc.ui.components.status.SessionStatusDot
 import dev.blazelight.p4oc.ui.components.todo.TodoTrackerSheet
 import dev.blazelight.p4oc.ui.components.toolwidgets.ToolWidgetState
-import dev.blazelight.p4oc.ui.components.TuiDropdownMenuItem
-import dev.blazelight.p4oc.ui.components.TuiTopBar
-import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
-import dev.blazelight.p4oc.ui.components.TuiSnackbar
-import kotlinx.coroutines.launch
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.platform.LocalContext
 import dev.blazelight.p4oc.ui.screens.files.upload.ContentResolverUploadSource
 import dev.blazelight.p4oc.ui.screens.files.upload.UploadProgressSheet
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
+import kotlinx.coroutines.launch
+import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,26 +95,32 @@ fun ChatScreen(
             viewModel.filePickerManager.uploadAndAttach(uploadSource, uris.map { it.toString() })
         }
     }
-    
+
     // Notify parent when session is loaded
     LaunchedEffect(uiState.session) {
         uiState.session?.let { session ->
             onSessionLoaded?.invoke(session.id, session.title)
         }
     }
-    
+
     // Propagate connection state changes to parent (for tab indicator)
     LaunchedEffect(sessionConnectionState) {
         onConnectionStateChanged?.invoke(sessionConnectionState)
     }
-    
+
     // Mark as read when tab becomes active
     LaunchedEffect(isActiveTab) {
         if (isActiveTab) {
             viewModel.markAsRead()
+        } else {
+            viewModel.markInactive()
         }
     }
-    
+
+    LaunchedEffect(Unit) {
+        viewModel.sessionMissing.collect { onNavigateBack() }
+    }
+
     // Convert setting string to ToolWidgetState
     val defaultToolWidgetState = remember(visualSettings.toolWidgetDefaultState) {
         ToolWidgetState.fromString(visualSettings.toolWidgetDefaultState)
@@ -125,24 +131,24 @@ fun ChatScreen(
     var showTodoTracker by remember { mutableStateOf(false) }
     var showFilePicker by remember { mutableStateOf(false) }
     var showRevertDialog by remember { mutableStateOf<String?>(null) }
-    
+
     // Scroll UX state
     var userScrolledAway by remember { mutableStateOf(false) }
     var hasNewContentWhileAway by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
-    
+
     // Derived state: check if user is "at bottom" (reversed layout: index 0 is bottom)
     val isAtBottom by remember {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
-            layoutInfo.totalItemsCount == 0 || 
+            layoutInfo.totalItemsCount == 0 ||
                 (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 100)
         }
     }
-    
+
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    
+
     BackHandler {
         focusManager.clearFocus()
         keyboardController?.hide()
@@ -165,16 +171,16 @@ fun ChatScreen(
     val messageCount = messages.size
     val lastMessagePartCount = messages.lastOrNull()?.parts?.size ?: 0
     val isBusy = uiState.isBusy
-    
+
     // Scroll on new messages or when parts are added to the last message
     LaunchedEffect(messageCount, lastMessagePartCount, isBusy) {
         if (messages.isNotEmpty()) {
             if (!userScrolledAway) {
                 // Smooth scroll for small distances, instant for large jumps
                 if (listState.firstVisibleItemIndex < 3) {
-                    listState.animateScrollToItem(0)  // Smooth when close to bottom
+                    listState.animateScrollToItem(0) // Smooth when close to bottom
                 } else {
-                    listState.scrollToItem(0)  // Instant for large jumps
+                    listState.scrollToItem(0) // Instant for large jumps
                 }
             } else {
                 hasNewContentWhileAway = true
@@ -191,7 +197,7 @@ fun ChatScreen(
                 onTerminal = onOpenTerminal,
                 onFiles = onOpenFiles,
                 onCommands = {
-                    viewModel.loadCommands()
+                    viewModel.refreshCommandsIfNeeded(force = true)
                     showCommandPalette = true
                 },
                 onViewChanges = {
@@ -233,9 +239,8 @@ fun ChatScreen(
                         value = uiState.inputText,
                         onValueChange = { text ->
                             viewModel.updateInput(text)
-                            // Load commands when user starts typing /
-                            if (text.startsWith("/") && uiState.commands.isEmpty()) {
-                                viewModel.loadCommands()
+                            if (text.startsWith("/") && !text.contains(" ")) {
+                                viewModel.refreshCommandsIfNeeded()
                             }
                         },
                         onSend = viewModel::sendMessage,
@@ -252,6 +257,9 @@ fun ChatScreen(
                         },
                         onRemoveAttachment = viewModel.filePickerManager::detachFile,
                         commands = uiState.commands,
+                        isLoadingCommands = uiState.isLoadingCommands,
+                        commandLoadError = uiState.commandLoadError,
+                        onRetryCommands = { viewModel.refreshCommandsIfNeeded(force = true) },
                         onCommandSelected = { /* Command text is already updated via onValueChange */ },
                         requestFocus = isActiveTab
                     )
@@ -294,14 +302,14 @@ fun ChatScreen(
             }
 
             val hasContent = messages.isNotEmpty() || uiState.isBusy
-            
+
             if (!hasContent && !uiState.isLoading) {
                 EmptyChatView(modifier = Modifier.align(Alignment.Center))
             } else {
                 val messageBlocks = remember(messages) {
                     groupMessagesIntoBlocks(messages)
                 }
-                
+
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("message_list"),
@@ -313,6 +321,7 @@ fun ChatScreen(
                     pendingQuestion?.let { questionRequest ->
                         item(key = "pending_question_${questionRequest.id}") {
                             InlineQuestionCard(
+                                questionRequestId = questionRequest.id,
                                 questionData = dev.blazelight.p4oc.domain.model.QuestionData(questionRequest.questions),
                                 onDismiss = viewModel::dismissQuestion,
                                 onSubmit = { answers ->
@@ -326,7 +335,7 @@ fun ChatScreen(
                     // All messages - stable keys ensure only changed items recompose
                     items(
                         items = messageBlocks.asReversed(),
-                        key = { block -> 
+                        key = { block ->
                             when (block) {
                                 is MessageBlock.UserBlock -> block.message.message.id
                                 is MessageBlock.AssistantBlock -> block.messages.first().message.id
@@ -367,7 +376,7 @@ fun ChatScreen(
                     Text(error)
                 }
             }
-            
+
             // Jump to bottom button - shows when scrolled away during streaming
             JumpToBottomButton(
                 visible = userScrolledAway && uiState.isBusy,
@@ -390,6 +399,8 @@ fun ChatScreen(
         CommandPalette(
             commands = uiState.commands,
             isLoading = uiState.isLoadingCommands,
+            error = uiState.commandLoadError,
+            onRetry = { viewModel.refreshCommandsIfNeeded(force = true) },
             onCommandSelected = { command, args ->
                 viewModel.executeCommand(command.name, args)
             },
@@ -481,7 +492,7 @@ private fun ChatTopBar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .widthIn(max = Sizing.panelWidthSm)  // 80dp — tighter
+                        .widthIn(max = Sizing.panelWidthSm) // 80dp — tighter
                         .padding(start = Spacing.xxs)
                 )
             }
@@ -521,19 +532,31 @@ private fun ChatTopBar(
                 ) {
                     TuiDropdownMenuItem(
                         text = "± ${stringResource(R.string.sessions_view_changes)}",
-                        onClick = { showOverflow = false; onViewChanges() }
+                        onClick = {
+                            showOverflow = false;
+                            onViewChanges()
+                        }
                     )
                     TuiDropdownMenuItem(
                         text = "/ ${stringResource(R.string.cd_commands)}",
-                        onClick = { showOverflow = false; onCommands() }
+                        onClick = {
+                            showOverflow = false;
+                            onCommands()
+                        }
                     )
                     TuiDropdownMenuItem(
                         text = ">_ ${stringResource(R.string.cd_terminal)}",
-                        onClick = { showOverflow = false; onTerminal() }
+                        onClick = {
+                            showOverflow = false;
+                            onTerminal()
+                        }
                     )
                     TuiDropdownMenuItem(
                         text = "▤ ${stringResource(R.string.cd_files)}",
-                        onClick = { showOverflow = false; onFiles() }
+                        onClick = {
+                            showOverflow = false;
+                            onFiles()
+                        }
                     )
                 }
             }
@@ -547,21 +570,14 @@ private fun ChatTopBar(
  */
 @Composable
 private fun ConnectionDot(state: ConnectionState) {
-    val theme = LocalOpenCodeTheme.current
-    val color = when (state) {
-        ConnectionState.Connected -> theme.success
-        ConnectionState.Connecting -> theme.warning
-        ConnectionState.Disconnected -> theme.textMuted
-        is ConnectionState.Error -> theme.error
+    val presence = when (state) {
+        ConnectionState.Connected -> SessionPresence.IDLE
+        ConnectionState.Connecting -> SessionPresence.RETRYING
+        ConnectionState.Disconnected -> SessionPresence.BACKGROUND
+        is ConnectionState.Error -> SessionPresence.ERROR
     }
-    Text(
-        text = "●",
-        color = color,
-        fontFamily = FontFamily.Monospace,
-        style = MaterialTheme.typography.labelSmall
-    )
+    SessionStatusDot(presence = presence, size = Sizing.indicatorDot)
 }
-
 
 @Composable
 private fun EmptyChatView(modifier: Modifier = Modifier) {

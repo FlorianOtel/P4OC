@@ -47,8 +47,11 @@ internal object TextMateAnnotatedString {
                         val e = tok.endIndex.coerceIn(s, line.length)
                         if (s == e) continue
                         val color = OpenCodeScopeColors.colorFor(tok.scopes, palette)
-                        if (color != null) withStyle(SpanStyle(color = color)) { append(line, s, e) }
-                        else append(line, s, e)
+                        if (color != null) {
+                            withStyle(SpanStyle(color = color)) { append(line, s, e) }
+                        } else {
+                            append(line, s, e)
+                        }
                     }
                 }
                 if (idx < lines.lastIndex) append('\n')

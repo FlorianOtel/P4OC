@@ -6,26 +6,30 @@ import dev.blazelight.p4oc.domain.session.SessionId
 import dev.blazelight.p4oc.domain.session.WorkspaceSession
 import dev.blazelight.p4oc.domain.workspace.Workspace
 
-class SessionReducer(
+open class SessionReducer(
     private val workspace: Workspace,
 ) {
-    fun reduce(snapshot: Snapshot, event: OpenCodeEvent): Snapshot = when (event) {
+    open fun reduce(snapshot: Snapshot, event: OpenCodeEvent): Snapshot = when (event) {
         is OpenCodeEvent.SessionCreated -> {
             if (OfishSessionNames.isOfishTitle(event.session.title)) {
                 snapshot
             } else {
-                snapshot.upsert(event.session.let { session ->
-                    WorkspaceSession(SessionId(session.id), workspace, session)
-                })
+                snapshot.upsert(
+                    event.session.let { session ->
+                        WorkspaceSession(SessionId(session.id), workspace, session)
+                    }
+                )
             }
         }
         is OpenCodeEvent.SessionUpdated -> {
             if (OfishSessionNames.isOfishTitle(event.session.title)) {
                 snapshot
             } else {
-                snapshot.upsert(event.session.let { session ->
-                    WorkspaceSession(SessionId(session.id), workspace, session)
-                })
+                snapshot.upsert(
+                    event.session.let { session ->
+                        WorkspaceSession(SessionId(session.id), workspace, session)
+                    }
+                )
             }
         }
         is OpenCodeEvent.SessionDeleted -> snapshot.copy(

@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.MenuAnchorType
@@ -14,43 +12,41 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.koin.androidx.compose.koinViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import androidx.compose.ui.res.stringResource
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.datastore.VisualSettings
+import dev.blazelight.p4oc.ui.components.TuiStepper
+import dev.blazelight.p4oc.ui.components.TuiSwitch
+import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
-import dev.blazelight.p4oc.ui.components.TuiTopBar
-import dev.blazelight.p4oc.ui.components.TuiStepper
-import dev.blazelight.p4oc.ui.components.TuiSwitch
-
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import org.koin.androidx.compose.koinViewModel
 
 class VisualSettingsViewModel constructor(
     private val settingsDataStore: SettingsDataStore
 ) : ViewModel() {
-    
+
     private val _settings = MutableStateFlow(VisualSettings())
     val settings: StateFlow<VisualSettings> = _settings.asStateFlow()
-    
+
     private val _themeName = MutableStateFlow(SettingsDataStore.DEFAULT_THEME_NAME)
     val themeName: StateFlow<String> = _themeName.asStateFlow()
-    
+
     private val _themeMode = MutableStateFlow("system")
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
-    
+
     val availableThemes = listOf(
         "catppuccin" to "Catppuccin Mocha",
         "catppuccin-macchiato" to "Catppuccin Macchiato",
@@ -63,7 +59,7 @@ class VisualSettingsViewModel constructor(
         "xterm" to "XTerm 256",
         "hotdogstand" to "Hot Dog Stand"
     )
-    
+
     init {
         viewModelScope.launch {
             settingsDataStore.visualSettings.collect { saved ->
@@ -81,41 +77,40 @@ class VisualSettingsViewModel constructor(
             }
         }
     }
-    
+
     fun updateThemeName(name: String) {
         _themeName.value = name
         viewModelScope.launch {
             settingsDataStore.setThemeName(name)
         }
     }
-    
+
     fun updateThemeMode(mode: String) {
         _themeMode.value = mode
         viewModelScope.launch {
             settingsDataStore.setThemeMode(mode)
         }
     }
-    
+
     private fun persistSettings(newSettings: VisualSettings) {
         _settings.value = newSettings
         viewModelScope.launch {
             settingsDataStore.updateVisualSettings(newSettings)
         }
     }
-    
+
     fun updateFontSize(size: Int) {
         persistSettings(_settings.value.copy(fontSize = size.coerceIn(10, 24)))
     }
-    
+
     fun updateCodeBlockFontSize(size: Int) {
         persistSettings(_settings.value.copy(codeBlockFontSize = size.coerceIn(8, 20)))
     }
-    
+
     fun toggleLineNumbers() {
         persistSettings(_settings.value.copy(showLineNumbers = !_settings.value.showLineNumbers))
     }
-    
-    
+
     fun toggleReasoningExpanded() {
         persistSettings(_settings.value.copy(reasoningExpandedByDefault = !_settings.value.reasoningExpandedByDefault))
     }
@@ -123,11 +118,11 @@ class VisualSettingsViewModel constructor(
     fun toggleOpenSubAgentInNewTab() {
         persistSettings(_settings.value.copy(openSubAgentInNewTab = !_settings.value.openSubAgentInNewTab))
     }
-    
+
     fun updateToolWidgetDefaultState(state: String) {
         persistSettings(_settings.value.copy(toolWidgetDefaultState = state))
     }
-    
+
     fun resetToDefaults() {
         persistSettings(VisualSettings())
     }
@@ -142,7 +137,7 @@ fun VisualSettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val themeName by viewModel.themeName.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
-    
+
     val theme = LocalOpenCodeTheme.current
     Scaffold(
         containerColor = theme.background,
@@ -169,16 +164,16 @@ fun VisualSettingsScreen(
                     selected = themeMode,
                     onSelect = viewModel::updateThemeMode
                 )
-                
+
                 Spacer(Modifier.height(Spacing.md))
-                
+
                 ThemeSelector(
                     selected = themeName,
                     options = viewModel.availableThemes,
                     onSelect = viewModel::updateThemeName
                 )
             }
-            
+
             SettingsSection(title = stringResource(R.string.visual_settings_text)) {
                 FontSizeSlider(
                     label = stringResource(R.string.visual_settings_message_font_size),
@@ -186,7 +181,7 @@ fun VisualSettingsScreen(
                     onValueChange = viewModel::updateFontSize,
                     range = 10..24
                 )
-                
+
                 FontSizeSlider(
                     label = stringResource(R.string.visual_settings_code_font_size),
                     value = settings.codeBlockFontSize,
@@ -194,7 +189,7 @@ fun VisualSettingsScreen(
                     range = 8..20
                 )
             }
-            
+
             SettingsSection(title = stringResource(R.string.visual_settings_code_display)) {
                 SettingsSwitch(
                     title = stringResource(R.string.visual_settings_show_line_numbers),
@@ -203,9 +198,8 @@ fun VisualSettingsScreen(
                     onCheckedChange = { viewModel.toggleLineNumbers() },
                     icon = Icons.Default.FormatListNumbered
                 )
-                
             }
-            
+
             SettingsSection(title = stringResource(R.string.visual_settings_message_display)) {
                 SettingsSwitch(
                     title = stringResource(R.string.visual_settings_expand_reasoning),
@@ -214,7 +208,7 @@ fun VisualSettingsScreen(
                     onCheckedChange = { viewModel.toggleReasoningExpanded() },
                     icon = Icons.Default.Psychology
                 )
-                
+
                 SettingsSwitch(
                     title = stringResource(R.string.visual_settings_open_sub_agent_new_tab),
                     subtitle = stringResource(R.string.visual_settings_open_sub_agent_new_tab_desc),
@@ -223,23 +217,23 @@ fun VisualSettingsScreen(
                     icon = Icons.Default.Tab
                 )
             }
-            
+
             SettingsSection(title = stringResource(R.string.visual_settings_tool_mode_label)) {
                 ToolWidgetStateSelector(
                     selected = settings.toolWidgetDefaultState,
                     onSelect = viewModel::updateToolWidgetDefaultState
                 )
-                
+
                 Spacer(Modifier.height(Spacing.lg))
-                
+
                 // Live preview of all three states
                 ToolWidgetPreviewSection(selectedState = settings.toolWidgetDefaultState)
             }
-            
+
             Spacer(Modifier.height(Spacing.md))
-            
+
             PreviewCard(settings = settings)
-            
+
             Spacer(Modifier.height(Spacing.lg))
         }
     }
@@ -310,7 +304,7 @@ private fun ThemeModeSelector(
         "light" to "Light",
         "dark" to "Dark"
     )
-    
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(Spacing.md)
@@ -336,7 +330,7 @@ private fun ThemeSelector(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selectedLabel = options.find { it.first == selected }?.second ?: selected
-    
+
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = it }
@@ -351,7 +345,7 @@ private fun ThemeSelector(
                 .fillMaxWidth()
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
         )
-        
+
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
@@ -388,11 +382,11 @@ private fun SettingsSwitch(
             horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
             verticalAlignment = Alignment.CenterVertically
         ) {
-        Icon(
-            icon,
-            contentDescription = stringResource(R.string.cd_decorative),
-            tint = theme.textMuted
-        )
+            Icon(
+                icon,
+                contentDescription = stringResource(R.string.cd_decorative),
+                tint = theme.textMuted
+            )
             Column {
                 Text(title, style = MaterialTheme.typography.bodyMedium)
                 Text(
@@ -429,7 +423,7 @@ private fun PreviewCard(settings: VisualSettings) {
                 style = MaterialTheme.typography.titleSmall,
                 color = theme.accent
             )
-            
+
             Surface(
                 color = theme.accent.copy(alpha = 0.2f),
                 shape = RectangleShape
@@ -440,7 +434,7 @@ private fun PreviewCard(settings: VisualSettings) {
                     fontSize = settings.fontSize.sp
                 )
             }
-            
+
             Surface(
                 color = theme.backgroundPanel,
                 shape = RectangleShape
@@ -467,7 +461,7 @@ private fun ToolWidgetStateSelector(
         "compact" to "Compact (summary)",
         "expanded" to "Expanded (full details)"
     )
-    
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
@@ -491,7 +485,7 @@ private fun ToolWidgetStateSelector(
 @Composable
 private fun ToolWidgetPreviewSection(selectedState: String) {
     val theme = LocalOpenCodeTheme.current
-    
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
@@ -501,7 +495,7 @@ private fun ToolWidgetPreviewSection(selectedState: String) {
             style = MaterialTheme.typography.labelMedium,
             color = theme.textMuted
         )
-        
+
         // Show preview based on selected state
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -549,7 +543,7 @@ private fun ToolWidgetPreviewSection(selectedState: String) {
                         )
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(1.dp)  // 1.dp = minimal, no token
+                            verticalArrangement = Arrangement.spacedBy(1.dp) // 1.dp = minimal, no token
                         ) {
                             CompactRowPreview("✓", "Read Theme.kt", theme.success, theme)
                             CompactRowPreview("✓", "Read Colors.kt", theme.success, theme)
@@ -636,7 +630,10 @@ private fun CompactRowPreview(
         )
         Text(
             text = description,
-            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = TuiCodeFontSize.md),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = TuiCodeFontSize.md
+            ),
             color = theme.text,
             modifier = Modifier.weight(1f)
         )

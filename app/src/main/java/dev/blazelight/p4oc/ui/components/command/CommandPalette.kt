@@ -1,12 +1,8 @@
 package dev.blazelight.p4oc.ui.components.command
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -25,18 +22,21 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Command
-import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
+import dev.blazelight.p4oc.domain.model.CommandSource
 import dev.blazelight.p4oc.ui.components.TuiButton
+import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.components.TuiTextField
+import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CommandPalette(
     commands: List<Command>,
     isLoading: Boolean,
+    error: String?,
+    onRetry: () -> Unit,
     onCommandSelected: (Command, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -103,7 +103,7 @@ fun CommandPalette(
                     }
                 }
             }
-            
+
             HorizontalDivider(color = theme.border)
 
             if (selectedCommand == null) {
@@ -112,6 +112,8 @@ fun CommandPalette(
                     onSearchChange = { searchQuery = it },
                     filteredCommands = filteredCommands,
                     isLoading = isLoading,
+                    error = error,
+                    onRetry = onRetry,
                     onCommandClick = { selectedCommand = it },
                     focusRequester = focusRequester
                 )
@@ -121,7 +123,10 @@ fun CommandPalette(
                         command = command,
                         arguments = commandArgs,
                         onArgumentsChange = { commandArgs = it },
-                        onBack = { selectedCommand = null; commandArgs = "" },
+                        onBack = {
+                            selectedCommand = null;
+                            commandArgs = ""
+                        },
                         onExecute = {
                             onCommandSelected(command, commandArgs)
                             onDismiss()
@@ -139,11 +144,13 @@ private fun CommandSearchView(
     onSearchChange: (String) -> Unit,
     filteredCommands: List<Command>,
     isLoading: Boolean,
+    error: String?,
+    onRetry: () -> Unit,
     onCommandClick: (Command) -> Unit,
     focusRequester: FocusRequester
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     // Search field with / prefix (vim-style)
     Surface(
         color = theme.backgroundElement,
@@ -168,11 +175,11 @@ private fun CommandSearchView(
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(focusRequester),
-                placeholder = { 
+                placeholder = {
                     Text(
                         stringResource(R.string.search_commands),
                         color = theme.textMuted
-                    ) 
+                    )
                 },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -210,6 +217,39 @@ private fun CommandSearchView(
                 TuiLoadingIndicator()
             }
         }
+        error != null -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Spacing.md),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            ) {
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = theme.warning
+                )
+                TuiButton(onClick = onRetry) {
+                    Text(stringResource(R.string.retry))
+                }
+            }
+            if (filteredCommands.isNotEmpty()) {
+                LazyColumn(
+                    modifier = Modifier
+                        .heightIn(max = 400.dp)
+                        .padding(horizontal = Spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                ) {
+                    items(filteredCommands, key = { it.name }) { command ->
+                        TuiCommandItem(
+                            command = command,
+                            onClick = { onCommandClick(command) }
+                        )
+                    }
+                }
+            }
+        }
         filteredCommands.isEmpty() -> {
             Box(
                 modifier = Modifier
@@ -225,10 +265,11 @@ private fun CommandSearchView(
                     )
                     Spacer(modifier = Modifier.height(Spacing.md))
                     Text(
-                        text = if (searchQuery.isEmpty()) 
-                            "-- ${stringResource(R.string.no_commands_available)} --" 
-                        else 
-                            "-- ${stringResource(R.string.no_matching_commands)} --",
+                        text = if (searchQuery.isEmpty()) {
+                            "-- ${stringResource(R.string.no_commands_available)} --"
+                        } else {
+                            "-- ${stringResource(R.string.no_matching_commands)} --"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = theme.textMuted
                     )
@@ -249,7 +290,7 @@ private fun CommandSearchView(
                     )
                 }
             }
-            
+
             // Footer with command count
             Surface(
                 color = theme.backgroundElement,
@@ -272,7 +313,7 @@ private fun TuiCommandItem(
     onClick: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -292,7 +333,7 @@ private fun TuiCommandItem(
                 style = MaterialTheme.typography.bodyMedium,
                 color = theme.accent.copy(alpha = 0.5f)
             )
-            
+
             // Command icon
             Icon(
                 Icons.Default.Terminal,
@@ -313,13 +354,11 @@ private fun TuiCommandItem(
                         fontFamily = FontFamily.Monospace,
                         color = theme.accent
                     )
-                    if (command.subtask) {
-                        Text(
-                            text = "[${stringResource(R.string.subtask)}]",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = theme.warning
-                        )
-                    }
+                    Text(
+                        text = command.source.paletteLabel(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = command.source.paletteColor()
+                    )
                 }
 
                 command.description?.let { desc ->
@@ -363,6 +402,23 @@ private fun TuiCommandItem(
 }
 
 @Composable
+private fun CommandSource.paletteColor() = when (this) {
+    CommandSource.BuiltIn -> LocalOpenCodeTheme.current.textMuted
+    CommandSource.Skill -> LocalOpenCodeTheme.current.info
+    CommandSource.Mcp -> LocalOpenCodeTheme.current.warning
+    CommandSource.Custom -> LocalOpenCodeTheme.current.accent
+    CommandSource.Subtask -> LocalOpenCodeTheme.current.warning
+}
+
+private fun CommandSource.paletteLabel(): String = when (this) {
+    CommandSource.BuiltIn -> "[built-in]"
+    CommandSource.Skill -> "[skill]"
+    CommandSource.Mcp -> "[mcp]"
+    CommandSource.Custom -> "[custom]"
+    CommandSource.Subtask -> "[subtask]"
+}
+
+@Composable
 private fun CommandArgumentsView(
     command: Command,
     arguments: String,
@@ -371,7 +427,7 @@ private fun CommandArgumentsView(
     onExecute: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     Column(
         modifier = Modifier.padding(Spacing.md)
     ) {

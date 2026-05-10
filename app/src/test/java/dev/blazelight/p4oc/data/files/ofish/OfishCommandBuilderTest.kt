@@ -79,13 +79,32 @@ class OfishCommandBuilderTest {
     }
 
     @Test
-    fun `delete contains marker and directory precondition`() {
+    fun `delete contains marker and recursive removal`() {
         val script = builder.delete("dir/file.txt").decodedScript()
 
         assertTrue(script.contains("#OFISH_DELETE"))
-        assertTrue(script.contains("[ -d \"\$P\" ]"))
-        assertTrue(script.contains("### 412 precondition reason=directory"))
+        assertTrue(script.contains("rm -rf -- \"\$P\""))
         assertTrue(script.contains("### 404 missing"))
+    }
+
+    @Test
+    fun `mkdir contains marker and conflict guard`() {
+        val script = builder.mkdir("dir/new-folder").decodedScript()
+
+        assertTrue(script.contains("#OFISH_MKDIR"))
+        assertTrue(script.contains("if [ -e \"\$P\" ]; then printf '### 409 conflict"))
+        assertTrue(script.contains("mkdir -p -- \"\$P\""))
+    }
+
+    @Test
+    fun `rename contains marker destination conflict guard and quoted paths`() {
+        val script = builder.rename("dir/old'name.txt", "dir/new'name.txt").decodedScript()
+
+        assertTrue(script.contains("#OFISH_RENAME"))
+        assertTrue(script.contains("FROM='dir/old'\\''name.txt'"))
+        assertTrue(script.contains("TO='dir/new'\\''name.txt'"))
+        assertTrue(script.contains("if [ -e \"\$TO\" ]; then printf '### 409 conflict"))
+        assertTrue(script.contains("mv -- \"\$FROM\" \"\$TO\""))
     }
 
     @Test
@@ -105,7 +124,12 @@ class OfishCommandBuilderTest {
 
     @Test
     fun `upload finish rechecks expected hash before move`() {
-        val script = builder.uploadFinish("dir/file.bin", "dir/.ofish.upload.abc", "expected", capabilities).decodedScript()
+        val script = builder.uploadFinish(
+            "dir/file.bin",
+            "dir/.ofish.upload.abc",
+            "expected",
+            capabilities
+        ).decodedScript()
 
         assertTrue(script.contains("EXPECTED='expected'"))
         assertTrue(script.contains("### 404 missing"))

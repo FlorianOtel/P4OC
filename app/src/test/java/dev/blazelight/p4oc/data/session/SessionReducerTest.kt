@@ -37,7 +37,10 @@ class SessionReducerTest {
 
     @Test
     fun `OFISH session created is ignored`() {
-        val result = reducer.reduce(Snapshot(), OpenCodeEvent.SessionCreated(session("ofish", title = "__ofish_probe_1_x")))
+        val result = reducer.reduce(
+            Snapshot(),
+            OpenCodeEvent.SessionCreated(session("ofish", title = "__ofish_probe_1_x"))
+        )
 
         assertFalse(result.sessions.containsKey("ofish"))
     }

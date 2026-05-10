@@ -1,6 +1,7 @@
 package dev.blazelight.p4oc.data.workspace
 
 import dev.blazelight.p4oc.core.network.OpenCodeApi
+import dev.blazelight.p4oc.data.remote.dto.CommandDto
 import dev.blazelight.p4oc.data.remote.dto.CreateSessionRequest
 import dev.blazelight.p4oc.data.remote.dto.ExecuteCommandRequest
 import dev.blazelight.p4oc.data.remote.dto.FileContentDto
@@ -9,20 +10,19 @@ import dev.blazelight.p4oc.data.remote.dto.FileNodeDto
 import dev.blazelight.p4oc.data.remote.dto.FileStatusDto
 import dev.blazelight.p4oc.data.remote.dto.ForkSessionRequest
 import dev.blazelight.p4oc.data.remote.dto.InitSessionRequest
-import dev.blazelight.p4oc.data.remote.dto.PermissionResponseRequest
 import dev.blazelight.p4oc.data.remote.dto.MessageWrapperDto
-import dev.blazelight.p4oc.data.remote.dto.QuestionReplyRequest
+import dev.blazelight.p4oc.data.remote.dto.PermissionResponseRequest
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
+import dev.blazelight.p4oc.data.remote.dto.QuestionReplyRequest
 import dev.blazelight.p4oc.data.remote.dto.RevertSessionRequest
 import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
 import dev.blazelight.p4oc.data.remote.dto.SessionDto
 import dev.blazelight.p4oc.data.remote.dto.SessionStatusDto
 import dev.blazelight.p4oc.data.remote.dto.ShellCommandRequest
-import dev.blazelight.p4oc.data.remote.dto.CommandDto
 import dev.blazelight.p4oc.data.remote.dto.SymbolDto
 import dev.blazelight.p4oc.data.remote.dto.TodoDto
-import dev.blazelight.p4oc.data.remote.dto.VcsInfoDto
 import dev.blazelight.p4oc.data.remote.dto.UpdateSessionRequest
+import dev.blazelight.p4oc.data.remote.dto.VcsInfoDto
 import dev.blazelight.p4oc.data.server.ActiveServerApiProvider
 import dev.blazelight.p4oc.domain.server.ServerGeneration
 import dev.blazelight.p4oc.domain.workspace.Workspace
@@ -59,9 +59,11 @@ class WorkspaceClient(
     override suspend fun updateSession(id: String, request: UpdateSessionRequest): SessionDto =
         api.updateSession(id, request, directory)
 
-    override suspend fun getSessionStatuses(directory: String?): Map<String, SessionStatusDto> = api.getSessionStatuses(directory)
+    override suspend fun getSessionStatuses(directory: String?): Map<String, SessionStatusDto> = api.getSessionStatuses(
+        directory
+    )
 
-    suspend fun abortSession(id: String): Boolean {
+    override suspend fun abortSession(id: String): Boolean {
         val response = api.abortSession(id, directory)
         if (response.isSuccessful) return true
 
@@ -93,7 +95,7 @@ class WorkspaceClient(
     suspend fun getMessages(sessionId: String, limit: Int? = null): List<MessageWrapperDto> =
         api.getMessages(sessionId, limit, directory)
 
-    suspend fun sendMessageAsync(sessionId: String, request: SendMessageRequest) {
+    override suspend fun sendMessageAsync(sessionId: String, request: SendMessageRequest) {
         api.sendMessageAsync(sessionId, request, directory)
     }
 

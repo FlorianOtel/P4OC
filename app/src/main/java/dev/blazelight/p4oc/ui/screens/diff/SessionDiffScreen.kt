@@ -24,8 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.safeApiCall
@@ -54,9 +54,11 @@ fun SessionDiffScreen(
         isLoading = true
         errorMessage = null
 
-        when (val result = safeApiCall {
-            workspaceClient.getSessionDiff(sessionId)
-        }) {
+        when (
+            val result = safeApiCall {
+                workspaceClient.getSessionDiff(sessionId)
+            }
+        ) {
             is ApiResult.Success -> diffs = result.data
             is ApiResult.Error -> errorMessage = result.message
         }
@@ -158,5 +160,3 @@ fun SessionDiffScreen(
         }
     }
 }
-
-

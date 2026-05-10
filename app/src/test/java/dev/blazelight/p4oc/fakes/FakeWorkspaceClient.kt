@@ -3,6 +3,7 @@ package dev.blazelight.p4oc.fakes
 import dev.blazelight.p4oc.data.remote.dto.CreateSessionRequest
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
 import dev.blazelight.p4oc.data.remote.dto.ProjectTimeDto
+import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
 import dev.blazelight.p4oc.data.remote.dto.SessionDto
 import dev.blazelight.p4oc.data.remote.dto.SessionShareDto
 import dev.blazelight.p4oc.data.remote.dto.SessionStatusDto
@@ -30,6 +31,10 @@ class FakeWorkspaceClient(
         private set
     var deleteSessionCalls: Int = 0
         private set
+    var sendMessageAsyncCalls: Int = 0
+        private set
+    var abortSessionCalls: Int = 0
+        private set
 
     val listSessionsDirectories = mutableListOf<String?>()
     val getSessionStatusesDirectories = mutableListOf<String?>()
@@ -41,7 +46,10 @@ class FakeWorkspaceClient(
     var listSessionsFailure: Throwable? = null
     var getSessionResults: MutableMap<String, SessionDto> = mutableMapOf()
     var getSessionFailure: Throwable? = null
+    var createSessionFailure: Throwable? = null
     var deleteSessionFailure: Throwable? = null
+    var sendMessageBlocker: CompletableDeferred<Unit>? = null
+    var abortSessionBlocker: CompletableDeferred<Unit>? = null
     var statusBlocker: CompletableDeferred<Unit>? = null
     var trackStatusConcurrency: Boolean = false
     private val activeStatusCalls = AtomicInteger(0)
@@ -88,7 +96,9 @@ class FakeWorkspaceClient(
     }
 
     override suspend fun createSession(request: CreateSessionRequest): SessionDto {
-        val session = sessionDto(id = "created", title = request.title ?: "created", directory = workspace.directory.orEmpty())
+        createSessionFailure?.let { throw it }
+        val session =
+            sessionDto(id = "created", title = request.title ?: "created", directory = workspace.directory.orEmpty())
         setSessions(session, *listSessionsResult.toTypedArray())
         return session
     }
@@ -122,6 +132,17 @@ class FakeWorkspaceClient(
     }
 
     override suspend fun summarizeSession(id: String): Boolean = true
+
+    override suspend fun sendMessageAsync(sessionId: String, request: SendMessageRequest) {
+        sendMessageAsyncCalls += 1
+        sendMessageBlocker?.await()
+    }
+
+    override suspend fun abortSession(id: String): Boolean {
+        abortSessionCalls += 1
+        abortSessionBlocker?.await()
+        return true
+    }
 
     fun setSessions(vararg sessions: SessionDto) {
         listSessionsResult = sessions.toList()

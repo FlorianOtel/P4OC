@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import dev.blazelight.p4oc.core.log.AppLog
 
 /**
  * Encrypted credential storage backed by EncryptedSharedPreferences.
@@ -19,32 +18,16 @@ import dev.blazelight.p4oc.core.log.AppLog
 class CredentialStore(context: Context) {
 
     companion object {
-        private const val TAG = "CredentialStore"
         private const val FILE_NAME = "p4oc_credentials"
         private const val KEY_ACTIVE_PASSWORD = "active_password"
         private fun serverPasswordKey(url: String): String = "server_password:$url"
     }
 
-    private val prefs: SharedPreferences = try {
+    private val prefs: SharedPreferences = run {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
 
-        EncryptedSharedPreferences.create(
-            context,
-            FILE_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-    } catch (e: Exception) {
-        // If Keystore is corrupted (rare, e.g., after OS upgrade), fall back
-        // to wiping and recreating. User will need to re-enter passwords.
-        AppLog.e(TAG, "Failed to open EncryptedSharedPreferences, recreating", e)
-        context.deleteSharedPreferences(FILE_NAME)
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
         EncryptedSharedPreferences.create(
             context,
             FILE_NAME,

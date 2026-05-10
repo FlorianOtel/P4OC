@@ -14,7 +14,7 @@ data class PtyDto(
     val args: List<String>,
     val cwd: String,
     val status: String,
-    val pid: Int? = null  // Server may return null for pid
+    val pid: Int? = null // Server may return null for pid
 )
 
 @Serializable

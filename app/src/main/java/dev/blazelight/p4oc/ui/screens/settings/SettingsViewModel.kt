@@ -8,7 +8,6 @@ import dev.blazelight.p4oc.core.network.ConnectionManager
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-
 class SettingsViewModel constructor(
     private val settingsDataStore: SettingsDataStore,
     private val connectionManager: ConnectionManager

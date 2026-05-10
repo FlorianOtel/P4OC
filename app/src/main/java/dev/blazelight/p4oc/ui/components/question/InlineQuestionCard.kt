@@ -11,20 +11,20 @@ import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Question
 import dev.blazelight.p4oc.domain.model.QuestionData
 import dev.blazelight.p4oc.domain.model.QuestionOption
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
 
 /**
  * Inline question card that appears in the chat message list.
@@ -32,19 +32,31 @@ import dev.blazelight.p4oc.ui.theme.Sizing
  */
 @Composable
 fun InlineQuestionCard(
+    questionRequestId: String,
     questionData: QuestionData,
     onDismiss: () -> Unit,
     onSubmit: (List<List<String>>) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val theme = LocalOpenCodeTheme.current
-    var currentQuestionIndex by remember { mutableIntStateOf(0) }
-    val answers = remember { mutableStateMapOf<Int, List<String>>() }
-    
+    var currentQuestionIndex by rememberSaveable(questionRequestId) { mutableIntStateOf(0) }
+    var answers by rememberSaveable(questionRequestId) {
+        mutableStateOf(List(questionData.questions.size) { emptyList<String>() })
+    }
+
+    LaunchedEffect(questionRequestId, questionData.questions.size) {
+        if (currentQuestionIndex > questionData.questions.lastIndex) {
+            currentQuestionIndex = 0
+        }
+        if (answers.size != questionData.questions.size) {
+            answers = List(questionData.questions.size) { index -> answers.getOrNull(index).orEmpty() }
+        }
+    }
+
     val currentQuestion = questionData.questions.getOrNull(currentQuestionIndex)
     val isLastQuestion = currentQuestionIndex == questionData.questions.lastIndex
-    val hasAnswer = answers[currentQuestionIndex]?.isNotEmpty() == true
-    
+    val hasAnswer = answers.getOrNull(currentQuestionIndex)?.isNotEmpty() == true
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -78,7 +90,7 @@ fun InlineQuestionCard(
                 )
             }
         }
-        
+
         currentQuestion?.let { question ->
             // Question header (short label)
             Text(
@@ -87,28 +99,30 @@ fun InlineQuestionCard(
                 color = theme.text,
                 fontWeight = FontWeight.Bold
             )
-            
+
             // Full question text
             Text(
                 text = question.question,
                 style = MaterialTheme.typography.bodyMedium,
                 color = theme.textMuted
             )
-            
+
             Spacer(modifier = Modifier.height(Spacing.xs))
-            
+
             // Options
             InlineQuestionOptions(
                 question = question,
-                selectedOptions = answers[currentQuestionIndex] ?: emptyList(),
+                selectedOptions = answers.getOrNull(currentQuestionIndex).orEmpty(),
                 onSelectionChange = { selected ->
-                    answers[currentQuestionIndex] = selected
+                    answers = answers.mapIndexed { index, answer ->
+                        if (index == currentQuestionIndex) selected else answer
+                    }
                 }
             )
         }
-        
+
         Spacer(modifier = Modifier.height(Spacing.xs))
-        
+
         // Action buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -131,14 +145,11 @@ fun InlineQuestionCard(
                     Text(stringResource(R.string.skip))
                 }
             }
-            
+
             Button(
                 onClick = {
                     if (isLastQuestion) {
-                        val allAnswers = questionData.questions.indices.map { idx ->
-                            answers[idx] ?: emptyList()
-                        }
-                        onSubmit(allAnswers)
+                        onSubmit(answers)
                     } else {
                         currentQuestionIndex++
                     }
@@ -161,16 +172,23 @@ private fun InlineQuestionOptions(
     modifier: Modifier = Modifier
 ) {
     val theme = LocalOpenCodeTheme.current
-    var customAnswer by remember { mutableStateOf("") }
+    val optionLabels = remember(question.options) { question.options.map { it.label }.toSet() }
+    val customAnswer = selectedOptions.singleOrNull { it !in optionLabels }.orEmpty()
     var showCustomInput by remember { mutableStateOf(false) }
-    
+
+    LaunchedEffect(customAnswer) {
+        if (customAnswer.isNotBlank()) {
+            showCustomInput = true
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
             .then(if (question.multiple) Modifier else Modifier.selectableGroup()),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-        ) {
-            question.options.forEach { option ->
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        question.options.forEach { option ->
             InlineOptionItem(
                 option = option,
                 isSelected = option.label in selectedOptions,
@@ -187,20 +205,16 @@ private fun InlineQuestionOptions(
                     }
                     onSelectionChange(newSelection)
                     showCustomInput = false
-                    customAnswer = ""
                 }
             )
         }
-        
+
         // Custom answer option
         if (showCustomInput) {
             OutlinedTextField(
                 value = customAnswer,
-                onValueChange = { 
-                    customAnswer = it
-                    if (it.isNotBlank()) {
-                        onSelectionChange(listOf(it))
-                    }
+                onValueChange = {
+                    onSelectionChange(if (it.isBlank()) emptyList() else listOf(it))
                 },
                 placeholder = { Text(stringResource(R.string.type_your_answer)) },
                 modifier = Modifier.fillMaxWidth(),
@@ -217,7 +231,7 @@ private fun InlineQuestionOptions(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(role = Role.Button) { 
+                    .clickable(role = Role.Button) {
                         showCustomInput = true
                         onSelectionChange(emptyList())
                     }
@@ -246,7 +260,7 @@ private fun InlineOptionItem(
     val theme = LocalOpenCodeTheme.current
     val bgColor = if (isSelected) theme.primary.copy(alpha = 0.15f) else theme.backgroundElement
     val borderColor = if (isSelected) theme.primary else theme.borderSubtle
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -258,10 +272,10 @@ private fun InlineOptionItem(
             .background(bgColor)
             .border(Sizing.strokeMd, borderColor, RectangleShape)
             .padding(horizontal = Spacing.lg, vertical = Spacing.mdLg),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.mdLg),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (isMultiple) {
+        horizontalArrangement = Arrangement.spacedBy(Spacing.mdLg),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (isMultiple) {
             Checkbox(
                 checked = isSelected,
                 onCheckedChange = null,
@@ -274,7 +288,7 @@ private fun InlineOptionItem(
                 modifier = Modifier.size(Sizing.iconMd)
             )
         }
-        
+
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = option.label,
@@ -290,7 +304,7 @@ private fun InlineOptionItem(
                 )
             }
         }
-        
+
         if (isSelected && !isMultiple) {
             Icon(
                 imageVector = Icons.Filled.CheckCircle,

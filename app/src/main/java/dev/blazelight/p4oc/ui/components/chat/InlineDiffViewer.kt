@@ -4,31 +4,28 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.blazelight.p4oc.R
-import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import dev.blazelight.p4oc.ui.theme.SemanticColors
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.diff.ParsedDiffLine
 import dev.blazelight.p4oc.ui.diff.ParsedDiffLineType
 import dev.blazelight.p4oc.ui.diff.ParsedDiffParser
 import dev.blazelight.p4oc.ui.diff.allHunks
+import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.SemanticColors
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
 
 @Composable
 fun InlineDiffViewer(
@@ -102,7 +99,7 @@ fun InlineDiffViewer(
 
             if (expanded && diffLines.isNotEmpty()) {
                 HorizontalDivider(color = theme.border)
-                
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -124,7 +121,7 @@ fun InlineDiffViewer(
 @Composable
 private fun InlineDiffLineRow(line: ParsedDiffLine) {
     val theme = LocalOpenCodeTheme.current
-    
+
     val (bgColor, textColor, prefix) = when (line.type) {
         ParsedDiffLineType.ADDED -> Triple(
             SemanticColors.Diff.addedBackground,
@@ -175,7 +172,6 @@ private fun InlineDiffLineRow(line: ParsedDiffLine) {
     }
 }
 
-
 @Composable
 fun PatchDiffViewer(
     files: List<String>,
@@ -203,7 +199,7 @@ fun PatchDiffViewer(
     ) {
         files.forEach { file ->
             val isExpanded = expandedFile == file
-            
+
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = theme.backgroundElement,
@@ -211,8 +207,8 @@ fun PatchDiffViewer(
             ) {
                 Column {
                     Surface(
-                        onClick = { 
-                            expandedFile = if (isExpanded) null else file 
+                        onClick = {
+                            expandedFile = if (isExpanded) null else file
                         },
                         color = Color.Transparent
                     ) {
@@ -252,13 +248,13 @@ fun PatchDiffViewer(
 
                     if (isExpanded && diffContent != null) {
                         HorizontalDivider(color = theme.border)
-                        
+
                         val currentDiffContent = diffContent
                         val diffLines = remember(currentDiffContent) {
                             currentDiffContent?.let { ParsedDiffParser.parse(it).allHunks().flatMap { hunk -> hunk.lines } }
                                 ?: emptyList()
                         }
-                        
+
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()

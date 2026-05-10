@@ -4,7 +4,6 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
-import androidx.compose.foundation.layout.Box
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,25 +14,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
-import dev.blazelight.p4oc.core.datastore.SettingsDataStore
-import dev.blazelight.p4oc.core.datastore.VisualSettings
-import dev.blazelight.p4oc.core.network.ConnectionManager
-import org.koin.compose.koinInject
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.navigation
 import androidx.navigation.navArgument
-import dev.blazelight.p4oc.data.files.FileRepositoryFactory
+import dev.blazelight.p4oc.core.datastore.SettingsDataStore
+import dev.blazelight.p4oc.core.datastore.VisualSettings
 import dev.blazelight.p4oc.domain.model.SessionConnectionState
-import dev.blazelight.p4oc.domain.server.ServerGeneration
-import dev.blazelight.p4oc.domain.server.ServerRef
-import dev.blazelight.p4oc.domain.workspace.Workspace
 import dev.blazelight.p4oc.ui.navigation.Screen
-import dev.blazelight.p4oc.ui.workspace.WorkspaceViewModel
-import org.koin.androidx.compose.koinViewModel
-import org.koin.core.parameter.parametersOf
 import dev.blazelight.p4oc.ui.screens.chat.ChatScreen
 import dev.blazelight.p4oc.ui.screens.diff.DiffViewerScreen
 import dev.blazelight.p4oc.ui.screens.diff.SessionDiffScreen
@@ -45,11 +36,21 @@ import dev.blazelight.p4oc.ui.screens.sessions.SessionListScreen
 import dev.blazelight.p4oc.ui.screens.sessions.SessionListViewModel
 import dev.blazelight.p4oc.ui.screens.settings.*
 import dev.blazelight.p4oc.ui.screens.terminal.TerminalScreen
+import dev.blazelight.p4oc.ui.workspace.WorkspaceRepositoryOwner
+import dev.blazelight.p4oc.ui.workspace.WorkspaceViewModel
+import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
+import org.koin.core.parameter.parametersOf
 
 private const val ANIMATION_DURATION = 300
 private const val WORKSPACE_ROUTE_ARG_TAB_ID = "tabId"
 private const val WORKSPACE_ROUTE_ARG_REVISION = "workspaceRevision"
 private const val WORKSPACE_GRAPH_ROUTE = "workspace/{$WORKSPACE_ROUTE_ARG_TAB_ID}/{$WORKSPACE_ROUTE_ARG_REVISION}"
+
+private data class PendingSessionCreate(
+    val title: String?,
+    val directory: String?,
+)
 
 private fun workspaceGraphRoute(tabId: String, revision: Int): String = "workspace/$tabId/$revision"
 
@@ -70,38 +71,23 @@ fun TabNavHost(
     onCloseTab: () -> Unit = {},
     isActiveTab: Boolean = true,
     startRoute: String = Screen.Sessions.route,
+    workspaceOwner: WorkspaceRepositoryOwner,
     onConnectionStateChanged: ((SessionConnectionState?) -> Unit)? = null,
     modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier
 ) {
     // Read visual settings for sub-agent tab behavior
     val settingsDataStore: SettingsDataStore = koinInject()
-    val connectionManager: ConnectionManager = koinInject()
     val visualSettings by settingsDataStore.visualSettings.collectAsState(initial = VisualSettings())
     val openSubAgentInNewTab = visualSettings.openSubAgentInNewTab
     val tabs by tabManager.tabs.collectAsState()
     val tab = tabs.firstOrNull { it.id == tabId }
-    val workspaceDirectory = tab?.workspaceDirectory
     val workspaceRevision = tab?.workspaceRevision ?: 0
-    val connection by connectionManager.connection.collectAsState()
 
-    val baseUrl = connection?.config?.url
-    if (baseUrl == null) {
-        Box(modifier = modifier)
-        return
-    }
-
-    val workspace = remember(tabId, baseUrl, workspaceDirectory, workspaceRevision) {
-        Workspace(
-            server = ServerRef.fromEndpoint(baseUrl),
-            directory = workspaceDirectory,
-        )
-    }
-    val generation = connection?.generation ?: error("Connected server is missing generation")
     val workspaceRoute = remember(tabId, workspaceRevision) { workspaceGraphRoute(tabId, workspaceRevision) }
     var pendingRoute by remember(tabId) { mutableStateOf<String?>(null) }
-    var pendingCreateSessionDirectory by remember(tabId) { mutableStateOf<String?>(null) }
+    var pendingSessionCreate by remember(tabId) { mutableStateOf<PendingSessionCreate?>(null) }
 
-    LaunchedEffect(workspaceRevision, pendingRoute, pendingCreateSessionDirectory) {
+    LaunchedEffect(workspaceRevision, pendingRoute, pendingSessionCreate) {
         pendingRoute?.let { route ->
             pendingRoute = null
             navController.navigate(route)
@@ -167,390 +153,441 @@ fun TabNavHost(
                 navArgument(WORKSPACE_ROUTE_ARG_REVISION) { type = NavType.IntType },
             )
         ) {
-        // Sessions list (start destination for new tabs)
-        composable(Screen.Sessions.route) { backStackEntry ->
-            val workspaceViewModel = TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            SessionListScreen(
-                viewModel = remember(workspaceViewModel) { SessionListViewModel(workspaceViewModel.sessionRepository) },
-                onSessionClick = { sessionId, directory ->
-                    // Check if session already open in another tab
-                    val existingTab = tabManager.findTabBySessionId(sessionId)
-                    if (existingTab != null && existingTab.id != tabId) {
-                        // Focus existing tab
-                        tabManager.focusTab(existingTab.id)
-                    } else {
-                        val chatRoute = Screen.Chat.createRoute(sessionId)
-                        if (directory != workspace.directory) {
-                            pendingRoute = chatRoute
-                            tabManager.updateTabWorkspace(tabId, directory)
+            // Sessions list (start destination for new tabs)
+            composable(Screen.Sessions.route) { backStackEntry ->
+                val workspaceViewModel = TouchWorkspaceViewModel(
+                    navController,
+                    workspaceRoute,
+                    workspaceOwner,
+                    backStackEntry.destination.route
+                )
+                SessionListScreen(
+                    viewModel = sessionListViewModelForRoute(
+                        owner = backStackEntry,
+                        workspaceViewModel = workspaceViewModel,
+                        keySuffix = "sessions",
+                    ),
+                    onSessionClick = { sessionId, directory ->
+                        // Check if session already open in another tab
+                        val existingTab = tabManager.findTabBySessionId(sessionId)
+                        if (existingTab != null && existingTab.id != tabId) {
+                            // Focus existing tab
+                            tabManager.focusTab(existingTab.id)
                         } else {
-                            navController.navigate(chatRoute)
+                            val chatRoute = Screen.Chat.createRoute(sessionId)
+                            if (directory != workspaceOwner.workspace.directory) {
+                                pendingRoute = chatRoute
+                                tabManager.updateTabWorkspace(tabId, directory)
+                            } else {
+                                navController.navigate(chatRoute)
+                            }
                         }
-                    }
-                },
-                onNewSession = { sessionId, directory ->
-                    val chatRoute = Screen.Chat.createRoute(sessionId)
-                    if (directory != workspace.directory) {
-                        pendingRoute = chatRoute
-                        tabManager.updateTabWorkspace(tabId, directory)
-                    } else {
-                        navController.navigate(chatRoute)
-                    }
-                },
-                onSettings = {
-                    navController.navigate(Screen.Settings.route)
-                },
-                onProjects = {
-                    navController.navigate(Screen.Projects.route)
-                },
-                onProjectClick = { projectId ->
-                    navController.navigate(Screen.SessionsFiltered.createRoute(projectId))
-                },
-                onViewChanges = { sessionId ->
-                    navController.navigate(Screen.SessionDiff.createRoute(sessionId))
-                }
-            )
-        }
-
-        // Filtered sessions by project
-        composable(
-            route = Screen.SessionsFiltered.route,
-            arguments = listOf(
-                navArgument(Screen.SessionsFiltered.ARG_PROJECT_ID) {
-                    type = NavType.StringType
-                }
-            )
-        ) { backStackEntry ->
-            val workspaceViewModel = TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            val projectId = backStackEntry.arguments?.getString(Screen.SessionsFiltered.ARG_PROJECT_ID) ?: ""
-            SessionListScreen(
-                viewModel = remember(workspaceViewModel) { SessionListViewModel(workspaceViewModel.sessionRepository) },
-                filterProjectId = projectId,
-                onSessionClick = { sessionId, directory ->
-                    val existingTab = tabManager.findTabBySessionId(sessionId)
-                    if (existingTab != null && existingTab.id != tabId) {
-                        tabManager.focusTab(existingTab.id)
-                    } else {
-                        val chatRoute = Screen.Chat.createRoute(sessionId)
-                        if (directory != workspace.directory) {
-                            pendingRoute = chatRoute
-                            tabManager.updateTabWorkspace(tabId, directory)
-                        } else {
-                            navController.navigate(chatRoute)
-                        }
-                    }
-                },
-                onNewSession = { sessionId, directory ->
-                    val chatRoute = Screen.Chat.createRoute(sessionId)
-                    if (directory != workspace.directory) {
-                        pendingRoute = chatRoute
-                        tabManager.updateTabWorkspace(tabId, directory)
-                    } else {
-                        navController.navigate(chatRoute)
-                    }
-                },
-                onSettings = {
-                    navController.navigate(Screen.Settings.route)
-                },
-                onProjects = {
-                    navController.navigate(Screen.Projects.route)
-                },
-                onProjectClick = { pid ->
-                    navController.navigate(Screen.SessionsFiltered.createRoute(pid))
-                },
-                onViewChanges = { sessionId ->
-                    navController.navigate(Screen.SessionDiff.createRoute(sessionId))
-                },
-                onCreateSessionInProject = { directory ->
-                    if (directory != workspace.directory) {
-                        pendingRoute = Screen.SessionsFiltered.createRoute(projectId)
-                        pendingCreateSessionDirectory = directory
-                        tabManager.updateTabWorkspace(tabId, directory)
-                    } else {
-                        pendingCreateSessionDirectory = directory
-                    }
-                },
-                autoCreateSession = pendingCreateSessionDirectory == workspace.directory,
-                onAutoCreateSessionConsumed = { pendingCreateSessionDirectory = null },
-                onNavigateBack = {
-                    navController.popBackStack()
-                }
-            )
-        }
-
-        // Chat screen
-        composable(
-            route = Screen.Chat.route,
-            arguments = listOf(navArgument(Screen.Chat.ARG_SESSION_ID) { type = NavType.StringType })
-        ) { backStackEntry ->
-            val workspaceViewModel = TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            ChatScreen(
-                viewModel = koinViewModel(
-                    parameters = {
-                        parametersOf(
-                            workspaceViewModel.workspaceClient,
-                            workspaceViewModel.sessionRepository,
-                        )
                     },
-                ),
-                onNavigateBack = { 
-                    // Clear session binding when leaving chat
-                    tabManager.clearTabSession(tabId)
-                    onConnectionStateChanged?.invoke(null)
-                    navController.popBackStack() 
-                },
-                onOpenTerminal = onNewTerminalTab,
-                onOpenFiles = onNewFilesTab,
-                onViewSessionDiff = { sessionId ->
-                    navController.navigate(Screen.SessionDiff.createRoute(sessionId))
-                },
-                onOpenSubSession = { subSessionId ->
-                    // Check if sub-session is already open in another tab
-                    val existingTab = tabManager.findTabBySessionId(subSessionId)
-                    if (existingTab != null && existingTab.id != tabId) {
-                        // Focus the existing tab
-                        tabManager.focusTab(existingTab.id)
-                    } else if (openSubAgentInNewTab) {
-                        // Open in a new tab (default), inheriting the source tab's workspace
-                        tabManager.createTab(
-                            startRoute = Screen.Chat.createRoute(subSessionId),
-                            workspaceDirectory = workspace.directory,
-                            focus = true,
-                        )
-                    } else {
-                        // Reuse this tab when sub-agent tab splitting is disabled.
-                        navController.navigate(Screen.Chat.createRoute(subSessionId))
+                    onNewSession = { sessionId, directory ->
+                        val chatRoute = Screen.Chat.createRoute(sessionId)
+                        if (directory != workspaceOwner.workspace.directory) {
+                            pendingRoute = chatRoute
+                            tabManager.updateTabWorkspace(tabId, directory)
+                        } else {
+                            navController.navigate(chatRoute)
+                        }
+                    },
+                    onSettings = {
+                        navController.navigate(Screen.Settings.route)
+                    },
+                    onProjects = {
+                        navController.navigate(Screen.Projects.route)
+                    },
+                    onProjectClick = { projectId ->
+                        navController.navigate(Screen.SessionsFiltered.createRoute(projectId))
+                    },
+                    onViewChanges = { sessionId ->
+                        navController.navigate(Screen.SessionDiff.createRoute(sessionId))
+                    },
+                    onCreateSessionInWorkspace = { title, directory ->
+                        pendingSessionCreate = PendingSessionCreate(title, directory)
+                        if (directory != workspaceOwner.workspace.directory) {
+                            tabManager.updateTabWorkspace(tabId, directory)
+                        }
+                    },
+                    autoCreateSession = pendingSessionCreate?.directory == workspaceOwner.workspace.directory && pendingSessionCreate != null,
+                    autoCreateSessionTitle = pendingSessionCreate?.title,
+                    autoCreateSessionDirectory = pendingSessionCreate?.directory,
+                    onAutoCreateSessionConsumed = { pendingSessionCreate = null }
+                )
+            }
+
+            // Filtered sessions by project
+            composable(
+                route = Screen.SessionsFiltered.route,
+                arguments = listOf(
+                    navArgument(Screen.SessionsFiltered.ARG_PROJECT_ID) {
+                        type = NavType.StringType
                     }
-                },
-                onSessionLoaded = { sessionId, sessionTitle ->
-                    // Update tab's session binding
-                    tabManager.updateTabSession(tabId, sessionId, sessionTitle)
-                },
-                onConnectionStateChanged = onConnectionStateChanged,
-                isActiveTab = isActiveTab
-            )
-        }
-
-        // Projects screen
-        composable(Screen.Projects.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            ProjectsScreen(
-                onNavigateBack = {
-                    navController.popBackStack()
-                },
-                onProjectClick = { projectId, worktree ->
-                    val filteredRoute = Screen.SessionsFiltered.createRoute(projectId)
-                    if (worktree != workspace.directory) {
-                        pendingRoute = filteredRoute
-                        tabManager.updateTabWorkspace(tabId, worktree)
-                    } else {
-                        navController.navigate(filteredRoute)
+                )
+            ) { backStackEntry ->
+                val workspaceViewModel = TouchWorkspaceViewModel(
+                    navController,
+                    workspaceRoute,
+                    workspaceOwner,
+                    backStackEntry.destination.route
+                )
+                val projectId = backStackEntry.arguments?.getString(Screen.SessionsFiltered.ARG_PROJECT_ID) ?: ""
+                SessionListScreen(
+                    viewModel = sessionListViewModelForRoute(
+                        owner = backStackEntry,
+                        workspaceViewModel = workspaceViewModel,
+                        keySuffix = "sessions-filtered-$projectId",
+                    ),
+                    filterProjectId = projectId,
+                    onSessionClick = { sessionId, directory ->
+                        val existingTab = tabManager.findTabBySessionId(sessionId)
+                        if (existingTab != null && existingTab.id != tabId) {
+                            tabManager.focusTab(existingTab.id)
+                        } else {
+                            val chatRoute = Screen.Chat.createRoute(sessionId)
+                            if (directory != workspaceOwner.workspace.directory) {
+                                pendingRoute = chatRoute
+                                tabManager.updateTabWorkspace(tabId, directory)
+                            } else {
+                                navController.navigate(chatRoute)
+                            }
+                        }
+                    },
+                    onNewSession = { sessionId, directory ->
+                        val chatRoute = Screen.Chat.createRoute(sessionId)
+                        if (directory != workspaceOwner.workspace.directory) {
+                            pendingRoute = chatRoute
+                            tabManager.updateTabWorkspace(tabId, directory)
+                        } else {
+                            navController.navigate(chatRoute)
+                        }
+                    },
+                    onSettings = {
+                        navController.navigate(Screen.Settings.route)
+                    },
+                    onProjects = {
+                        navController.navigate(Screen.Projects.route)
+                    },
+                    onProjectClick = { pid ->
+                        navController.navigate(Screen.SessionsFiltered.createRoute(pid))
+                    },
+                    onViewChanges = { sessionId ->
+                        navController.navigate(Screen.SessionDiff.createRoute(sessionId))
+                    },
+                    onCreateSessionInWorkspace = { title, directory ->
+                        pendingSessionCreate = PendingSessionCreate(title, directory)
+                        if (directory != workspaceOwner.workspace.directory) {
+                            pendingRoute = Screen.SessionsFiltered.createRoute(projectId)
+                            tabManager.updateTabWorkspace(tabId, directory)
+                        }
+                    },
+                    autoCreateSession = pendingSessionCreate?.directory == workspaceOwner.workspace.directory && pendingSessionCreate != null,
+                    autoCreateSessionTitle = pendingSessionCreate?.title,
+                    autoCreateSessionDirectory = pendingSessionCreate?.directory,
+                    onAutoCreateSessionConsumed = { pendingSessionCreate = null },
+                    onNavigateBack = {
+                        navController.popBackStack()
                     }
-                }
-            )
-        }
+                )
+            }
 
-        // Terminal screen (per-PTY, each tab has its own)
-        composable(
-            route = Screen.Terminal.route,
-            arguments = listOf(
-                navArgument(Screen.Terminal.ARG_PTY_ID) { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            TerminalScreen(
-                onPtyLoaded = { ptyId, ptyTitle ->
-                    // Update tab binding with PTY id and title
-                    tabManager.updateTabSession(tabId, ptyId, ptyTitle)
-                }
-            )
-        }
+            // Chat screen
+            composable(
+                route = Screen.Chat.route,
+                arguments = listOf(navArgument(Screen.Chat.ARG_SESSION_ID) { type = NavType.StringType })
+            ) { backStackEntry ->
+                val workspaceViewModel = TouchWorkspaceViewModel(
+                    navController,
+                    workspaceRoute,
+                    workspaceOwner,
+                    backStackEntry.destination.route
+                )
+                ChatScreen(
+                    viewModel = koinViewModel(
+                        parameters = {
+                            parametersOf(
+                                workspaceViewModel.workspaceClient,
+                                workspaceViewModel.sessionRepository,
+                                workspaceViewModel.fileRepository,
+                                workspaceViewModel.uploadCoordinator,
+                            )
+                        },
+                    ),
+                    onNavigateBack = {
+                        // Clear session binding when leaving chat
+                        tabManager.clearTabSession(tabId)
+                        onConnectionStateChanged?.invoke(null)
+                        if (!navController.popBackStack()) {
+                            onCloseTab()
+                        }
+                    },
+                    onOpenTerminal = onNewTerminalTab,
+                    onOpenFiles = onNewFilesTab,
+                    onViewSessionDiff = { sessionId ->
+                        navController.navigate(Screen.SessionDiff.createRoute(sessionId))
+                    },
+                    onOpenSubSession = { subSessionId ->
+                        // Check if sub-session is already open in another tab
+                        val existingTab = tabManager.findTabBySessionId(subSessionId)
+                        if (existingTab != null && existingTab.id != tabId) {
+                            // Focus the existing tab
+                            tabManager.focusTab(existingTab.id)
+                        } else if (openSubAgentInNewTab) {
+                            // Open in a new tab (default), inheriting the source tab's workspace
+                            tabManager.createTab(
+                                startRoute = Screen.Chat.createRoute(subSessionId),
+                                workspaceDirectory = workspaceOwner.workspace.directory,
+                                focus = true,
+                            )
+                        } else {
+                            // Reuse this tab when sub-agent tab splitting is disabled.
+                            navController.navigate(Screen.Chat.createRoute(subSessionId))
+                        }
+                    },
+                    onSessionLoaded = { sessionId, sessionTitle ->
+                        // Update tab's session binding
+                        tabManager.updateTabSession(tabId, sessionId, sessionTitle)
+                    },
+                    onConnectionStateChanged = onConnectionStateChanged,
+                    isActiveTab = isActiveTab
+                )
+            }
 
-        // Files screen
-        composable(Screen.Files.route) { backStackEntry ->
-            val workspaceViewModel = TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            FileExplorerScreen(
-                viewModel = remember(workspaceViewModel) {
-                    FilesViewModel(FileRepositoryFactory.create(workspaceViewModel.workspaceClient))
-                },
-                workspaceDirectory = workspace.directory,
-                onFileClick = { path ->
-                    navController.navigate(Screen.FileViewer.createRoute(path))
-                },
-                onNavigateBack = {
-                    if (!navController.popBackStack()) {
-                        onCloseTab()
+            // Projects screen
+            composable(Screen.Projects.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                ProjectsScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    },
+                    onProjectClick = { projectId, worktree ->
+                        val filteredRoute = Screen.SessionsFiltered.createRoute(projectId)
+                        if (worktree != workspaceOwner.workspace.directory) {
+                            pendingRoute = filteredRoute
+                            tabManager.updateTabWorkspace(tabId, worktree)
+                        } else {
+                            navController.navigate(filteredRoute)
+                        }
                     }
-                },
-                onSwitchWorkspace = {
-                    navController.navigate(Screen.Projects.route)
-                }
-            )
-        }
+                )
+            }
 
-        // File viewer
-        composable(
-            route = Screen.FileViewer.route,
-            arguments = listOf(
-                navArgument(Screen.FileViewer.ARG_PATH) { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            val workspaceViewModel = TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            val encodedPath = backStackEntry.arguments?.getString(Screen.FileViewer.ARG_PATH) ?: ""
-            FileViewerScreen(
-                path = Uri.decode(encodedPath),
-                viewModel = remember(workspaceViewModel) {
-                    FilesViewModel(FileRepositoryFactory.create(workspaceViewModel.workspaceClient))
-                },
-                onNavigateBack = {
-                    if (!navController.popBackStack()) {
-                        onCloseTab()
+            // Terminal screen (per-PTY, each tab has its own)
+            composable(
+                route = Screen.Terminal.route,
+                arguments = listOf(
+                    navArgument(Screen.Terminal.ARG_PTY_ID) { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TerminalScreen(
+                    onPtyLoaded = { ptyId, ptyTitle ->
+                        // Update tab binding with PTY id and title
+                        tabManager.updateTabSession(tabId, ptyId, ptyTitle)
                     }
-                }
-            )
-        }
+                )
+            }
 
-        // Diff viewer
-        composable(
-            route = Screen.DiffViewer.route,
-            arguments = listOf(
-                navArgument(Screen.DiffViewer.ARG_CONTENT) { type = NavType.StringType },
-                navArgument(Screen.DiffViewer.ARG_FILE_NAME) {
-                    type = NavType.StringType
-                    defaultValue = ""
-                }
-            )
-        ) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            val encodedContent = backStackEntry.arguments?.getString(Screen.DiffViewer.ARG_CONTENT) ?: ""
-            val encodedFileName = backStackEntry.arguments?.getString(Screen.DiffViewer.ARG_FILE_NAME) ?: ""
-            DiffViewerScreen(
-                diffContent = Uri.decode(encodedContent),
-                fileName = Uri.decode(encodedFileName).takeIf { it.isNotEmpty() },
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            // Files screen
+            composable(Screen.Files.route) { backStackEntry ->
+                val workspaceViewModel = TouchWorkspaceViewModel(
+                    navController,
+                    workspaceRoute,
+                    workspaceOwner,
+                    backStackEntry.destination.route
+                )
+                FileExplorerScreen(
+                    viewModel = filesViewModelForRoute(
+                        owner = backStackEntry,
+                        workspaceViewModel = workspaceViewModel,
+                        keySuffix = "files",
+                    ),
+                    workspaceDirectory = workspaceOwner.workspace.directory,
+                    onFileClick = { path ->
+                        navController.navigate(Screen.FileViewer.createRoute(path))
+                    },
+                    onNavigateBack = {
+                        if (!navController.popBackStack()) {
+                            onCloseTab()
+                        }
+                    },
+                    onSwitchWorkspace = {
+                        navController.navigate(Screen.Projects.route)
+                    }
+                )
+            }
 
-        composable(
-            route = Screen.SessionDiff.route,
-            arguments = listOf(
-                navArgument(Screen.SessionDiff.ARG_SESSION_ID) { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            val workspaceViewModel = TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            val sessionId = backStackEntry.arguments?.getString(Screen.SessionDiff.ARG_SESSION_ID).orEmpty()
-            SessionDiffScreen(
-                sessionId = sessionId,
-                workspaceClient = workspaceViewModel.workspaceClient,
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            // File viewer
+            composable(
+                route = Screen.FileViewer.route,
+                arguments = listOf(
+                    navArgument(Screen.FileViewer.ARG_PATH) { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                val workspaceViewModel = TouchWorkspaceViewModel(
+                    navController,
+                    workspaceRoute,
+                    workspaceOwner,
+                    backStackEntry.destination.route
+                )
+                val encodedPath = backStackEntry.arguments?.getString(Screen.FileViewer.ARG_PATH) ?: ""
+                FileViewerScreen(
+                    path = Uri.decode(encodedPath),
+                    viewModel = filesViewModelForRoute(
+                        owner = backStackEntry,
+                        workspaceViewModel = workspaceViewModel,
+                        keySuffix = "file-viewer-$encodedPath",
+                    ),
+                    onNavigateBack = {
+                        if (!navController.popBackStack()) {
+                            onCloseTab()
+                        }
+                    }
+                )
+            }
 
-        // Settings screens
-        composable(Screen.Settings.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            SettingsScreen(
-                onNavigateBack = { navController.popBackStack() },
-                onDisconnect = onDisconnect,
-                onProviderConfig = {
-                    navController.navigate(Screen.ProviderConfig.route)
-                },
-                onVisualSettings = {
-                    navController.navigate(Screen.VisualSettings.route)
-                },
-                onAgentsConfig = {
-                    navController.navigate(Screen.AgentsConfig.route)
-                },
-                onSkills = {
-                    navController.navigate(Screen.Skills.route)
-                },
-                onNotificationSettings = {
-                    navController.navigate(Screen.NotificationSettings.route)
-                },
-                onConnectionSettings = {
-                    navController.navigate(Screen.ConnectionSettings.route)
-                },
-                onLicenses = {
-                    navController.navigate(Screen.Licenses.route)
-                }
-            )
-        }
+            // Diff viewer
+            composable(
+                route = Screen.DiffViewer.route,
+                arguments = listOf(
+                    navArgument(Screen.DiffViewer.ARG_CONTENT) { type = NavType.StringType },
+                    navArgument(Screen.DiffViewer.ARG_FILE_NAME) {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
+            ) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                val encodedContent = backStackEntry.arguments?.getString(Screen.DiffViewer.ARG_CONTENT) ?: ""
+                val encodedFileName = backStackEntry.arguments?.getString(Screen.DiffViewer.ARG_FILE_NAME) ?: ""
+                DiffViewerScreen(
+                    diffContent = Uri.decode(encodedContent),
+                    fileName = Uri.decode(encodedFileName).takeIf { it.isNotEmpty() },
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
 
-        composable(Screen.Licenses.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            dev.blazelight.p4oc.ui.screens.licenses.LicensesScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            composable(
+                route = Screen.SessionDiff.route,
+                arguments = listOf(
+                    navArgument(Screen.SessionDiff.ARG_SESSION_ID) { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                val workspaceViewModel = TouchWorkspaceViewModel(
+                    navController,
+                    workspaceRoute,
+                    workspaceOwner,
+                    backStackEntry.destination.route
+                )
+                val sessionId = backStackEntry.arguments?.getString(Screen.SessionDiff.ARG_SESSION_ID).orEmpty()
+                SessionDiffScreen(
+                    sessionId = sessionId,
+                    workspaceClient = workspaceViewModel.workspaceClient,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
 
-        composable(Screen.ProviderConfig.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            ProviderConfigScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            // Settings screens
+            composable(Screen.Settings.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                SettingsScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onDisconnect = onDisconnect,
+                    onProviderConfig = {
+                        navController.navigate(Screen.ProviderConfig.route)
+                    },
+                    onVisualSettings = {
+                        navController.navigate(Screen.VisualSettings.route)
+                    },
+                    onAgentsConfig = {
+                        navController.navigate(Screen.AgentsConfig.route)
+                    },
+                    onSkills = {
+                        navController.navigate(Screen.Skills.route)
+                    },
+                    onNotificationSettings = {
+                        navController.navigate(Screen.NotificationSettings.route)
+                    },
+                    onConnectionSettings = {
+                        navController.navigate(Screen.ConnectionSettings.route)
+                    },
+                    onLicenses = {
+                        navController.navigate(Screen.Licenses.route)
+                    }
+                )
+            }
 
-        composable(Screen.VisualSettings.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            VisualSettingsScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            composable(Screen.Licenses.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                dev.blazelight.p4oc.ui.screens.licenses.LicensesScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
 
-        composable(Screen.ModelControls.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            ModelControlsScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            composable(Screen.ProviderConfig.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                ProviderConfigScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
 
-        composable(Screen.AgentsConfig.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            AgentsConfigScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            composable(Screen.VisualSettings.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                VisualSettingsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
 
-        composable(Screen.Skills.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            SkillsScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            composable(Screen.ModelControls.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                ModelControlsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
 
-        composable(Screen.NotificationSettings.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            NotificationSettingsScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            composable(Screen.AgentsConfig.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                AgentsConfigScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
 
-        composable(Screen.ConnectionSettings.route) { backStackEntry ->
-            TouchWorkspaceViewModel(navController, workspaceRoute, tabId, workspace, generation, backStackEntry.destination.route)
-            ConnectionSettingsScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+            composable(Screen.Skills.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                SkillsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(Screen.NotificationSettings.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                NotificationSettingsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(Screen.ConnectionSettings.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                ConnectionSettingsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
         }
     }
-
 }
 
 @Composable
 private fun TouchWorkspaceViewModel(
     navController: NavHostController,
     workspaceRoute: String,
-    tabId: String,
-    workspace: Workspace,
-    generation: ServerGeneration,
+    workspaceOwner: WorkspaceRepositoryOwner,
     destinationRoute: String?,
 ): WorkspaceViewModel {
     val viewModel = workspaceViewModelForTab(
         navController = navController,
         workspaceRoute = workspaceRoute,
-        tabId = tabId,
-        workspace = workspace,
-        generation = generation,
+        workspaceOwner = workspaceOwner,
     )
     LaunchedEffect(viewModel, destinationRoute) {
         viewModel.touch(destinationRoute)
@@ -562,15 +599,36 @@ private fun TouchWorkspaceViewModel(
 private fun workspaceViewModelForTab(
     navController: NavHostController,
     workspaceRoute: String,
-    tabId: String,
-    workspace: Workspace,
-    generation: ServerGeneration,
+    workspaceOwner: WorkspaceRepositoryOwner,
 ): WorkspaceViewModel {
     val parentEntry = remember(navController, workspaceRoute) {
         navController.getBackStackEntry(WORKSPACE_GRAPH_ROUTE)
     }
     return koinViewModel(
         viewModelStoreOwner = parentEntry,
-        parameters = { parametersOf(tabId, workspace, generation) },
+        key = "${workspaceOwner.tabId}:${workspaceOwner.workspace.key}:${workspaceOwner.generation.value}",
+        parameters = { parametersOf(workspaceOwner) },
     )
 }
+
+@Composable
+private fun sessionListViewModelForRoute(
+    owner: NavBackStackEntry,
+    workspaceViewModel: WorkspaceViewModel,
+    keySuffix: String,
+): SessionListViewModel = koinViewModel(
+    viewModelStoreOwner = owner,
+    key = "${workspaceViewModel.tabId}:${workspaceViewModel.workspace.key}:$keySuffix",
+    parameters = { parametersOf(workspaceViewModel.sessionRepository) },
+)
+
+@Composable
+private fun filesViewModelForRoute(
+    owner: NavBackStackEntry,
+    workspaceViewModel: WorkspaceViewModel,
+    keySuffix: String,
+): FilesViewModel = koinViewModel(
+    viewModelStoreOwner = owner,
+    key = "${workspaceViewModel.tabId}:${workspaceViewModel.workspace.key}:$keySuffix",
+    parameters = { parametersOf(workspaceViewModel.fileRepository, workspaceViewModel.uploadCoordinator) },
+)

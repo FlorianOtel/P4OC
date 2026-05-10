@@ -9,7 +9,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Permission
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
@@ -30,7 +29,7 @@ fun InlinePermissionPrompt(
     modifier: Modifier = Modifier
 ) {
     val theme = LocalOpenCodeTheme.current
-    
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -58,7 +57,7 @@ fun InlinePermissionPrompt(
                 modifier = Modifier.weight(1f)
             )
         }
-        
+
         // Action buttons row
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -80,7 +79,7 @@ fun InlinePermissionPrompt(
                     style = MaterialTheme.typography.labelSmall
                 )
             }
-            
+
             OutlinedButton(
                 onClick = onAlways,
                 modifier = Modifier
@@ -94,7 +93,7 @@ fun InlinePermissionPrompt(
                     style = MaterialTheme.typography.labelSmall
                 )
             }
-            
+
             Button(
                 onClick = onAllow,
                 modifier = Modifier

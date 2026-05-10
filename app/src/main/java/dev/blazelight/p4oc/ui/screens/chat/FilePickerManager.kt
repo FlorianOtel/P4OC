@@ -1,11 +1,9 @@
 package dev.blazelight.p4oc.ui.screens.chat
 
-import android.webkit.MimeTypeMap
+import dev.blazelight.p4oc.core.log.AppLog
+import dev.blazelight.p4oc.core.mime.FilenameMimeType
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.safeApiCall
-import dev.blazelight.p4oc.core.log.AppLog
-import dev.blazelight.p4oc.data.files.FileRepository
-import dev.blazelight.p4oc.data.files.FileRepositoryFactory
 import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.domain.model.FileNode
 import dev.blazelight.p4oc.ui.components.chat.SelectedFile
@@ -25,7 +23,7 @@ import kotlinx.coroutines.launch
 class FilePickerManager(
     private val workspaceClient: WorkspaceClient,
     private val scope: CoroutineScope,
-    private val fileRepository: FileRepository = FileRepositoryFactory.create(workspaceClient),
+    private val uploadCoordinator: UploadCoordinator,
 ) {
     private companion object {
         const val TAG = "FilePickerManager"
@@ -46,27 +44,6 @@ class FilePickerManager(
     private val _attachedFiles = MutableStateFlow<List<SelectedFile>>(emptyList())
     val attachedFiles: StateFlow<List<SelectedFile>> = _attachedFiles.asStateFlow()
 
-    private val uploadCoordinator = UploadCoordinator(
-        scope = scope,
-        repositoryFactory = { fileRepository },
-        destinationPath = { _pickerCurrentPath.value.ifBlank { null } },
-        onComplete = { uploadedFiles ->
-            if (uploadedFiles.isNotEmpty()) {
-                loadPickerFiles(_pickerCurrentPath.value.ifBlank { null })
-                _attachedFiles.update { current ->
-                    uploadedFiles.fold(current) { acc, item ->
-                        if (acc.none { it.path == item.destinationPath }) {
-                            acc + SelectedFile(
-                                path = item.destinationPath,
-                                name = item.displayName,
-                                mimeType = item.mimeType,
-                            )
-                        } else acc
-                    }
-                }
-            }
-        },
-    )
     val uploadState: StateFlow<UploadQueueState> = uploadCoordinator.state
 
     fun loadPickerFiles(path: String? = null) {
@@ -100,11 +77,13 @@ class FilePickerManager(
     }
 
     fun attachFile(file: FileNode) {
-        val selected = SelectedFile(path = file.path, name = file.name, mimeType = mimeTypeForFilename(file.name))
+        val selected = SelectedFile(path = file.path, name = file.name, mimeType = FilenameMimeType.resolve(file.name))
         _attachedFiles.update { current ->
             if (current.none { it.path == file.path }) {
                 current + selected
-            } else current
+            } else {
+                current
+            }
         }
     }
 
@@ -119,7 +98,30 @@ class FilePickerManager(
     }
 
     fun uploadAndAttach(source: UploadSource, sourceIds: List<String>) {
-        uploadCoordinator.upload(source, sourceIds)
+        val currentPath = _pickerCurrentPath.value.ifBlank { null }
+        uploadCoordinator.upload(
+            source = source,
+            sourceIds = sourceIds,
+            destinationPath = currentPath,
+            onComplete = { uploadedFiles ->
+                if (uploadedFiles.isNotEmpty()) {
+                    loadPickerFiles(currentPath)
+                    _attachedFiles.update { current ->
+                        uploadedFiles.fold(current) { acc, item ->
+                            if (acc.none { it.path == item.destinationPath }) {
+                                acc + SelectedFile(
+                                    path = item.destinationPath,
+                                    name = item.displayName,
+                                    mimeType = item.mimeType,
+                                )
+                            } else {
+                                acc
+                            }
+                        }
+                    }
+                }
+            },
+        )
     }
 
     fun cancelUploads() {
@@ -143,10 +145,5 @@ class FilePickerManager(
                 if (acc.none { it.path == file.path }) acc + file else acc
             }
         }
-    }
-
-    private fun mimeTypeForFilename(filename: String): String? {
-        val extension = filename.substringAfterLast('.', missingDelimiterValue = "").lowercase()
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
     }
 }

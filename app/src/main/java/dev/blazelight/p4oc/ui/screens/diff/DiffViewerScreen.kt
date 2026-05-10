@@ -6,38 +6,33 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import dev.blazelight.p4oc.R
-import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import dev.blazelight.p4oc.ui.theme.SemanticColors
-import dev.blazelight.p4oc.ui.theme.Sizing
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
 import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.diff.ParsedDiffLine
 import dev.blazelight.p4oc.ui.diff.ParsedDiffLineType
 import dev.blazelight.p4oc.ui.diff.ParsedDiffParser
 import dev.blazelight.p4oc.ui.diff.ParsedFileDiff
 import dev.blazelight.p4oc.ui.diff.allHunks
+import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.SemanticColors
+import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
 
 enum class DiffViewMode { UNIFIED, SIDE_BY_SIDE }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,8 +75,11 @@ fun DiffViewerScreen(
                 actions = {
                     IconButton(
                         onClick = {
-                            viewMode = if (viewMode == DiffViewMode.UNIFIED) 
-                                DiffViewMode.SIDE_BY_SIDE else DiffViewMode.UNIFIED
+                            viewMode = if (viewMode == DiffViewMode.UNIFIED) {
+                                DiffViewMode.SIDE_BY_SIDE
+                            } else {
+                                DiffViewMode.UNIFIED
+                            }
                         },
                         modifier = Modifier.size(Sizing.iconButtonMd)
                     ) {
@@ -219,8 +217,11 @@ private fun UnifiedDiffView(
                                             ParsedDiffLineType.REMOVED -> removedTextColor
                                             else -> theme.text
                                         },
-                                        fontWeight = if (line.type != ParsedDiffLineType.CONTEXT) 
-                                            FontWeight.Medium else FontWeight.Normal
+                                        fontWeight = if (line.type != ParsedDiffLineType.CONTEXT) {
+                                            FontWeight.Medium
+                                        } else {
+                                            FontWeight.Normal
+                                        }
                                     )
                                 ) {
                                     append(prefix)
@@ -264,20 +265,34 @@ private fun SideBySideDiffView(
 
     val sideBySideLines = remember(files) {
         val result = mutableListOf<SideBySideLine>()
-        
+
         for (file in files) {
-            result.add(SideBySideLine(
-                leftLineNum = null, leftContent = null, leftType = null,
-                rightLineNum = null, rightContent = null, rightType = null,
-                isHeader = true, headerContent = file.displayFileName
-            ))
+            result.add(
+                SideBySideLine(
+                    leftLineNum = null,
+                    leftContent = null,
+                    leftType = null,
+                    rightLineNum = null,
+                    rightContent = null,
+                    rightType = null,
+                    isHeader = true,
+                    headerContent = file.displayFileName
+                )
+            )
 
             for (hunk in file.hunks) {
-                result.add(SideBySideLine(
-                    leftLineNum = null, leftContent = null, leftType = null,
-                    rightLineNum = null, rightContent = null, rightType = null,
-                    isHeader = true, headerContent = hunk.header
-                ))
+                result.add(
+                    SideBySideLine(
+                        leftLineNum = null,
+                        leftContent = null,
+                        leftType = null,
+                        rightLineNum = null,
+                        rightContent = null,
+                        rightType = null,
+                        isHeader = true,
+                        headerContent = hunk.header
+                    )
+                )
 
                 val removed = mutableListOf<ParsedDiffLine>()
                 val added = mutableListOf<ParsedDiffLine>()
@@ -289,23 +304,27 @@ private fun SideBySideDiffView(
                             while (removed.isNotEmpty() || added.isNotEmpty()) {
                                 val rem = removed.removeFirstOrNull()
                                 val add = added.removeFirstOrNull()
-                                result.add(SideBySideLine(
-                                    leftLineNum = rem?.oldLineNumber,
-                                    leftContent = rem?.content,
-                                    leftType = rem?.type,
-                                    rightLineNum = add?.newLineNumber,
-                                    rightContent = add?.content,
-                                    rightType = add?.type
-                                ))
+                                result.add(
+                                    SideBySideLine(
+                                        leftLineNum = rem?.oldLineNumber,
+                                        leftContent = rem?.content,
+                                        leftType = rem?.type,
+                                        rightLineNum = add?.newLineNumber,
+                                        rightContent = add?.content,
+                                        rightType = add?.type
+                                    )
+                                )
                             }
-                            result.add(SideBySideLine(
-                                leftLineNum = line.oldLineNumber,
-                                leftContent = line.content,
-                                leftType = ParsedDiffLineType.CONTEXT,
-                                rightLineNum = line.newLineNumber,
-                                rightContent = line.content,
-                                rightType = ParsedDiffLineType.CONTEXT
-                            ))
+                            result.add(
+                                SideBySideLine(
+                                    leftLineNum = line.oldLineNumber,
+                                    leftContent = line.content,
+                                    leftType = ParsedDiffLineType.CONTEXT,
+                                    rightLineNum = line.newLineNumber,
+                                    rightContent = line.content,
+                                    rightType = ParsedDiffLineType.CONTEXT
+                                )
+                            )
                         }
                         ParsedDiffLineType.REMOVED -> removed.add(line)
                         ParsedDiffLineType.ADDED -> added.add(line)
@@ -315,14 +334,16 @@ private fun SideBySideDiffView(
                 while (removed.isNotEmpty() || added.isNotEmpty()) {
                     val rem = removed.removeFirstOrNull()
                     val add = added.removeFirstOrNull()
-                    result.add(SideBySideLine(
-                        leftLineNum = rem?.oldLineNumber,
-                        leftContent = rem?.content,
-                        leftType = rem?.type,
-                        rightLineNum = add?.newLineNumber,
-                        rightContent = add?.content,
-                        rightType = add?.type
-                    ))
+                    result.add(
+                        SideBySideLine(
+                            leftLineNum = rem?.oldLineNumber,
+                            leftContent = rem?.content,
+                            leftType = rem?.type,
+                            rightLineNum = add?.newLineNumber,
+                            rightContent = add?.content,
+                            rightType = add?.type
+                        )
+                    )
                 }
             }
         }
@@ -381,8 +402,11 @@ private fun SideBySideDiffView(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = TuiCodeFontSize.lg
                             ),
-                            color = if (line.leftType == ParsedDiffLineType.REMOVED) 
-                                removedTextColor else theme.text,
+                            color = if (line.leftType == ParsedDiffLineType.REMOVED) {
+                                removedTextColor
+                            } else {
+                                theme.text
+                            },
                             modifier = Modifier.padding(start = Spacing.xs)
                         )
                     }
@@ -420,8 +444,11 @@ private fun SideBySideDiffView(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = TuiCodeFontSize.lg
                             ),
-                            color = if (line.rightType == ParsedDiffLineType.ADDED) 
-                                addedTextColor else theme.text,
+                            color = if (line.rightType == ParsedDiffLineType.ADDED) {
+                                addedTextColor
+                            } else {
+                                theme.text
+                            },
                             modifier = Modifier.padding(start = Spacing.xs)
                         )
                     }

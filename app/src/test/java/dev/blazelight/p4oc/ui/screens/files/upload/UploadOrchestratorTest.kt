@@ -18,6 +18,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.InputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class UploadOrchestratorTest {
@@ -133,16 +135,17 @@ class UploadOrchestratorTest {
     }
 
     @Test
-    fun `oversize file rejected without calling repository`() = runTest {
-        val source = FakeUploadSource(mapOf("big" to ByteArray(10)), failOversize = true)
-        val repo = FakeFileRepository(uploadOutcomes = mutableListOf())
-        val orchestrator = UploadOrchestrator(repo, source, maxBytes = 4L, retryDelayMillis = { 0L })
+    fun `large file streams to repository without total size rejection`() = runTest {
+        val source = FakeUploadSource(mapOf("big" to ByteArray(10)))
+        val repo = FakeFileRepository(uploadOutcomes = mutableListOf(ok("big.bin")))
+        val orchestrator = UploadOrchestrator(repo, source, retryDelayMillis = { 0L })
 
         val state = orchestrator.run("", listOf(plan("big", "big.bin", size = 10)))
 
-        assertEquals(0, repo.uploadCalls.size)
-        val phase = state.items.single().phase
-        assertTrue(phase is UploadPhase.Failed)
+        assertEquals(1, repo.uploadCalls.size)
+        assertEquals(1, repo.consumedPayloads.size)
+        assertEquals(10, repo.consumedPayloads.single().size)
+        assertEquals(1, state.successes.size)
     }
 
     @Test
@@ -220,20 +223,18 @@ class UploadOrchestratorTest {
 
 private class FakeUploadSource(
     private val payloads: Map<String, ByteArray>,
-    private val failOversize: Boolean = false,
 ) : UploadSource {
     override suspend fun probe(sourceId: String): UploadSourceMetadata {
         val bytes = payloads[sourceId] ?: ByteArray(0)
-        return UploadSourceMetadata(displayName = sourceId, sizeBytes = bytes.size.toLong(), mimeType = "application/octet-stream")
+        return UploadSourceMetadata(
+            displayName = sourceId,
+            sizeBytes = bytes.size.toLong(),
+            mimeType = "application/octet-stream"
+        )
     }
 
-    override suspend fun readBytes(sourceId: String, maxBytes: Long): ByteArray {
-        val bytes = payloads[sourceId] ?: throw IllegalStateException("no payload for $sourceId")
-        if (failOversize && bytes.size.toLong() > maxBytes) {
-            throw UploadTooLargeException(bytes.size.toLong(), maxBytes)
-        }
-        return bytes
-    }
+    override suspend fun openStream(sourceId: String): InputStream =
+        ByteArrayInputStream(payloads[sourceId] ?: throw IllegalStateException("no payload for $sourceId"))
 }
 
 private class SuspendingUploadSource(
@@ -245,12 +246,12 @@ private class SuspendingUploadSource(
         val bytes = ready[sourceId] ?: ByteArray(0)
         return UploadSourceMetadata(displayName = sourceId, sizeBytes = bytes.size.toLong(), mimeType = null)
     }
-    override suspend fun readBytes(sourceId: String, maxBytes: Long): ByteArray {
+    override suspend fun openStream(sourceId: String): InputStream {
         if (sourceId in suspendForever) {
             readingB.complete(Unit)
             awaitCancellation()
         }
-        return ready[sourceId] ?: ByteArray(0)
+        return ByteArrayInputStream(ready[sourceId] ?: ByteArray(0))
     }
 }
 
@@ -258,6 +259,7 @@ private class FakeFileRepository(
     private val uploadOutcomes: MutableList<FileOperationResult<FileUploadResult>>,
 ) : FileRepository {
     val uploadCalls = mutableListOf<FileUploadRequest>()
+    val consumedPayloads = mutableListOf<ByteArray>()
 
     override suspend fun listFiles(path: String) =
         FileOperationResult.Ok(FileList(path = path, files = emptyList()))
@@ -267,9 +269,12 @@ private class FakeFileRepository(
         FileOperationResult.Ok<List<Symbol>>(emptyList())
     override suspend fun writeFile(request: FileWriteRequest) =
         FileOperationResult.Ok(FileWriteResult(path = request.path, hash = null))
+    override suspend fun createDirectory(path: String) = FileOperationResult.Ok(Unit)
+    override suspend fun renameFile(fromPath: String, toPath: String) = FileOperationResult.Ok(Unit)
     override suspend fun deleteFile(path: String) = FileOperationResult.Ok(Unit)
     override suspend fun uploadFile(request: FileUploadRequest): FileOperationResult<FileUploadResult> {
         uploadCalls += request
+        consumedPayloads += request.openStream().use { it.readBytes() }
         return uploadOutcomes.removeAt(0)
     }
     override suspend fun capabilities() = FileCapabilities(canUpload = true)

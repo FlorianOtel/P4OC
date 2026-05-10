@@ -1,18 +1,18 @@
 package dev.blazelight.p4oc.ui.components.chat
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -20,12 +20,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.*
+import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
+import dev.blazelight.p4oc.ui.components.toolwidgets.ToolGroupWidget
+import dev.blazelight.p4oc.ui.components.toolwidgets.ToolWidgetState
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.components.toolwidgets.ToolGroupWidget
-import dev.blazelight.p4oc.ui.components.toolwidgets.ToolWidgetState
-import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 
 @Composable
 fun ChatMessage(
@@ -48,7 +48,38 @@ fun ChatMessage(
         if (isUser) {
             UserMessage(messageWithParts)
         } else {
-            AssistantMessage(
+            AssistantMessages(
+                messagesWithParts = listOf(messageWithParts),
+                onToolApprove = onToolApprove,
+                onToolDeny = onToolDeny,
+                onToolAlways = onToolAlways,
+                onOpenSubSession = onOpenSubSession,
+                defaultToolWidgetState = defaultToolWidgetState,
+                pendingPermissionsByCallId = pendingPermissionsByCallId,
+                onRevert = onRevert
+            )
+        }
+    }
+}
+
+@Composable
+fun AssistantMessages(
+    messagesWithParts: List<MessageWithParts>,
+    onToolApprove: (String) -> Unit,
+    onToolDeny: (String) -> Unit,
+    onToolAlways: (String) -> Unit,
+    onOpenSubSession: ((String) -> Unit)? = null,
+    defaultToolWidgetState: ToolWidgetState = ToolWidgetState.COMPACT,
+    pendingPermissionsByCallId: Map<String, Permission> = emptyMap(),
+    onRevert: ((String) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.hairline)
+    ) {
+        messagesWithParts.forEach { messageWithParts ->
+            AssistantMessageContent(
                 messageWithParts = messageWithParts,
                 onToolApprove = onToolApprove,
                 onToolDeny = onToolDeny,
@@ -73,7 +104,7 @@ private fun UserMessage(messageWithParts: MessageWithParts) {
         .filterIsInstance<Part.Text>()
         .filter { !it.synthetic && !it.ignored }
     val text = textParts.joinToString("\n") { it.text }
-    
+
     // Don't render anything if there's no visible text
     if (text.isBlank()) return
 
@@ -90,7 +121,7 @@ private fun UserMessage(messageWithParts: MessageWithParts) {
                 .fillMaxHeight()
                 .background(theme.primary)
         )
-        
+
         // Content with distinct background - use primary tint for better contrast
         Box(
             modifier = Modifier
@@ -115,7 +146,7 @@ private fun UserMessage(messageWithParts: MessageWithParts) {
 }
 
 @Composable
-private fun AssistantMessage(
+private fun AssistantMessageContent(
     messageWithParts: MessageWithParts,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
@@ -153,10 +184,9 @@ private fun AssistantMessage(
             add(PartGroupItem.Tools(currentToolBatch.toList()))
         }
     }
-    
+
     Column(
-        modifier = Modifier
-            .fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Spacing.hairline)
     ) {
         // Render part groups in order
@@ -171,7 +201,7 @@ private fun AssistantMessage(
                         onToolDeny = onToolDeny,
                         onOpenSubSession = onOpenSubSession
                     )
-                    
+
                     // Render inline permission prompts for tools with pending permissions
                     group.tools.forEach { tool ->
                         tool.callID?.let { callId ->
@@ -285,7 +315,6 @@ private fun TextPart(part: Part.Text) {
         ) {
             StreamingMarkdown(
                 text = part.text,
-                isStreaming = part.isStreaming,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -302,7 +331,7 @@ private fun ReasoningPart(part: Part.Reasoning) {
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var expanded by remember { mutableStateOf(false) }
-    
+
     val thinkingDuration = part.time?.let { time ->
         val durationMs = (time.end ?: System.currentTimeMillis()) - time.start
         when {
@@ -311,7 +340,7 @@ private fun ReasoningPart(part: Part.Reasoning) {
             else -> "${durationMs / 60000}m ${(durationMs % 60000) / 1000}s"
         }
     }
-    
+
     val isThinking = part.time?.end == null
 
     Surface(
@@ -335,14 +364,14 @@ private fun ReasoningPart(part: Part.Reasoning) {
                         tint = theme.warning
                     )
                 }
-                
+
                 Text(
                     text = if (isThinking) "Thinking..." else "Reasoning",
                     style = MaterialTheme.typography.labelSmall,
                     color = theme.warning,
                     modifier = Modifier.weight(1f)
                 )
-                
+
                 thinkingDuration?.let { duration ->
                     Text(
                         text = duration,
@@ -350,7 +379,7 @@ private fun ReasoningPart(part: Part.Reasoning) {
                         color = theme.textMuted
                     )
                 }
-                
+
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = if (expanded) "Collapse" else "Expand",
@@ -358,7 +387,7 @@ private fun ReasoningPart(part: Part.Reasoning) {
                     tint = theme.textMuted
                 )
             }
-            
+
             if (expanded && part.text.isNotEmpty()) {
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = Spacing.xs),
@@ -398,7 +427,7 @@ private fun FilePart(part: Part.File) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Default.AttachFile, 
+                Icons.Default.AttachFile,
                 contentDescription = stringResource(R.string.cd_attach_file),
                 modifier = Modifier.size(Sizing.iconXs),
                 tint = theme.textMuted
@@ -423,7 +452,7 @@ private fun FilePart(part: Part.File) {
 private fun CompactPatchPart(part: Part.Patch) {
     val theme = LocalOpenCodeTheme.current
     var expanded by remember { mutableStateOf(false) }
-    
+
     Surface(
         onClick = { expanded = !expanded },
         color = theme.backgroundElement,
@@ -436,7 +465,7 @@ private fun CompactPatchPart(part: Part.Patch) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(
-                    Icons.Default.Description, 
+                    Icons.Default.Description,
                     contentDescription = stringResource(R.string.cd_diff_icon),
                     modifier = Modifier.size(Sizing.iconXs),
                     tint = theme.accent
@@ -454,7 +483,7 @@ private fun CompactPatchPart(part: Part.Patch) {
                     tint = theme.textMuted
                 )
             }
-            
+
             if (expanded) {
                 part.files.forEach { file ->
                     Text(

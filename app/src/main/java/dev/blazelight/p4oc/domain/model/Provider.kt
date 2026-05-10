@@ -2,6 +2,9 @@ package dev.blazelight.p4oc.domain.model
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
 // ============================================================================
 // Provider
@@ -111,10 +114,20 @@ data class Command(
     val description: String? = null,
     val agent: String? = null,
     val model: String? = null,
-    val template: String? = null,  // Can be null for MCP commands
+    val template: String? = null, // Can be null for MCP commands
     val subtask: Boolean = false,
-    val mcp: Boolean = false
+    val mcp: Boolean = false,
+    val source: CommandSource = CommandSource.Custom
 )
+
+@Serializable
+enum class CommandSource {
+    BuiltIn,
+    Skill,
+    Mcp,
+    Custom,
+    Subtask
+}
 
 // ============================================================================
 // Todo
@@ -138,7 +151,18 @@ data class Symbol(
     val kind: Int,
     val uri: String,
     val range: SymbolRange
-)
+) {
+    val path: String = uri.toWorkspaceRelativePath()
+}
+
+private fun String.toWorkspaceRelativePath(): String {
+    if (!startsWith("file://", ignoreCase = true)) return this
+    val uri = runCatching { URI(this) }.getOrNull() ?: return this
+    val rawPath = uri.rawPath?.removePrefix("/").orEmpty()
+    return rawPath.split("/").joinToString("/") { segment ->
+        URLDecoder.decode(segment, StandardCharsets.UTF_8.name())
+    }
+}
 
 @Serializable
 data class SymbolRange(
@@ -181,5 +205,5 @@ data class Pty(
     val args: List<String>,
     val cwd: String,
     val status: String,
-    val pid: Int? = null  // Server may return null for pid
+    val pid: Int? = null // Server may return null for pid
 )

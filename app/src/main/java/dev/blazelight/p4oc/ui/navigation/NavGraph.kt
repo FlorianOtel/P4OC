@@ -1,17 +1,14 @@
 package dev.blazelight.p4oc.ui.navigation
 
-import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.navArgument
 import dev.blazelight.p4oc.ui.screens.server.ServerScreen
-import dev.blazelight.p4oc.ui.screens.settings.SettingsScreen
 import dev.blazelight.p4oc.ui.screens.settings.ProviderConfigScreen
+import dev.blazelight.p4oc.ui.screens.settings.SettingsScreen
 import dev.blazelight.p4oc.ui.screens.settings.VisualSettingsScreen
 import dev.blazelight.p4oc.ui.screens.setup.SetupScreen
 import dev.blazelight.p4oc.ui.tabs.MainTabScreen
@@ -135,7 +132,7 @@ fun NavGraph(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
-        
+
         composable(Screen.VisualSettings.route) {
             VisualSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }

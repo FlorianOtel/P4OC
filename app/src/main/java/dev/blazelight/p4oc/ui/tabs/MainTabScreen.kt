@@ -1,7 +1,7 @@
 @file:Suppress("DEPRECATION") // LocalLifecycleOwner – platform version until lifecycle-runtime-compose upgrade
+
 package dev.blazelight.p4oc.ui.tabs
 
-import dev.blazelight.p4oc.core.log.AppLog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
@@ -15,32 +15,35 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import dev.blazelight.p4oc.core.datastore.SettingsDataStore
+import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.ConnectionState
 import dev.blazelight.p4oc.core.network.safeApiCall
 import dev.blazelight.p4oc.data.remote.dto.CreatePtyRequest
+import dev.blazelight.p4oc.data.session.SessionRepositoryProvider
+import dev.blazelight.p4oc.data.session.presence
 import dev.blazelight.p4oc.domain.model.SessionConnectionState
-import dev.blazelight.p4oc.core.datastore.ConnectionSettings
-import dev.blazelight.p4oc.core.datastore.SettingsDataStore
+import dev.blazelight.p4oc.domain.model.SessionStatus
 import dev.blazelight.p4oc.domain.server.ServerRef
+import dev.blazelight.p4oc.domain.session.SessionId
+import dev.blazelight.p4oc.domain.workspace.Workspace
 import dev.blazelight.p4oc.ui.components.TuiAlertDialog
 import dev.blazelight.p4oc.ui.components.TuiTextButton
 import dev.blazelight.p4oc.ui.navigation.Screen
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.TuiShapes
-import kotlinx.coroutines.delay
+import dev.blazelight.p4oc.ui.workspace.WorkspaceRepositoryOwner
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
@@ -58,107 +61,42 @@ fun MainTabScreen(
     val tabManager: TabManager = koinInject()
     val connectionManager: ConnectionManager = koinInject()
     val settingsDataStore: SettingsDataStore = koinInject()
+    val sessionRepositoryProvider: SessionRepositoryProvider = koinInject()
     val coroutineScope = rememberCoroutineScope()
     val theme = LocalOpenCodeTheme.current
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val connSettings by settingsDataStore.connectionSettings.collectAsState(initial = ConnectionSettings())
     val lifecycleOwner = LocalLifecycleOwner.current
-    
+
     val tabs by tabManager.tabs.collectAsState()
     val activeTabId by tabManager.activeTabId.collectAsState()
     val showTabWarning by tabManager.showTabWarning.collectAsState()
     val connectionState by connectionManager.connectionState.collectAsState()
-    
+
     var wasEverConnected by remember { mutableStateOf(false) }
-    var reconnectAttempted by remember { mutableStateOf(false) }
     var restoreError by remember { mutableStateOf<String?>(null) }
     var showFilesTabPrompt by remember { mutableStateOf(false) }
 
-    // Foreground resume: lightweight SSE reconnect without isConnected guard.
-    // When the app returns from background, the SSE connection is likely dead.
-    // We reset error counters and attempt reconnect before the error cascade fires.
+    // Foreground resume is delegated to ConnectionManager so reconnect policy
+    // has one owner instead of competing UI timers and SSE retry callbacks.
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            val eventSource = connectionManager.getEventSource()
-            val state = connectionManager.connectionState.value
-            if (eventSource != null && state !is ConnectionState.Connected && state !is ConnectionState.Connecting) {
-                AppLog.d(TAG, "Foreground resume: SSE state is $state, attempting reconnect")
-                eventSource.resetConsecutiveErrors()
-                connectionManager.reconnectSse(reason = "app_foreground")
-            }
+            connectionManager.onAppForegrounded()
         }
     }
 
-    // Connection state error handling with reconnect grace period.
-    // Instead of navigating away immediately on Disconnected/Error,
-    // we attempt SSE reconnection first and only escalate after failure.
+    // ConnectionManager owns SSE retry timeout and escalation. The UI only
+    // reacts to terminal disconnected states after a successful connection.
     LaunchedEffect(connectionState) {
         if (connectionState is ConnectionState.Connected) {
             wasEverConnected = true
-            reconnectAttempted = false
             return@LaunchedEffect
         }
         if (!wasEverConnected) return@LaunchedEffect
-
-        when (connectionState) {
-            is ConnectionState.Disconnected -> {
-                // SSE exhausted all retries. If we have a connection object,
-                // try one last SSE reconnect before giving up.
-                if (tabs.isNotEmpty()) {
-                    if (!reconnectAttempted && connectionManager.hasConnection && connSettings.autoReconnect) {
-                        reconnectAttempted = true
-                        AppLog.w(TAG, "Disconnected state – attempting final SSE reconnect")
-                        connectionManager.reconnectSse(reason = "disconnected_recovery")
-                        delay(20_000)
-                        val currentState = connectionManager.connectionState.value
-                        if (currentState !is ConnectionState.Connected) {
-                            AppLog.e(TAG, "Final reconnect failed (state=$currentState), navigating to server screen")
-                            connectionManager.disconnect()
-                            onDisconnect()
-                        }
-                    } else {
-                        // Already tried recovery or no connection object — give up
-                        connectionManager.disconnect()
-                        onDisconnect()
-                    }
-                }
-            }
-
-            is ConnectionState.Error -> {
-                if (!connSettings.autoReconnect) {
-                    // Auto-reconnect disabled — disconnect immediately
-                    connectionManager.disconnect()
-                    onDisconnect()
-                    return@LaunchedEffect
-                }
-                // Transient error — SSE library is auto-retrying.
-                // Wait for the configured timeout before escalating.
-                delay(connSettings.reconnectTimeoutSeconds * 1000L)
-                val currentState = connectionManager.connectionState.value
-                if (currentState is ConnectionState.Error || currentState is ConnectionState.Disconnected) {
-                    // Still failing — try one explicit reconnect
-                    if (connectionManager.hasConnection) {
-                        connectionManager.reconnectSse(reason = "error_recovery")
-                        delay(10_000)
-                        val finalState = connectionManager.connectionState.value
-                        if (finalState !is ConnectionState.Connected) {
-                            connectionManager.disconnect()
-                            onDisconnect()
-                        }
-                    } else {
-                        connectionManager.disconnect()
-                        onDisconnect()
-                    }
-                }
-                // If state recovered to Connected during the delay, this coroutine
-                // will be cancelled by the LaunchedEffect(connectionState) relaunch.
-            }
-
-            else -> { /* Connected or Connecting - do nothing */ }
+        if (connectionState is ConnectionState.Disconnected && tabs.isNotEmpty()) {
+            connectionManager.disconnect()
+            onDisconnect()
         }
     }
-    
+
     LaunchedEffect(connectionManager.currentBaseUrl) {
         val baseUrl = connectionManager.currentBaseUrl ?: return@LaunchedEffect
         if (tabManager.shouldAttemptRestore()) {
@@ -188,7 +126,7 @@ fun MainTabScreen(
         val state = tabManager.saveState(ServerRef.fromEndpoint(baseUrl)) ?: return@LaunchedEffect
         settingsDataStore.setPersistedTabState(state)
     }
-    
+
     // Build tab titles and icons from current routes (updated inside pager pages).
     // Seed from startRoute so titles are correct even when pages are off-screen.
     val tabTitles = remember { mutableStateMapOf<String, String>() }
@@ -204,26 +142,95 @@ fun MainTabScreen(
         }
     }
     val tabConnectionStates = remember { mutableStateMapOf<String, SessionConnectionState>() }
+    val tabReadTokens = remember { mutableStateMapOf<String, Long>() }
     // Track current routes per tab (for PTY cleanup on tab close)
     val tabRoutes = remember { mutableStateMapOf<String, String>() }
     val tabPtyIds = remember { mutableStateMapOf<String, String>() }
-    
-    // Collect per-tab session connection states (busy/idle/awaiting)
-    tabs.forEach { tab ->
-        val tabSessionState by tab.connectionState.collectAsState()
-        LaunchedEffect(tabSessionState) {
-            if (tabSessionState != null) {
-                tabConnectionStates[tab.id] = tabSessionState!!
-            } else {
-                tabConnectionStates.remove(tab.id)
+    val connection = connectionManager.connection.collectAsState().value
+    val baseUrl = connection?.config?.url
+    val generation = connection?.generation
+    val workspaceOwners = remember { mutableStateMapOf<String, WorkspaceRepositoryOwner>() }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            workspaceOwners.values.forEach { it.close() }
+            workspaceOwners.clear()
+        }
+    }
+
+    LaunchedEffect(tabs, baseUrl, generation) {
+        if (baseUrl == null || generation == null) {
+            workspaceOwners.values.forEach { it.close() }
+            workspaceOwners.clear()
+            return@LaunchedEffect
+        }
+
+        val liveTabIds = tabs.map { it.id }.toSet()
+        workspaceOwners.keys
+            .filter { it !in liveTabIds }
+            .forEach { removedTabId ->
+                workspaceOwners.remove(removedTabId)?.close()
+            }
+
+        tabs.forEach { tab ->
+            val workspace = Workspace(
+                server = ServerRef.fromEndpoint(baseUrl),
+                directory = tab.workspaceDirectory,
+            )
+            val currentOwner = workspaceOwners[tab.id]
+            if (currentOwner == null ||
+                currentOwner.workspace != workspace ||
+                currentOwner.generation != generation
+            ) {
+                currentOwner?.close()
+                workspaceOwners[tab.id] = WorkspaceRepositoryOwner(
+                    tabId = tab.id,
+                    workspace = workspace,
+                    generation = generation,
+                    sessionRepositoryProvider = sessionRepositoryProvider,
+                )
             }
         }
     }
-    
+
+    // Collect per-tab session presence outside page composition. HorizontalPager
+    // composes only the active page, but background chat/sub-agent tabs still need
+    // unread/busy updates when their repository state changes.
+    tabs.forEach { tab ->
+        val sessionId = tab.sessionId
+        val workspaceOwner = workspaceOwners[tab.id]
+        if (sessionId != null && workspaceOwner != null) {
+            val sessionState by workspaceOwner.sessionRepository
+                .sessionUiState(SessionId(sessionId))
+                .collectAsState()
+            LaunchedEffect(tab.id, activeTabId, sessionState.responseCompletedToken) {
+                if (tab.id == activeTabId) {
+                    tabReadTokens[tab.id] = sessionState.responseCompletedToken
+                }
+            }
+            LaunchedEffect(tab.id, sessionState) {
+                val readToken = tabReadTokens[tab.id] ?: sessionState.responseCompletedToken
+                val hasUnread = sessionState.responseCompletedToken > readToken && sessionState.status !is SessionStatus.Busy
+                tabConnectionStates[tab.id] = sessionState.presence(hasUnread = hasUnread)
+            }
+        } else {
+            val tabSessionState by tab.connectionState.collectAsState()
+            LaunchedEffect(tab.id, tabSessionState) {
+                if (tabSessionState != null) {
+                    tabConnectionStates[tab.id] = tabSessionState!!
+                } else {
+                    tabConnectionStates.remove(tab.id)
+                    tabReadTokens.remove(tab.id)
+                }
+            }
+        }
+    }
+
     // Shared tab-close logic: PTY cleanup + state map cleanup + tabManager.closeTab.
     // Used by both TabBar close button and TabNavHost BackHandler.
     val closeTab: (String) -> Unit = remember(coroutineScope) {
-        { tabId: String ->
+        {
+                tabId: String ->
             coroutineScope.launch {
                 // Check if it's a terminal tab and delete the PTY
                 val route = tabRoutes[tabId]
@@ -275,7 +282,7 @@ fun MainTabScreen(
             restoreError = null
         }
     }
-    
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = theme.background,
@@ -395,13 +402,13 @@ fun MainTabScreen(
                     }
                 }
             }
-            
+
             // Pager state for swipe between tabs
             val pagerState = rememberPagerState(
                 initialPage = tabs.indexOfFirst { it.id == activeTabId }.coerceAtLeast(0),
                 pageCount = { tabs.size }
             )
-            
+
             // Sync activeTabId -> pager (when tab clicked or closed)
             LaunchedEffect(activeTabId, tabs.size) {
                 val index = tabs.indexOfFirst { it.id == activeTabId }
@@ -409,7 +416,7 @@ fun MainTabScreen(
                     pagerState.animateScrollToPage(index)
                 }
             }
-            
+
             // Sync pager -> activeTabId (when user swipes)
             LaunchedEffect(pagerState.settledPage) {
                 tabs.getOrNull(pagerState.settledPage)?.let { tab ->
@@ -418,10 +425,10 @@ fun MainTabScreen(
                     }
                 }
             }
-            
+
             // Tab content area with HorizontalPager for swipe between tabs
             val saveableStateHolder = rememberSaveableStateHolder()
-            
+
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.weight(1f),
@@ -431,7 +438,7 @@ fun MainTabScreen(
                 tabs.getOrNull(pageIndex)?.let { tab ->
                     saveableStateHolder.SaveableStateProvider(tab.id) {
                         val navController = rememberNavController()
-                        
+
                         // Track route for title/icon
                         val backStackEntry by navController.currentBackStackEntryAsState()
                         LaunchedEffect(backStackEntry?.destination?.route, tab.sessionTitle) {
@@ -453,48 +460,64 @@ fun MainTabScreen(
                                 tabRoutes[tab.id] = Screen.Terminal.createRoute(ptyId)
                             }
                         }
-                        
+
                         val isActive = tab.id == activeTabId
-                        TabNavHost(
-                            navController = navController,
-                            tabManager = tabManager,
-                            tabId = tab.id,
-                            onDisconnect = onDisconnect,
-                            onCloseTab = { closeTab(tab.id) },
-                            startRoute = tab.startRoute,
-                            onNewFilesTab = {
-                                requestFilesTab()
-                            },
-                            onNewTerminalTab = {
-                                coroutineScope.launch {
-                                    val api = connectionManager.getApi() ?: run {
-                                        AppLog.e(TAG, "Cannot create terminal: not connected")
-                                        snackbarHostState.showSnackbar("Not connected to server")
-                                        return@launch
-                                    }
-                                    val result = safeApiCall { api.createPtySession(CreatePtyRequest()) }
-                                    when (result) {
-                                        is ApiResult.Success -> {
-                                            val ptyId = result.data.id
-                                            tabManager.createTab(
-                                                startRoute = Screen.Terminal.createRoute(ptyId),
-                                                workspaceDirectory = tab.workspaceDirectory,
-                                                focus = true,
-                                            )
+                        val workspaceOwner = workspaceOwners[tab.id]
+                        if (workspaceOwner != null) {
+                            TabNavHost(
+                                navController = navController,
+                                tabManager = tabManager,
+                                tabId = tab.id,
+                                onDisconnect = onDisconnect,
+                                onCloseTab = { closeTab(tab.id) },
+                                startRoute = tab.startRoute,
+                                workspaceOwner = workspaceOwner,
+                                onNewFilesTab = {
+                                    requestFilesTab()
+                                },
+                                onNewTerminalTab = {
+                                    coroutineScope.launch {
+                                        val api = connectionManager.getApi() ?: run {
+                                            AppLog.e(TAG, "Cannot create terminal: not connected")
+                                            snackbarHostState.showSnackbar("Not connected to server")
+                                            return@launch
                                         }
-                                        is ApiResult.Error -> {
-                                            AppLog.e(TAG, "Failed to create PTY: ${result.message}")
-                                            snackbarHostState.showSnackbar("Failed to create terminal: ${result.message}")
+                                        val result = safeApiCall { api.createPtySession(CreatePtyRequest()) }
+                                        when (result) {
+                                            is ApiResult.Success -> {
+                                                val ptyId = result.data.id
+                                                tabManager.createTab(
+                                                    startRoute = Screen.Terminal.createRoute(ptyId),
+                                                    workspaceDirectory = tab.workspaceDirectory,
+                                                    focus = true,
+                                                )
+                                            }
+                                            is ApiResult.Error -> {
+                                                AppLog.e(TAG, "Failed to create PTY: ${result.message}")
+                                                snackbarHostState.showSnackbar(
+                                                    "Failed to create terminal: ${result.message}"
+                                                )
+                                            }
                                         }
                                     }
+                                },
+                                isActiveTab = isActive,
+                                onConnectionStateChanged = { state ->
+                                    tab.updateConnectionState(state)
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                if (baseUrl == null || generation == null) {
+                                    Text(
+                                        text = "Not connected to server",
+                                        color = theme.textMuted,
+                                        modifier = Modifier.align(Alignment.Center),
+                                    )
                                 }
-                            },
-                            isActiveTab = isActive,
-                            onConnectionStateChanged = { state ->
-                                tab.updateConnectionState(state)
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            }
+                        }
                     }
                 }
             }

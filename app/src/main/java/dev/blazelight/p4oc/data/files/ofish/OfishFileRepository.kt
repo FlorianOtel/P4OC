@@ -43,6 +43,11 @@ internal class OfishFileRepository(
     override suspend fun writeFile(request: FileWriteRequest): FileOperationResult<FileWriteResult> =
         mutationClient.writeFile(request)
 
+    override suspend fun createDirectory(path: String): FileOperationResult<Unit> = mutationClient.createDirectory(path)
+
+    override suspend fun renameFile(fromPath: String, toPath: String): FileOperationResult<Unit> =
+        mutationClient.renameFile(fromPath, toPath)
+
     override suspend fun deleteFile(path: String): FileOperationResult<Unit> = mutationClient.deleteFile(path)
 
     override suspend fun uploadFile(request: FileUploadRequest): FileOperationResult<FileUploadResult> =
@@ -53,6 +58,8 @@ internal class OfishFileRepository(
         val mutationsAvailable = mutationClient.mutationCapabilities() is OfishProbeResult.Available
         return delegateCapabilities.copy(
             canWrite = mutationsAvailable,
+            canCreateDirectory = mutationsAvailable,
+            canRename = mutationsAvailable,
             canDelete = mutationsAvailable,
             canUpload = mutationsAvailable,
         )

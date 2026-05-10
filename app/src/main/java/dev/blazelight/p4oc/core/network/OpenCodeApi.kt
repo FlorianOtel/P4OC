@@ -238,7 +238,7 @@ interface OpenCodeApi {
 
     @GET("agent")
     suspend fun getAgents(): List<AgentDto>
-    
+
     @POST("model/active")
     suspend fun setActiveModel(@Body request: SetActiveModelRequest): Boolean
 

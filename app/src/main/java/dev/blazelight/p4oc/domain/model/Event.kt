@@ -19,7 +19,12 @@ sealed class OpenCodeEvent {
     data class PermissionReplied(val sessionID: String, val requestID: String, val reply: String) : OpenCodeEvent()
     data class QuestionAsked(val request: QuestionRequest) : OpenCodeEvent()
     data class TodoUpdated(val sessionID: String, val todos: List<Todo>) : OpenCodeEvent()
-    data class CommandExecuted(val name: String, val sessionID: String, val arguments: String, val messageID: String) : OpenCodeEvent()
+    data class CommandExecuted(
+        val name: String,
+        val sessionID: String,
+        val arguments: String,
+        val messageID: String
+    ) : OpenCodeEvent()
     data class FileEdited(val file: String) : OpenCodeEvent()
     data class FileWatcherUpdated(val file: String, val event: String) : OpenCodeEvent()
     data class VcsBranchUpdated(val branch: String?) : OpenCodeEvent()
@@ -49,10 +54,10 @@ sealed class OpenCodeEvent {
 sealed class SessionStatus {
     @Serializable
     data object Idle : SessionStatus()
-    
+
     @Serializable
     data object Busy : SessionStatus()
-    
+
     @Serializable
     data class Retry(val attempt: Int, val message: String, val next: Long) : SessionStatus()
 }

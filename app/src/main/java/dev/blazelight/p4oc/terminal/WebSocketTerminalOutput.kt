@@ -1,7 +1,7 @@
 package dev.blazelight.p4oc.terminal
 
-import dev.blazelight.p4oc.core.network.PtyWebSocketClient
 import com.termux.terminal.TerminalOutput
+import dev.blazelight.p4oc.core.network.PtyWebSocketClient
 
 /**
  * Bridge between TerminalEmulator and WebSocket.

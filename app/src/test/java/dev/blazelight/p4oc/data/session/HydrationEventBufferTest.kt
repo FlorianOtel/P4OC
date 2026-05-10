@@ -9,6 +9,8 @@ import dev.blazelight.p4oc.domain.workspace.Workspace
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 
 class HydrationEventBufferTest {
     private val workspace = Workspace(
@@ -40,6 +42,51 @@ class HydrationEventBufferTest {
 
         assertEquals(setOf("middle", "newest"), liveSnapshot.sessions.keys)
         assertFalse(liveSnapshot.sessions.containsKey("oldest"))
+    }
+
+    @Test
+    fun `clear removes buffered events`() {
+        val buffer = HydrationEventBuffer(capacity = 2)
+        buffer.buffer(OpenCodeEvent.SessionCreated(session("one")))
+        buffer.buffer(OpenCodeEvent.SessionCreated(session("two")))
+
+        buffer.clear()
+
+        assertEquals(0, buffer.size)
+        assertEquals(emptySet<String>(), buffer.replayOver(Snapshot(), reducer).sessions.keys)
+    }
+
+    @Test
+    fun `replay uses snapshot while concurrent buffer can continue`() {
+        val replayStarted = CountDownLatch(1)
+        val finishReplay = CountDownLatch(1)
+        val reducer = object : SessionReducer(workspace) {
+            override fun reduce(snapshot: Snapshot, event: OpenCodeEvent): Snapshot {
+                replayStarted.countDown()
+                finishReplay.await()
+                return super.reduce(snapshot, event)
+            }
+        }
+        val buffer = HydrationEventBuffer(capacity = 4)
+        buffer.buffer(OpenCodeEvent.SessionCreated(session("first")))
+        val replayError = AtomicReference<Throwable?>()
+        val replayThread = Thread {
+            try {
+                buffer.replayOver(Snapshot(), reducer)
+            } catch (t: Throwable) {
+                replayError.set(t)
+            }
+        }
+
+        replayThread.start()
+        replayStarted.await()
+        buffer.buffer(OpenCodeEvent.SessionCreated(session("second")))
+        finishReplay.countDown()
+        replayThread.join()
+
+        replayError.get()?.let { throw AssertionError("Replay failed", it) }
+        assertEquals(2, buffer.size)
+        assertEquals(setOf("first", "second"), buffer.replayOver(Snapshot(), this.reducer).sessions.keys)
     }
 
     private fun workspaceSession(workspace: Workspace, session: Session): WorkspaceSession = WorkspaceSession(

@@ -39,11 +39,11 @@ class ProjectsViewModel constructor(
             val result = safeApiCall { api.listProjects() }
             when (result) {
                 is ApiResult.Success -> {
-                    _uiState.update { 
+                    _uiState.update {
                         it.copy(
-                            isLoading = false, 
+                            isLoading = false,
                             projects = result.data.sortedByDescending { p -> p.time.created }
-                        ) 
+                        )
                     }
                 }
                 is ApiResult.Error -> {

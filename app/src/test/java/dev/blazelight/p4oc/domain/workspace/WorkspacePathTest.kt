@@ -13,60 +13,10 @@ class WorkspacePathTest {
     }
 
     @Test
-    fun `relative attachment url round trips spaces unicode and dots`() {
-        val paths = listOf(
-            "src/My File.kt",
-            "docs/ümlaut/こんにちは.md",
-            "./a..b/.hidden file.txt",
-            "src/a?b#c.kt",
-        )
-
-        paths.forEach { rawPath ->
-            val path = WorkspacePath.Relative(RelativePath(rawPath))
-
-            assertEquals(path, WorkspacePathAttachmentCodec.parseFromServer(path.toAttachmentUrl()))
-        }
-    }
-
-    @Test
-    fun `relative attachment url uses empty-host file scheme for prompt parts`() {
-        val path = WorkspacePath.Relative(RelativePath("src/My File.kt"))
-
-        assertEquals("file:///src/My%20File.kt", path.toAttachmentUrl())
-    }
-
-    @Test
-    fun `relative attachment url round trip returns original path`() {
-        val path = WorkspacePath.Relative(RelativePath("src/nested/My File.kt"))
-
-        assertEquals(path, WorkspacePathAttachmentCodec.parseFromServer(path.toAttachmentUrl()))
-    }
-
-    @Test
-    fun `server symbol uri parses encoded path query and fragment characters`() {
-        val uri = "file://src/My%20File%3F%23.kt"
-
-        assertEquals(
-            WorkspacePath.Relative(RelativePath("src/My File?#.kt")),
-            WorkspacePathAttachmentCodec.parseFromServer(uri),
-        )
-    }
-
-    @Test
-    fun `server symbol uri preserves unencoded query and fragment as path characters`() {
-        val uri = "file://src/My%20File.kt?symbol%3Fquery#heading%23one"
-
-        assertEquals(
-            WorkspacePath.Relative(RelativePath("src/My File.kt?symbol?query#heading#one")),
-            WorkspacePathAttachmentCodec.parseFromServer(uri),
-        )
-    }
-
-    @Test
     fun `relative workspace path rejects invalid server values`() {
         listOf("", "   ", "/absolute/path").forEach { value ->
             assertThrows(IllegalArgumentException::class.java) {
-                WorkspacePathAttachmentCodec.parseFromServer(value)
+                RelativePath(value)
             }
         }
     }

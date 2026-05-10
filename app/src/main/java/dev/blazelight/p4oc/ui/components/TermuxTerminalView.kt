@@ -24,10 +24,10 @@ import com.termux.view.TerminalViewClient
 import dev.blazelight.p4oc.core.log.AppLog
 
 class KeyInterceptingContainer(context: Context) : FrameLayout(context) {
-    
+
     var onKeyInput: ((String) -> Unit)? = null
     var terminalView: TerminalView? = null
-    
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN && terminalView?.mEmulator != null) {
             val handled = handleKeyDown(event)
@@ -35,10 +35,10 @@ class KeyInterceptingContainer(context: Context) : FrameLayout(context) {
         }
         return super.dispatchKeyEvent(event)
     }
-    
+
     private fun handleKeyDown(event: KeyEvent): Boolean {
         val keyCode = event.keyCode
-        
+
         val code = when (keyCode) {
             KeyEvent.KEYCODE_ENTER -> "\r"
             KeyEvent.KEYCODE_DEL -> "\u007f"
@@ -56,12 +56,12 @@ class KeyInterceptingContainer(context: Context) : FrameLayout(context) {
             KeyEvent.KEYCODE_INSERT -> "\u001b[2~"
             else -> null
         }
-        
+
         if (code != null) {
             onKeyInput?.invoke(code)
             return true
         }
-        
+
         if (event.isCtrlPressed) {
             val char = event.unicodeChar and 0x1f
             if (char > 0) {
@@ -69,54 +69,54 @@ class KeyInterceptingContainer(context: Context) : FrameLayout(context) {
                 return true
             }
         }
-        
+
         val unicodeChar = event.unicodeChar
         if (unicodeChar != 0) {
             onKeyInput?.invoke(unicodeChar.toChar().toString())
             return true
         }
-        
+
         return false
     }
 }
 
 class TerminalInputView(context: Context) : View(context) {
-    
+
     var onKeyInput: ((String) -> Unit)? = null
-    
+
     init {
         isFocusable = true
         isFocusableInTouchMode = true
     }
-    
+
     override fun onCheckIsTextEditor(): Boolean = true
-    
+
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
         outAttrs.inputType = InputType.TYPE_NULL
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_ACTION_NONE
-        
+
         val view = this
         return object : BaseInputConnection(view, false) {
             override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
                 text?.toString()?.let { onKeyInput?.invoke(it) }
                 return true
             }
-            
+
             override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
                 return true
             }
-            
+
             override fun finishComposingText(): Boolean {
                 return true
             }
-            
+
             override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
                 if (beforeLength > 0) {
                     repeat(beforeLength) { onKeyInput?.invoke("\u007f") }
                 }
                 return true
             }
-            
+
             override fun sendKeyEvent(event: KeyEvent): Boolean {
                 if (event.action == KeyEvent.ACTION_DOWN) {
                     when (event.keyCode) {
@@ -139,7 +139,7 @@ class TerminalInputView(context: Context) : View(context) {
             }
         }
     }
-    
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val code = when (keyCode) {
             KeyEvent.KEYCODE_ENTER -> "\r"
@@ -153,18 +153,18 @@ class TerminalInputView(context: Context) : View(context) {
             KeyEvent.KEYCODE_DPAD_LEFT -> "\u001b[D"
             else -> null
         }
-        
+
         if (code != null) {
             onKeyInput?.invoke(code)
             return true
         }
-        
+
         val unicodeChar = event.unicodeChar
         if (unicodeChar != 0) {
             onKeyInput?.invoke(unicodeChar.toChar().toString())
             return true
         }
-        
+
         return super.onKeyDown(keyCode, event)
     }
 }
@@ -174,36 +174,40 @@ fun TermuxTerminalView(
     emulator: TerminalEmulator?,
     onKeyInput: (String) -> Unit,
     modifier: Modifier = Modifier,
-    onTerminalViewReady: ((TerminalView) -> Unit)? = null
+    onTerminalViewReady: ((TerminalView) -> Unit)? = null,
+    onTerminalSizeChanged: ((rows: Int, cols: Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    
+
     val terminalViewClient = remember(onKeyInput) {
         createTerminalViewClient(context, onKeyInput)
     }
-    
+
     AndroidView(
         factory = { ctx ->
             val container = FrameLayout(ctx)
-            
+
             val terminalView = TerminalView(ctx, null).apply {
                 setTextSize(14)
                 setTypeface(Typeface.MONOSPACE)
                 setTerminalViewClient(terminalViewClient)
                 keepScreenOn = true
             }
-            
+
             val inputView = TerminalInputView(ctx).apply {
                 this.onKeyInput = onKeyInput
                 layoutParams = FrameLayout.LayoutParams(1, 1)
             }
-            
-            container.addView(terminalView, ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
+
+            container.addView(
+                terminalView,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
             container.addView(inputView)
-            
+
             terminalView.setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_UP) {
                     inputView.requestFocus()
@@ -212,7 +216,7 @@ fun TermuxTerminalView(
                 }
                 false
             }
-            
+
             container.tag = Pair(terminalView, inputView)
             inputView.requestFocus()
             container
@@ -220,10 +224,10 @@ fun TermuxTerminalView(
         update = { container ->
             @Suppress("UNCHECKED_CAST")
             val views = container.tag as? Pair<TerminalView, TerminalInputView>
-            
+
             // Update the input callback on recomposition to avoid stale callbacks
             views?.second?.onKeyInput = onKeyInput
-            
+
             emulator?.let { emu ->
                 views?.first?.let { view ->
                     // Update the terminal view client to use the new callback
@@ -231,17 +235,46 @@ fun TermuxTerminalView(
                     view.mEmulator = emu
                     view.onScreenUpdated()
                     onTerminalViewReady?.invoke(view)
-                    
+                    notifyTerminalSizeChanged(view, onTerminalSizeChanged)
+
                     // Add layout listener to handle keyboard show/hide and orientation changes
                     view.viewTreeObserver.addOnGlobalLayoutListener {
-                        // Re-notify on layout changes so ViewModel can recalculate size
-                        onTerminalViewReady?.invoke(view)
+                        notifyTerminalSizeChanged(view, onTerminalSizeChanged)
                     }
                 }
             }
         },
         modifier = modifier
     )
+}
+
+private fun notifyTerminalSizeChanged(
+    view: TerminalView,
+    onTerminalSizeChanged: ((rows: Int, cols: Int) -> Unit)?,
+) {
+    val width = view.width
+    val height = view.height
+    if (width <= 0 || height <= 0) {
+        AppLog.w("TerminalView", "View not measured yet, skipping resize")
+        return
+    }
+
+    val renderer = view.mRenderer
+    if (renderer == null) {
+        AppLog.w("TerminalView", "Renderer not initialized, skipping resize")
+        return
+    }
+
+    val charWidth = renderer.getFontWidth()
+    val charLineSpacing = renderer.getFontLineSpacing()
+    if (charWidth <= 0 || charLineSpacing <= 0) {
+        AppLog.w("TerminalView", "Invalid character dimensions, skipping resize")
+        return
+    }
+
+    val cols = maxOf(4, (width / charWidth).toInt())
+    val rows = maxOf(4, height / charLineSpacing)
+    onTerminalSizeChanged?.invoke(rows, cols)
 }
 
 private fun createTerminalViewClient(

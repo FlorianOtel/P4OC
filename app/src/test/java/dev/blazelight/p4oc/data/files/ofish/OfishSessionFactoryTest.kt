@@ -105,6 +105,25 @@ class OfishSessionFactoryTest {
         assertEquals(listOf("created-1"), client.deletedIds)
     }
 
+    @Test
+    fun `withSession sweeps stale sessions once per workspace interval`() = runTest {
+        var now = 7 * 60 * 60 * 1000L
+        val stale = sessionDto("stale", "__ofish_probe_1000_old")
+        val client = FakeOfishWorkspaceClient(listSessionsResult = listOf(stale))
+        val factory = OfishSessionFactory(client, nowMs = { now }, shortId = { "abc" })
+
+        factory.withSession("probe") { }
+        factory.withSession("probe") { }
+
+        assertEquals(listOf("stale", "created-1", "created-2"), client.deletedIds)
+        assertEquals(1, client.listWorkspaceDirectories.size)
+
+        now += 31 * 60 * 1000L
+        factory.withSession("probe") { }
+
+        assertEquals(2, client.listWorkspaceDirectories.size)
+    }
+
     private class FakeOfishWorkspaceClient(
         var listSessionsResult: List<SessionDto> = emptyList(),
     ) : OfishWorkspaceClient {

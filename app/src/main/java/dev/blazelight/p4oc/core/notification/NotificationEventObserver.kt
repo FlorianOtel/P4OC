@@ -1,24 +1,23 @@
 package dev.blazelight.p4oc.core.notification
 
-import dev.blazelight.p4oc.core.log.AppLog
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import dev.blazelight.p4oc.core.datastore.NotificationSettings
 import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.haptic.HapticFeedback
+import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.domain.model.OpenCodeEvent
 import dev.blazelight.p4oc.domain.model.SessionStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
-
 
 /**
  * Best-effort background notifications for permission/question events.
@@ -34,11 +33,11 @@ class NotificationEventObserver constructor(
     private val settingsDataStore: SettingsDataStore,
     private val hapticFeedback: HapticFeedback,
 ) : DefaultLifecycleObserver {
-    
+
     companion object {
         private const val TAG = "NotificationEventObserver"
     }
-    
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var isInForeground = true
 
@@ -46,23 +45,23 @@ class NotificationEventObserver constructor(
     private var cachedSettings = NotificationSettings()
 
     private val busySessions = mutableSetOf<String>()
-    
+
     fun start() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         observeEvents()
         observeSettings()
     }
-    
+
     fun stop() {
         ProcessLifecycleOwner.get().lifecycle.removeObserver(this)
         scope.cancel()
     }
-    
+
     override fun onStart(owner: LifecycleOwner) {
         isInForeground = true
         notificationHelper.clearNotifications()
     }
-    
+
     override fun onStop(owner: LifecycleOwner) {
         isInForeground = false
     }
@@ -74,7 +73,7 @@ class NotificationEventObserver constructor(
             }
         }
     }
-    
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeEvents() {
         scope.launch {
@@ -88,7 +87,7 @@ class NotificationEventObserver constructor(
                 }
         }
     }
-    
+
     private fun handleEventInBackground(event: OpenCodeEvent) {
         if (!cachedSettings.enabled) return
 

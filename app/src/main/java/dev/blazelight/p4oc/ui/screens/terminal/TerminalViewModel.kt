@@ -1,10 +1,11 @@
 package dev.blazelight.p4oc.ui.screens.terminal
 
 import android.content.Context
-import dev.blazelight.p4oc.core.log.AppLog
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.termux.terminal.TerminalEmulator
+import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.PtyWebSocketClient
@@ -15,17 +16,16 @@ import dev.blazelight.p4oc.domain.model.OpenCodeEvent
 import dev.blazelight.p4oc.terminal.PtyTerminalClient
 import dev.blazelight.p4oc.terminal.WebSocketTerminalOutput
 import dev.blazelight.p4oc.ui.navigation.Screen
-import com.termux.terminal.TerminalEmulator
-import com.termux.view.TerminalView
-import java.lang.ref.WeakReference
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
 
 /**
  * ViewModel for a single PTY terminal session.
@@ -52,63 +52,27 @@ class TerminalViewModel constructor(
     private val _uiState = MutableStateFlow(TerminalUiState())
     val uiState: StateFlow<TerminalUiState> = _uiState.asStateFlow()
 
+    private val _terminalInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 64)
+    val terminalInvalidations: SharedFlow<Unit> = _terminalInvalidations.asSharedFlow()
+
     private var emulator: TerminalEmulator? = null
     private var terminalOutput: WebSocketTerminalOutput? = null
     private var terminalClient: PtyTerminalClient? = null
-    private var terminalViewRef: WeakReference<TerminalView>? = null
     private var lastKnownCols = 0
     private var lastKnownRows = 0
     private val pendingResize = MutableStateFlow<Pair<Int, Int>?>(null)
 
-    fun setTerminalView(view: TerminalView) {
-        terminalViewRef = WeakReference(view)
-        // Calculate and apply proper terminal size based on view dimensions
-        view.post {
-            resizeTerminalToFit(view)
-        }
-    }
-    
-    private fun resizeTerminalToFit(view: TerminalView) {
-        val width = view.width
-        val height = view.height
-        
-        if (width <= 0 || height <= 0) {
-            AppLog.w(TAG, "View not measured yet, skipping resize")
-            return
-        }
-        
-        val renderer = view.mRenderer
-        if (renderer == null) {
-            AppLog.w(TAG, "Renderer not initialized, skipping resize")
-            return
-        }
-        
-        // Get actual character dimensions from TerminalRenderer (public API)
-        val charWidth = renderer.getFontWidth()
-        val charLineSpacing = renderer.getFontLineSpacing()
-        
-        if (charWidth <= 0 || charLineSpacing <= 0) {
-            AppLog.w(TAG, "Invalid character dimensions, skipping resize")
-            return
-        }
-        
-        // Calculate cols/rows exactly as Termux does
-        val cols = maxOf(4, (width / charWidth).toInt())
-        val rows = maxOf(4, height / charLineSpacing)
-        
-        // Skip resize if dimensions haven't changed
+    fun onTerminalSizeChanged(rows: Int, cols: Int) {
         if (cols == lastKnownCols && rows == lastKnownRows) {
             return
         }
-        
+
         lastKnownCols = cols
         lastKnownRows = rows
-        
-        AppLog.d(TAG, "Resizing terminal: ${cols}x${rows} (view: ${width}x${height}px, char: ${charWidth}x${charLineSpacing})")
-        
-        // Resize the local emulator
+
+        AppLog.d(TAG, "Resizing terminal: ${cols}x$rows")
         emulator?.resize(cols, rows)
-        view.onScreenUpdated()
+        requestTerminalInvalidation()
         pendingResize.value = rows to cols
     }
 
@@ -121,7 +85,7 @@ class TerminalViewModel constructor(
         observeWebSocketState()
         observeResizeRequests()
     }
-    
+
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private fun observeResizeRequests() {
         viewModelScope.launch {
@@ -137,7 +101,7 @@ class TerminalViewModel constructor(
                         )
                     }
                     when (result) {
-                        is ApiResult.Success -> AppLog.d(TAG, "PTY size updated to ${cols}x${rows}")
+                        is ApiResult.Success -> AppLog.d(TAG, "PTY size updated to ${cols}x$rows")
                         is ApiResult.Error -> AppLog.w(TAG, "Failed to update PTY size: ${result.message}")
                     }
                 }
@@ -167,7 +131,7 @@ class TerminalViewModel constructor(
     private fun initEmulator() {
         terminalClient = PtyTerminalClient(
             context = context,
-            onTextChanged = { /* View invalidated directly via postInvalidate */ },
+            onTextChanged = { requestTerminalInvalidation() },
             onTitleChanged = { title ->
                 AppLog.d(TAG, "Session title changed: $title")
             },
@@ -212,9 +176,7 @@ class TerminalViewModel constructor(
                 val em = emulator ?: return@collect
                 val bytes = data.toByteArray()
                 em.append(bytes, bytes.size)
-                // Invalidate the TerminalView directly on the UI thread
-                // instead of triggering Compose recomposition for every data chunk
-                terminalViewRef?.get()?.postInvalidate()
+                requestTerminalInvalidation()
             }
         }
     }
@@ -229,11 +191,13 @@ class TerminalViewModel constructor(
                     }
                     is PtyWebSocketClient.ConnectionState.Error -> {
                         AppLog.e(TAG, "WebSocket error: ${connectionState.message}")
-                        _uiState.update { it.copy(
-                            error = "Connection error: ${connectionState.message}",
-                            isConnected = false,
-                            isConnecting = false
-                        ) }
+                        _uiState.update {
+                            it.copy(
+                                error = "Connection error: ${connectionState.message}",
+                                isConnected = false,
+                                isConnecting = false
+                            )
+                        }
                     }
                     is PtyWebSocketClient.ConnectionState.Disconnected -> {
                         AppLog.d(TAG, "WebSocket disconnected")
@@ -262,7 +226,7 @@ class TerminalViewModel constructor(
                             val exitMessage = "\r\n[Process exited with code ${event.exitCode}]\r\n"
                             val bytes = exitMessage.toByteArray()
                             emulator?.append(bytes, bytes.size)
-                            terminalViewRef?.get()?.postInvalidate()
+                            requestTerminalInvalidation()
                             _uiState.update { it.copy(isExited = true) }
                         }
                     }
@@ -283,7 +247,11 @@ class TerminalViewModel constructor(
 
     fun clearTerminal() {
         emulator?.reset()
-        terminalViewRef?.get()?.postInvalidate()
+        requestTerminalInvalidation()
+    }
+
+    private fun requestTerminalInvalidation() {
+        _terminalInvalidations.tryEmit(Unit)
     }
 
     fun clearError() {
@@ -296,7 +264,6 @@ class TerminalViewModel constructor(
         emulator = null
         terminalClient = null
         terminalOutput = null
-        terminalViewRef = null
     }
 }
 

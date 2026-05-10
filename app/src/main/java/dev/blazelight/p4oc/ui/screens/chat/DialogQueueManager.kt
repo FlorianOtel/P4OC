@@ -4,10 +4,16 @@ import androidx.lifecycle.SavedStateHandle
 import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.domain.model.Permission
 import dev.blazelight.p4oc.domain.model.QuestionRequest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -17,9 +23,13 @@ import java.util.concurrent.ConcurrentLinkedQueue
  */
 class DialogQueueManager(
     private val savedStateHandle: SavedStateHandle,
-    private val json: Json
+    private val json: Json,
+    private val scope: CoroutineScope,
+    private val persistenceDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) {
     private val pendingQuestions = ConcurrentLinkedQueue<QuestionRequest>()
+    private var pendingQuestionPersistenceVersion = 0L
+    private var pendingQuestionsQueuePersistenceVersion = 0L
 
     private val _pendingQuestion = MutableStateFlow<QuestionRequest?>(null)
     val pendingQuestion: StateFlow<QuestionRequest?> = _pendingQuestion.asStateFlow()
@@ -67,9 +77,22 @@ class DialogQueueManager(
         }
     }
 
+    fun setPermissionsByCallId(permissions: Map<String, Permission>) {
+        _pendingPermissionsByCallId.value = permissions
+    }
+
     fun enqueueQuestion(request: QuestionRequest) {
         pendingQuestions.offer(request)
         showNextQuestion()
+    }
+
+    fun setPendingQuestion(request: QuestionRequest?) {
+        _pendingQuestion.value = request
+        if (request == null) {
+            clearPersistedPendingQuestion()
+        } else {
+            persistPendingQuestion(request)
+        }
     }
 
     fun clearPermission(permissionId: String) {
@@ -88,7 +111,7 @@ class DialogQueueManager(
 
     fun clearQuestion() {
         _pendingQuestion.value = null
-        savedStateHandle.remove<String>(KEY_PENDING_QUESTION)
+        clearPersistedPendingQuestion()
         showNextQuestion()
     }
 
@@ -96,20 +119,62 @@ class DialogQueueManager(
         if (_pendingQuestion.value == null) {
             pendingQuestions.poll()?.let { question ->
                 _pendingQuestion.value = question
-                // Persist to SavedStateHandle for process death survival
-                savedStateHandle[KEY_PENDING_QUESTION] = json.encodeToString(question)
+                persistPendingQuestion(question)
             }
         }
-        // Persist remaining queue
         persistQuestionsQueue()
     }
 
+    private fun persistPendingQuestion(request: QuestionRequest) {
+        val version = ++pendingQuestionPersistenceVersion
+        scope.launch {
+            val encoded = try {
+                withContext(persistenceDispatcher) {
+                    json.encodeToString(request)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                AppLog.e(TAG, "Failed to persist pending question", e)
+                if (version == pendingQuestionPersistenceVersion) {
+                    savedStateHandle.remove<String>(KEY_PENDING_QUESTION)
+                }
+                return@launch
+            }
+            if (version == pendingQuestionPersistenceVersion && _pendingQuestion.value == request) {
+                savedStateHandle[KEY_PENDING_QUESTION] = encoded
+            }
+        }
+    }
+
+    private fun clearPersistedPendingQuestion() {
+        pendingQuestionPersistenceVersion++
+        savedStateHandle.remove<String>(KEY_PENDING_QUESTION)
+    }
+
     private fun persistQuestionsQueue() {
-        val queueList = pendingQuestions.toList()
-        if (queueList.isNotEmpty()) {
-            savedStateHandle[KEY_PENDING_QUESTIONS_QUEUE] = json.encodeToString(queueList)
-        } else {
-            savedStateHandle.remove<String>(KEY_PENDING_QUESTIONS_QUEUE)
+        val version = ++pendingQuestionsQueuePersistenceVersion
+        scope.launch {
+            val encoded = try {
+                withContext(persistenceDispatcher) {
+                    pendingQuestions.toList().takeIf { it.isNotEmpty() }?.let { queueList ->
+                        json.encodeToString(queueList)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                AppLog.e(TAG, "Failed to persist pending questions queue", e)
+                if (version == pendingQuestionsQueuePersistenceVersion) {
+                    savedStateHandle.remove<String>(KEY_PENDING_QUESTIONS_QUEUE)
+                }
+                return@launch
+            }
+            if (version == pendingQuestionsQueuePersistenceVersion) {
+                if (encoded == null) {
+                    savedStateHandle.remove<String>(KEY_PENDING_QUESTIONS_QUEUE)
+                } else {
+                    savedStateHandle[KEY_PENDING_QUESTIONS_QUEUE] = encoded
+                }
+            }
         }
     }
 

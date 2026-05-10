@@ -12,12 +12,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 
 class WorkspaceFileRepositoryTest {
     @Test
     fun `listFiles uses dot at client boundary for root and returns empty UI path`() = runTest {
         val client = FakeFileWorkspaceClient(
-            files = listOf(FileNodeDto(name = "README.md", path = "README.md", absolute = "/repo/README.md", type = "file")),
+            files = listOf(
+                FileNodeDto(name = "README.md", path = "README.md", absolute = "/repo/README.md", type = "file")
+            ),
         )
         val repository = WorkspaceFileRepository(client)
 
@@ -106,22 +109,45 @@ class WorkspaceFileRepositoryTest {
     }
 
     @Test
+    fun `searchSymbols exposes decoded path for symbol file uris`() = runTest {
+        val client = FakeFileWorkspaceClient(
+            symbols = listOf(
+                symbolDto(
+                    "Main",
+                    uri = "file:///src/My%20File%20%25/%C3%BCmlaut/%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF/hash%23query%3F.kt",
+                )
+            )
+        )
+        val repository = WorkspaceFileRepository(client)
+
+        val result = repository.searchSymbols("Main") as FileOperationResult.Ok
+
+        assertEquals("src/My File %/ümlaut/こんにちは/hash#query?.kt", result.data.single().path)
+    }
+
+    @Test
     fun `mutations validate paths before returning unsupported`() = runTest {
         val repository = WorkspaceFileRepository(FakeFileWorkspaceClient())
 
         assertTrue(repository.writeFile(FileWriteRequest(path = "", content = "content")) is FileOperationResult.Failed)
         assertTrue(repository.deleteFile("../secret") is FileOperationResult.Failed)
 
-        val unsupported = repository.uploadFile(FileUploadRequest(path = "safe.txt", bytes = byteArrayOf(1)))
+        val unsupported = repository.uploadFile(
+            FileUploadRequest(
+                path = "safe.txt",
+                contentLength = 1,
+                openStream = { ByteArrayInputStream(byteArrayOf(1)) },
+            )
+        )
         assertTrue(unsupported is FileOperationResult.Failed)
         assertFalse(repository.capabilities().canUpload)
     }
 
-    private fun symbolDto(name: String): SymbolDto = SymbolDto(
+    private fun symbolDto(name: String, uri: String = "file:///repo/$name.kt"): SymbolDto = SymbolDto(
         name = name,
         kind = 1,
         location = SymbolLocationDto(
-            uri = "file:///repo/$name.kt",
+            uri = uri,
             range = RangeDto(
                 start = PositionDto(line = 0, character = 0),
                 end = PositionDto(line = 0, character = 1),

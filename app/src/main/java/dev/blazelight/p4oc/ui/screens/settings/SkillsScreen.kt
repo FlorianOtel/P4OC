@@ -4,38 +4,34 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import org.koin.androidx.compose.koinViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.safeApiCall
 import dev.blazelight.p4oc.ui.components.TuiAlertDialog
+import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
 import dev.blazelight.p4oc.ui.components.TuiTextButton
+import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
-import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
+import dev.blazelight.p4oc.ui.theme.Spacing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import dev.blazelight.p4oc.ui.theme.Spacing
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
-import dev.blazelight.p4oc.ui.components.TuiTopBar
+import org.koin.androidx.compose.koinViewModel
 
 data class SkillInfo(
     val name: String,
@@ -54,18 +50,17 @@ data class SkillsState(
     val selectedSkill: SkillInfo? = null
 )
 
-
 class SkillsViewModel constructor(
     private val connectionManager: ConnectionManager
 ) : ViewModel() {
-    
+
     private val _state = MutableStateFlow(SkillsState())
     val state: StateFlow<SkillsState> = _state.asStateFlow()
-    
+
     init {
         loadSkills()
     }
-    
+
     fun loadSkills() {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
@@ -104,16 +99,11 @@ class SkillsViewModel constructor(
             }
         }
     }
-    
+
     fun selectSkill(skill: SkillInfo?) {
         _state.update { it.copy(selectedSkill = skill) }
     }
-    
-    fun toggleSkill(skillName: String) {
-        // No-op: server API does not support toggling skills from client.
-        // Skills show read-only connection status from server.
-    }
-    
+
     fun clearError() {
         _state.update { it.copy(error = null) }
     }
@@ -127,7 +117,7 @@ fun SkillsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    
+
     // Show error in snackbar
     LaunchedEffect(state.error) {
         state.error?.let { error ->
@@ -138,7 +128,7 @@ fun SkillsScreen(
             viewModel.clearError()
         }
     }
-    
+
     val theme = LocalOpenCodeTheme.current
     Scaffold(
         containerColor = theme.background,
@@ -151,7 +141,11 @@ fun SkillsScreen(
                         onClick = { viewModel.loadSkills() },
                         modifier = Modifier.size(Sizing.iconButtonMd)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh), modifier = Modifier.size(Sizing.iconAction))
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.refresh),
+                            modifier = Modifier.size(Sizing.iconAction)
+                        )
                     }
                 }
             )
@@ -179,10 +173,10 @@ fun SkillsScreen(
                         modifier = Modifier.padding(bottom = Spacing.md)
                     )
                 }
-                
+
                 val connectedSkills = state.skills.filter { it.isEnabled }
                 val disconnectedSkills = state.skills.filter { !it.isEnabled }
-                
+
                 if (connectedSkills.isNotEmpty()) {
                     item {
                         val theme = LocalOpenCodeTheme.current
@@ -192,16 +186,15 @@ fun SkillsScreen(
                             color = theme.accent
                         )
                     }
-                    
+
                     items(connectedSkills, key = { it.name }) { skill ->
                         SkillCard(
                             skill = skill,
-                            onToggle = { viewModel.toggleSkill(skill.name) },
                             onClick = { viewModel.selectSkill(skill) }
                         )
                     }
                 }
-                
+
                 if (disconnectedSkills.isNotEmpty()) {
                     item {
                         val theme = LocalOpenCodeTheme.current
@@ -212,16 +205,15 @@ fun SkillsScreen(
                             color = theme.error
                         )
                     }
-                    
+
                     items(disconnectedSkills, key = { it.name }) { skill ->
                         SkillCard(
                             skill = skill,
-                            onToggle = { viewModel.toggleSkill(skill.name) },
                             onClick = { viewModel.selectSkill(skill) }
                         )
                     }
                 }
-                
+
                 if (state.skills.isEmpty()) {
                     item {
                         EmptySkillsView()
@@ -230,7 +222,7 @@ fun SkillsScreen(
             }
         }
     }
-    
+
     state.selectedSkill?.let { skill ->
         SkillDetailDialog(
             skill = skill,
@@ -243,7 +235,6 @@ fun SkillsScreen(
 @Composable
 private fun SkillCard(
     skill: SkillInfo,
-    onToggle: () -> Unit,
     onClick: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
@@ -265,22 +256,24 @@ private fun SkillCard(
             ) {
                 Surface(
                     shape = RectangleShape,
-                    color = if (skill.isEnabled) 
+                    color = if (skill.isEnabled) {
                         theme.success.copy(alpha = 0.2f)
-                    else 
+                    } else {
                         theme.error.copy(alpha = 0.2f)
+                    }
                 ) {
                     Icon(
                         Icons.Default.Extension,
                         contentDescription = stringResource(R.string.cd_skill_icon),
                         modifier = Modifier.padding(Spacing.md),
-                        tint = if (skill.isEnabled) 
+                        tint = if (skill.isEnabled) {
                             theme.success
-                        else 
+                        } else {
                             theme.error
+                        }
                     )
                 }
-                
+
                 Column {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -293,18 +286,26 @@ private fun SkillCard(
                         )
                         Surface(
                             shape = RectangleShape,
-                            color = if (skill.isEnabled) 
+                            color = if (skill.isEnabled) {
                                 theme.success.copy(alpha = 0.2f)
-                            else 
+                            } else {
                                 theme.error.copy(alpha = 0.2f)
+                            }
                         ) {
                             Text(
-                                text = if (skill.isEnabled) stringResource(R.string.skills_connected) else stringResource(R.string.skills_disconnected),
+                                text = if (skill.isEnabled) {
+                                    stringResource(
+                                        R.string.skills_connected
+                                    )
+                                } else {
+                                    stringResource(R.string.skills_disconnected)
+                                },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (skill.isEnabled) 
+                                color = if (skill.isEnabled) {
                                     theme.success
-                                else 
-                                    theme.error,
+                                } else {
+                                    theme.error
+                                },
                                 modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs)
                             )
                         }
@@ -314,7 +315,7 @@ private fun SkillCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = theme.textMuted
                     )
-                    
+
                     if (skill.tools.isNotEmpty() || skill.resources.isNotEmpty()) {
                         Spacer(Modifier.height(Spacing.xs))
                         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
@@ -336,7 +337,7 @@ private fun SkillCard(
                     }
                 }
             }
-            
+
             // Read-only status — server API does not support toggling skills from client
         }
     }
@@ -359,7 +360,7 @@ private fun SkillDetailDialog(
         }
     ) {
         Text(skill.description)
-        
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(Spacing.md),
             verticalAlignment = Alignment.CenterVertically
@@ -374,7 +375,7 @@ private fun SkillDetailDialog(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        
+
         if (skill.tools.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.skills_tools),
@@ -401,7 +402,7 @@ private fun SkillDetailDialog(
                 }
             }
         }
-        
+
         if (skill.resources.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.skills_resources),

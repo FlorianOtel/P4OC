@@ -22,9 +22,18 @@ class OfishMutationParserTest {
         assertEquals(OfishMutationStatus.Deleted, OfishMutationParser.parse("### 204 deleted"))
         assertEquals(OfishMutationStatus.Missing, OfishMutationParser.parse("### 404 missing"))
         assertEquals(OfishMutationStatus.Conflict("abc"), OfishMutationParser.parse("### 409 conflict actual=abc"))
-        assertEquals(OfishMutationStatus.PreconditionFailed("directory"), OfishMutationParser.parse("### 412 precondition reason=directory"))
-        assertEquals(OfishMutationStatus.Failed("OFISH mutation failed", "decode"), OfishMutationParser.parse("### 500 failed reason=decode"))
-        assertEquals(OfishMutationStatus.CapabilitiesMissing(listOf("base64", "hash")), OfishMutationParser.parse("### 501 caps_missing base64 hash"))
+        assertEquals(
+            OfishMutationStatus.PreconditionFailed("directory"),
+            OfishMutationParser.parse("### 412 precondition reason=directory")
+        )
+        assertEquals(
+            OfishMutationStatus.Failed("OFISH mutation failed", "decode"),
+            OfishMutationParser.parse("### 500 failed reason=decode")
+        )
+        assertEquals(
+            OfishMutationStatus.CapabilitiesMissing(listOf("base64", "hash")),
+            OfishMutationParser.parse("### 501 caps_missing base64 hash")
+        )
     }
 
     @Test
@@ -37,7 +46,12 @@ class OfishMutationParserTest {
         """.trimIndent()
 
         assertEquals(
-            OfishMutationStatus.Ok(code = 200, status = "ok", uploadToken = "tmp/file", values = mapOf("upload" to "tmp/file")),
+            OfishMutationStatus.Ok(
+                code = 200,
+                status = "ok",
+                uploadToken = "tmp/file",
+                values = mapOf("upload" to "tmp/file")
+            ),
             OfishMutationParser.parse(output),
         )
     }
