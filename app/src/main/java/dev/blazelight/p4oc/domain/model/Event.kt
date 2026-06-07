@@ -5,6 +5,13 @@ import kotlinx.serialization.Serializable
 sealed class OpenCodeEvent {
     data class MessageUpdated(val message: Message) : OpenCodeEvent()
     data class MessagePartUpdated(val part: Part, val delta: String?) : OpenCodeEvent()
+    data class MessagePartDelta(
+        val sessionID: String?,
+        val messageID: String,
+        val partID: String,
+        val field: String,
+        val delta: String,
+    ) : OpenCodeEvent()
     data class MessageRemoved(val sessionID: String, val messageID: String) : OpenCodeEvent()
     data class PartRemoved(val sessionID: String, val messageID: String, val partID: String) : OpenCodeEvent()
     data class SessionCreated(val session: Session) : OpenCodeEvent()

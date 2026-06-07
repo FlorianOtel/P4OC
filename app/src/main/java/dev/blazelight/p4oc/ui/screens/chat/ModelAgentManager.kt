@@ -8,6 +8,7 @@ import dev.blazelight.p4oc.core.network.safeApiCall
 import dev.blazelight.p4oc.data.remote.dto.AgentDto
 import dev.blazelight.p4oc.data.remote.dto.ModelDto
 import dev.blazelight.p4oc.data.remote.dto.ModelInput
+import dev.blazelight.p4oc.data.remote.dto.reasoningEfforts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +37,10 @@ class ModelAgentManager(
 
     private val _selectedModel = MutableStateFlow<ModelInput?>(null)
     val selectedModel: StateFlow<ModelInput?> = _selectedModel.asStateFlow()
+
+    private val _selectedReasoningEffort = MutableStateFlow<String?>(null)
+    val selectedReasoningEffort: StateFlow<String?> = _selectedReasoningEffort.asStateFlow()
+
     private var selectedModelFromAgent = false
 
     val favoriteModels: StateFlow<Set<ModelInput>> = settingsDataStore.favoriteModels
@@ -130,11 +135,29 @@ class ModelAgentManager(
     }
 
     fun selectModel(model: ModelInput) {
+        if (_selectedModel.value != model) {
+            _selectedReasoningEffort.value = null
+        }
         _selectedModel.value = model
         selectedModelFromAgent = false
         scope.launch {
             settingsDataStore.addRecentModel(model)
         }
+    }
+
+    fun selectReasoningEffort(reasoningEffort: String?) {
+        _selectedReasoningEffort.value = reasoningEffort
+    }
+
+    fun currentReasoningEffort(): String? {
+        val model = _selectedModel.value
+        val effort = _selectedReasoningEffort.value
+        val modelDto = model?.let { selected ->
+            _availableModels.value.find { (providerId, dto) ->
+                providerId == selected.providerID && dto.id == selected.modelID
+            }?.second
+        }
+        return effort?.takeIf { it in modelDto?.reasoningEfforts().orEmpty() }
     }
 
     fun toggleFavoriteModel(model: ModelInput) {

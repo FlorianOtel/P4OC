@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ConnectionState
+import dev.blazelight.p4oc.domain.model.Part
 import dev.blazelight.p4oc.domain.model.SessionConnectionState
 import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
@@ -68,6 +69,7 @@ fun ChatScreen(
     val branchName by viewModel.branchName.collectAsStateWithLifecycle()
     val sessionConnectionState by viewModel.sessionConnectionState.collectAsStateWithLifecycle()
     val visualSettings by viewModel.visualSettings.collectAsStateWithLifecycle()
+    val chatSettings by viewModel.chatSettings.collectAsStateWithLifecycle()
 
     // Sub-manager state
     val pendingQuestion by viewModel.dialogManager.pendingQuestion.collectAsStateWithLifecycle()
@@ -76,6 +78,7 @@ fun ChatScreen(
     val selectedAgent by viewModel.modelAgentManager.selectedAgent.collectAsStateWithLifecycle()
     val availableModels by viewModel.modelAgentManager.availableModels.collectAsStateWithLifecycle()
     val selectedModel by viewModel.modelAgentManager.selectedModel.collectAsStateWithLifecycle()
+    val selectedReasoningEffort by viewModel.modelAgentManager.selectedReasoningEffort.collectAsStateWithLifecycle()
     val favoriteModels by viewModel.modelAgentManager.favoriteModels.collectAsStateWithLifecycle()
     val recentModels by viewModel.modelAgentManager.recentModels.collectAsStateWithLifecycle()
     val attachedFiles by viewModel.filePickerManager.attachedFiles.collectAsStateWithLifecycle()
@@ -132,17 +135,24 @@ fun ChatScreen(
     var showFilePicker by remember { mutableStateOf(false) }
     var showRevertDialog by remember { mutableStateOf<String?>(null) }
 
-    // Scroll UX state
-    var userScrolledAway by remember { mutableStateOf(false) }
+    // Scroll UX state: follow new tail content only while the user remains pinned to bottom.
+    var shouldFollowTail by remember(uiState.session?.id) { mutableStateOf(true) }
     var hasNewContentWhileAway by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    // Derived state: check if user is "at bottom" (reversed layout: index 0 is bottom)
+    // Derived state: check if the bottom edge of the last rendered item is visible.
     val isAtBottom by remember {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+            val lastItemIndex = layoutInfo.totalItemsCount - 1
+            val lastItemBottom = (lastVisible?.offset ?: 0) + (lastVisible?.size ?: 0)
             layoutInfo.totalItemsCount == 0 ||
-                (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 100)
+                (
+                    lastVisible != null &&
+                        lastVisible.index >= lastItemIndex &&
+                        lastItemBottom <= layoutInfo.viewportEndOffset
+                )
         }
     }
 
@@ -155,32 +165,47 @@ fun ChatScreen(
         onNavigateBack()
     }
 
-    // Detect user scroll gesture - when scrolling and not at bottom, mark as scrolled away
-    LaunchedEffect(listState.isScrollInProgress, isAtBottom) {
-        if (listState.isScrollInProgress && !isAtBottom) {
-            userScrolledAway = true
-        }
-        // Reset when user manually scrolls back to bottom
-        if (isAtBottom && !listState.isScrollInProgress && userScrolledAway) {
-            userScrolledAway = false
-            hasNewContentWhileAway = false
-        }
+    // Match the sticky follow-tail model: only update follow state after the user's scroll settles.
+    LaunchedEffect(listState, uiState.session?.id) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { isScrolling ->
+                if (!isScrolling) {
+                    shouldFollowTail = isAtBottom
+                    if (isAtBottom) hasNewContentWhileAway = false
+                }
+            }
     }
 
     // Auto-scroll when new messages arrive or content changes during streaming
     val messageCount = messages.size
-    val lastMessagePartCount = messages.lastOrNull()?.parts?.size ?: 0
+    val tailMessage = messages.lastOrNull()
+    val tailContentVersion = tailMessage?.parts?.sumOf { part ->
+        when (part) {
+            is Part.Text -> part.text.length
+            is Part.Reasoning -> part.text.length
+            else -> 1
+        }
+    } ?: 0
     val isBusy = uiState.isBusy
+    val pendingQuestionId = pendingQuestion?.id
 
-    // Scroll on new messages or when parts are added to the last message
-    LaunchedEffect(messageCount, lastMessagePartCount, isBusy) {
-        if (messages.isNotEmpty()) {
-            if (!userScrolledAway) {
-                // Smooth scroll for small distances, instant for large jumps
-                if (listState.firstVisibleItemIndex < 3) {
-                    listState.animateScrollToItem(0) // Smooth when close to bottom
+    // Scroll on new messages, new parts, or streaming text/reasoning growth.
+    LaunchedEffect(messageCount, tailContentVersion, isBusy, pendingQuestionId) {
+        if (messages.isNotEmpty() || pendingQuestionId != null) {
+            if (shouldFollowTail) {
+                val lastIndex = (messageCount - 1).coerceAtLeast(0) + if (pendingQuestion != null) 1 else 0
+                val layoutInfo = listState.layoutInfo
+                val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastIndex }
+                val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
+                val distanceFromLastVisible = layoutInfo.totalItemsCount - 1 -
+                    (layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0)
+
+                if (lastVisibleItem != null && lastVisibleItem.size > viewportHeight) {
+                    listState.scrollToItem(lastIndex, Int.MAX_VALUE)
+                } else if (distanceFromLastVisible < 3) {
+                    listState.animateScrollToItem(lastIndex)
                 } else {
-                    listState.scrollToItem(0) // Instant for large jumps
+                    listState.scrollToItem(lastIndex)
                 }
             } else {
                 hasNewContentWhileAway = true
@@ -231,6 +256,8 @@ fun ChatScreen(
                         availableModels = availableModels,
                         selectedModel = selectedModel,
                         onModelSelected = viewModel.modelAgentManager::selectModel,
+                        selectedReasoningEffort = selectedReasoningEffort,
+                        onReasoningEffortSelected = viewModel.modelAgentManager::selectReasoningEffort,
                         favoriteModels = favoriteModels,
                         recentModels = recentModels,
                         onToggleFavorite = viewModel.modelAgentManager::toggleFavoriteModel
@@ -261,7 +288,8 @@ fun ChatScreen(
                         commandLoadError = uiState.commandLoadError,
                         onRetryCommands = { viewModel.refreshCommandsIfNeeded(force = true) },
                         onCommandSelected = { /* Command text is already updated via onValueChange */ },
-                        requestFocus = isActiveTab
+                        requestFocus = isActiveTab,
+                        enterToSend = chatSettings.enterToSend,
                     )
                 }
             }
@@ -315,26 +343,10 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxSize().testTag("message_list"),
                     contentPadding = PaddingValues(vertical = Spacing.xxs, horizontal = Spacing.xs),
                     verticalArrangement = Arrangement.spacedBy(Spacing.hairline),
-                    reverseLayout = true
                 ) {
-                    // Inline question card at the bottom (top in reversed layout)
-                    pendingQuestion?.let { questionRequest ->
-                        item(key = "pending_question_${questionRequest.id}") {
-                            InlineQuestionCard(
-                                questionRequestId = questionRequest.id,
-                                questionData = dev.blazelight.p4oc.domain.model.QuestionData(questionRequest.questions),
-                                onDismiss = viewModel::dismissQuestion,
-                                onSubmit = { answers ->
-                                    viewModel.respondToQuestion(questionRequest.id, answers)
-                                },
-                                modifier = Modifier.padding(vertical = Spacing.xs)
-                            )
-                        }
-                    }
-
                     // All messages - stable keys ensure only changed items recompose
                     items(
-                        items = messageBlocks.asReversed(),
+                        items = messageBlocks,
                         key = { block ->
                             when (block) {
                                 is MessageBlock.UserBlock -> block.message.message.id
@@ -353,12 +365,31 @@ fun ChatScreen(
                             onRevert = { messageId -> showRevertDialog = messageId }
                         )
                     }
+
+                    pendingQuestion?.let { questionRequest ->
+                        item(key = "pending_question_${questionRequest.id}") {
+                            InlineQuestionCard(
+                                questionRequestId = questionRequest.id,
+                                questionData = dev.blazelight.p4oc.domain.model.QuestionData(questionRequest.questions),
+                                onDismiss = viewModel::dismissQuestion,
+                                onSubmit = { answers ->
+                                    viewModel.respondToQuestion(questionRequest.id, answers)
+                                },
+                                modifier = Modifier.padding(vertical = Spacing.xs)
+                            )
+                        }
+                    }
                 }
             }
 
-            if (uiState.isLoading) {
+            val activeLoadSteps = buildList {
+                addAll(uiState.loadingSteps)
+                if (isPickerLoading) add("Loading files")
+            }
+            if (uiState.isLoading || activeLoadSteps.isNotEmpty()) {
                 TuiLoadingScreen(
-                    modifier = Modifier.align(Alignment.Center)
+                    modifier = Modifier.align(Alignment.Center),
+                    text = activeLoadSteps.ifEmpty { listOf("Loading session") }.joinToString("\n")
                 )
             }
 
@@ -379,13 +410,13 @@ fun ChatScreen(
 
             // Jump to bottom button - shows when scrolled away during streaming
             JumpToBottomButton(
-                visible = userScrolledAway && uiState.isBusy,
+                visible = !shouldFollowTail && uiState.isBusy,
                 hasNewContent = hasNewContentWhileAway,
                 onClick = {
                     coroutineScope.launch {
-                        userScrolledAway = false
+                        shouldFollowTail = true
                         hasNewContentWhileAway = false
-                        listState.scrollToItem(0)
+                        listState.scrollToItem(listState.layoutInfo.totalItemsCount.coerceAtLeast(1) - 1)
                     }
                 },
                 modifier = Modifier
@@ -533,28 +564,28 @@ private fun ChatTopBar(
                     TuiDropdownMenuItem(
                         text = "± ${stringResource(R.string.sessions_view_changes)}",
                         onClick = {
-                            showOverflow = false;
+                            showOverflow = false
                             onViewChanges()
                         }
                     )
                     TuiDropdownMenuItem(
                         text = "/ ${stringResource(R.string.cd_commands)}",
                         onClick = {
-                            showOverflow = false;
+                            showOverflow = false
                             onCommands()
                         }
                     )
                     TuiDropdownMenuItem(
                         text = ">_ ${stringResource(R.string.cd_terminal)}",
                         onClick = {
-                            showOverflow = false;
+                            showOverflow = false
                             onTerminal()
                         }
                     )
                     TuiDropdownMenuItem(
                         text = "▤ ${stringResource(R.string.cd_files)}",
                         onClick = {
-                            showOverflow = false;
+                            showOverflow = false
                             onFiles()
                         }
                     )

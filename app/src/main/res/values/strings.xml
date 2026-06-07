@@ -83,6 +83,8 @@
     <string name="settings_requires_connection">Requires active server connection</string>
     <string name="settings_visual">Visual Settings</string>
     <string name="settings_visual_desc">Theme, font size, and display options</string>
+    <string name="settings_chat">Chat</string>
+    <string name="settings_chat_desc">Input and message behavior</string>
     <string name="settings_about">About</string>
     <string name="settings_version_format">OpenCode v%s</string>
     <string name="settings_about_github">View on GitHub</string>
@@ -140,6 +142,7 @@
     <string name="sessions_title">Sessions</string>
     <string name="sessions_empty_title">No sessions yet</string>
     <string name="sessions_empty_hint">Tap above to start a new session</string>
+    <string name="sessions_loading">Loading sessions</string>
     <string name="sessions_new">New Session</string>
     <string name="sessions_delete">Delete</string>
     <string name="sessions_rename">Rename</string>
@@ -315,6 +318,8 @@
     <string name="visual_settings_expand_reasoning_desc">Show reasoning/thinking content expanded</string>
     <string name="visual_settings_open_sub_agent_new_tab">Open Sub-Agents in New Tab</string>
     <string name="visual_settings_open_sub_agent_new_tab_desc">Open sub-agent sessions in a new tab instead of the current tab</string>
+    <string name="chat_settings_enter_to_send">Enter to Send</string>
+    <string name="chat_settings_enter_to_send_desc">Send with Enter on hardware keyboards; use the on-screen send button for multiline drafts</string>
     <string name="visual_settings_color_theme">Color Theme</string>
     <string name="visual_settings_oneline_minimal">Oneline (minimal)</string>
     <string name="visual_settings_compact_summary">Compact (summary)</string>

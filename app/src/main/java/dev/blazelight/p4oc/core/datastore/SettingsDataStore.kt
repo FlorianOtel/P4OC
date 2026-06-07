@@ -73,6 +73,9 @@ class SettingsDataStore constructor(
         private val KEY_NOTIFY_VIBRATION_PATTERN = stringPreferencesKey("notify_vibration_pattern")
         private val KEY_NOTIFY_ON_COMPLETION = booleanPreferencesKey("notify_on_completion")
 
+        // Chat settings keys
+        private val KEY_CHAT_ENTER_TO_SEND = booleanPreferencesKey("chat_enter_to_send")
+
         // Connection settings keys
         private val KEY_AUTO_RECONNECT = booleanPreferencesKey("auto_reconnect")
         private val KEY_RECONNECT_TIMEOUT_SECONDS = intPreferencesKey("reconnect_timeout_seconds")
@@ -413,6 +416,20 @@ class SettingsDataStore constructor(
         }
     }
 
+    // ── Chat settings ──
+
+    val chatSettings: Flow<ChatSettings> = context.dataStore.data.map { prefs ->
+        ChatSettings(
+            enterToSend = prefs[KEY_CHAT_ENTER_TO_SEND] ?: false,
+        )
+    }
+
+    suspend fun updateChatSettings(settings: ChatSettings) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CHAT_ENTER_TO_SEND] = settings.enterToSend
+        }
+    }
+
     // ── Connection settings ──
 
     val connectionSettings: Flow<ConnectionSettings> = context.dataStore.data.map { prefs ->
@@ -591,6 +608,10 @@ data class VisualSettings(
     val reasoningExpandedByDefault: Boolean = false,
     val toolWidgetDefaultState: String = "compact", // "oneline", "compact", or "expanded"
     val openSubAgentInNewTab: Boolean = true
+)
+
+data class ChatSettings(
+    val enterToSend: Boolean = false,
 )
 
 data class NotificationSettings(

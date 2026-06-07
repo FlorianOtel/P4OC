@@ -1,6 +1,7 @@
 package dev.blazelight.p4oc.ui.screens.chat
 
 import androidx.lifecycle.SavedStateHandle
+import dev.blazelight.p4oc.core.datastore.ChatSettings
 import dev.blazelight.p4oc.core.datastore.NotificationSettings
 import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.datastore.VisualSettings
@@ -135,8 +136,11 @@ class ChatViewModelTest {
 
         every { settingsDataStore.favoriteModels } returns flowOf(emptySet())
         every { settingsDataStore.recentModels } returns flowOf(emptyList())
+        every { settingsDataStore.chatSettings } returns flowOf(ChatSettings())
         every { settingsDataStore.visualSettings } returns flowOf(VisualSettings())
         every { settingsDataStore.notificationSettings } returns flowOf(NotificationSettings())
+        coEvery { settingsDataStore.getSelectedAgentForSession(any()) } returns null
+        coEvery { settingsDataStore.setSelectedAgentForSession(any(), any()) } returns Unit
 
         hapticFeedback = mockk(relaxed = true)
     }
@@ -590,7 +594,6 @@ class ChatViewModelTest {
             sessionID = sessionId,
             messageID = "m1",
             callID = "call-$id",
-            title = "Allow",
             metadata = buildJsonObject { },
             always = emptyList()
         )

@@ -117,7 +117,6 @@ class DialogQueueManagerTest {
             sessionID = "session-1",
             messageID = "message-1",
             callID = callId,
-            title = "Allow read",
             metadata = buildJsonObject { },
             always = emptyList()
         )

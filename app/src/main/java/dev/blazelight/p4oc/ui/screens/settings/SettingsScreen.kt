@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
@@ -43,6 +44,7 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onDisconnect: () -> Unit,
     onProviderConfig: () -> Unit = {},
+    onChatSettings: () -> Unit = {},
     onVisualSettings: () -> Unit = {},
     onAgentsConfig: () -> Unit = {},
     onSkills: () -> Unit = {},
@@ -123,6 +125,15 @@ fun SettingsScreen(
             )
 
             // These don't require connection
+            SettingsItem(
+                icon = Icons.AutoMirrored.Filled.Chat,
+                title = stringResource(R.string.settings_chat),
+                subtitle = stringResource(R.string.settings_chat_desc),
+                onClick = onChatSettings,
+                showChevron = true,
+                testTag = "settings_chat_item"
+            )
+
             SettingsItem(
                 icon = Icons.Default.Palette,
                 title = stringResource(R.string.settings_visual),

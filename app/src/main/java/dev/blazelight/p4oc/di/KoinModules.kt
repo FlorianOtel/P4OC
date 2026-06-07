@@ -23,6 +23,7 @@ import dev.blazelight.p4oc.ui.screens.projects.ProjectsViewModel
 import dev.blazelight.p4oc.ui.screens.server.ServerViewModel
 import dev.blazelight.p4oc.ui.screens.sessions.SessionListViewModel
 import dev.blazelight.p4oc.ui.screens.settings.AgentsConfigViewModel
+import dev.blazelight.p4oc.ui.screens.settings.ChatSettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.ModelControlsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.NotificationSettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.ProviderConfigViewModel
@@ -101,6 +102,7 @@ val viewModelModule = module {
     viewModelOf(::ModelControlsViewModel)
     viewModelOf(::AgentsConfigViewModel)
     viewModelOf(::VisualSettingsViewModel)
+    viewModelOf(::ChatSettingsViewModel)
     viewModelOf(::SkillsViewModel)
     viewModelOf(::SettingsViewModel)
     viewModelOf(::NotificationSettingsViewModel)

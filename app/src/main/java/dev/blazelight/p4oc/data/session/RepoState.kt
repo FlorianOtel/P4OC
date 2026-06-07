@@ -10,6 +10,9 @@ sealed interface RepoState {
     data class Hydrating(
         override val snapshot: Snapshot = Snapshot(),
         val bufferedEvents: Int = 0,
+        val completedSteps: Int = 0,
+        val totalSteps: Int = 0,
+        val currentStep: String? = null,
     ) : RepoState
 
     data class Live(override val snapshot: Snapshot) : RepoState

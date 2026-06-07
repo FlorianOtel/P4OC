@@ -216,6 +216,7 @@ fun VisualSettingsScreen(
                     onCheckedChange = { viewModel.toggleOpenSubAgentInNewTab() },
                     icon = Icons.Default.Tab
                 )
+
             }
 
             SettingsSection(title = stringResource(R.string.visual_settings_tool_mode_label)) {

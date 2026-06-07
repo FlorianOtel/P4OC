@@ -36,7 +36,7 @@ import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
 import dev.blazelight.p4oc.ui.components.TuiDropdownMenuItem
 import dev.blazelight.p4oc.ui.components.TuiInputDialog
-import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.components.TuiSnackbar
 import dev.blazelight.p4oc.ui.components.TuiTextButton
 import dev.blazelight.p4oc.ui.components.TuiTopBar
@@ -67,7 +67,7 @@ fun SessionListScreen(
     onNewSession: (sessionId: String, directory: String?) -> Unit,
     onSettings: () -> Unit,
     onProjects: () -> Unit = {},
-    onProjectClick: (projectId: String) -> Unit = {},
+    onProjectClick: (directory: String) -> Unit = {},
     onViewChanges: (sessionId: String) -> Unit = {},
     onCreateSessionInWorkspace: (title: String?, directory: String?) -> Unit = { title, directory ->
         viewModel.createSession(title, directory)
@@ -85,18 +85,24 @@ fun SessionListScreen(
     var showRenameDialog by remember { mutableStateOf<Session?>(null) }
     val context = LocalContext.current
 
-    val displayedSessions = remember(uiState.sessions, filterProjectId) {
-        if (filterProjectId != null) {
-            uiState.sessions.filter { it.projectId == filterProjectId }
+    val filterDirectory = remember(uiState.projects, filterProjectId) {
+        filterProjectId?.let { filter ->
+            uiState.projects.find { it.id == filter }?.worktree ?: filter
+        }
+    }
+
+    val displayedSessions = remember(uiState.sessions, filterDirectory) {
+        if (filterDirectory != null) {
+            uiState.sessions.filter { it.session.directory == filterDirectory }
         } else {
             uiState.sessions
         }
     }
 
-    val filteredProject = remember(uiState.projects, filterProjectId) {
-        filterProjectId?.let { id -> uiState.projects.find { it.id == id } }
+    val filteredProject = remember(uiState.projects, filterDirectory) {
+        filterDirectory?.let { directory -> uiState.projects.find { it.worktree == directory } }
     }
-    val projectName = filteredProject?.name
+    val projectName = filteredProject?.name ?: filterDirectory?.substringAfterLast("/")
 
     LaunchedEffect(autoCreateSession, autoCreateSessionTitle, autoCreateSessionDirectory) {
         if (autoCreateSession) {
@@ -173,9 +179,31 @@ fun SessionListScreen(
                 .padding(padding)
         ) {
             if (uiState.isLoading && displayedSessions.isEmpty()) {
-                TuiLoadingScreen(
-                    modifier = Modifier.align(Alignment.Center)
-                )
+                val theme = LocalOpenCodeTheme.current
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    TuiLoadingIndicator(
+                        text = uiState.loadingText ?: stringResource(R.string.sessions_loading)
+                    )
+                    uiState.loadingProgress?.let { progress ->
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.width(Sizing.panelWidthLg),
+                            color = theme.accent,
+                            trackColor = theme.border,
+                        )
+                    }
+                    uiState.loadingCounts?.let { counts ->
+                        Text(
+                            text = counts,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = theme.textMuted,
+                        )
+                    }
+                }
             } else {
                 val expandedSessions = remember { mutableStateMapOf<String, Boolean>() }
 
@@ -217,14 +245,17 @@ fun SessionListScreen(
                             )
                         }
                     } else {
-                        filteredProject?.let { project ->
+                        filterDirectory?.let { directory ->
                             item(key = "quick_action_project") {
                                 QuickActionCard(
                                     icon = "\u25C6",
-                                    title = stringResource(R.string.sessions_create_in_project, project.name),
-                                    subtitle = project.worktree,
+                                    title = stringResource(
+                                        R.string.sessions_create_in_project,
+                                        projectName ?: directory.substringAfterLast("/")
+                                    ),
+                                    subtitle = directory,
                                     contentDescription = stringResource(R.string.cd_new_session),
-                                    onClick = { onCreateSessionInWorkspace(null, project.worktree) },
+                                    onClick = { onCreateSessionInWorkspace(null, directory) },
                                     modifier = Modifier.testTag("project_new_session_button")
                                 )
                             }
@@ -311,7 +342,7 @@ fun SessionListScreen(
     if (showNewSessionDialog) {
         NewSessionDialog(
             projects = uiState.projects,
-            defaultProjectId = filterProjectId,
+            defaultProjectId = filteredProject?.id,
             initialUseCustomDirectory = showNewSessionCustomDir,
             onDismiss = {
                 showNewSessionDialog = false
@@ -499,10 +530,16 @@ private fun SessionCard(
                     modifier = Modifier.size(Sizing.chipHeight)
                 ) {
                     Icon(
-                        if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (isExpanded) stringResource(
-                            R.string.cd_collapse
-                        ) else stringResource(R.string.cd_expand),
+                        if (isExpanded) {
+                            Icons.Default.ExpandLess
+                        } else {
+                            Icons.Default.ExpandMore
+                        },
+                        contentDescription = if (isExpanded) {
+                            stringResource(R.string.cd_collapse)
+                        } else {
+                            stringResource(R.string.cd_expand)
+                        },
                         modifier = Modifier.size(Sizing.iconSm),
                         tint = theme.textMuted
                     )
@@ -575,12 +612,13 @@ private fun SessionCard(
                 }
             }
 
-            // Project chip on far right
-            if (showProjectChip && projectId != null && !projectName.isNullOrEmpty()) {
+            // Directory chip on far right. Real projects and pseudo-project
+            // directories use the same navigation model: filter by directory.
+            if (showProjectChip && !projectName.isNullOrEmpty()) {
                 ProjectChip(
-                    projectId = projectId,
+                    projectKey = projectId ?: session.directory,
                     projectName = projectName,
-                    onClick = { onProjectClick(projectId) }
+                    onClick = { onProjectClick(session.directory) }
                 )
             }
         }
@@ -654,17 +692,21 @@ private fun SessionCard(
 
 @Composable
 private fun ProjectChip(
-    projectId: String,
+    projectKey: String,
     projectName: String,
-    onClick: () -> Unit
+    onClick: (() -> Unit)?
 ) {
+    val modifier = Modifier
+        .padding(start = Spacing.md)
+        .widthIn(max = Sizing.chipMaxWidth)
+        .testTag("session_directory_chip_$projectName")
+        .semantics { contentDescription = "Open sessions for $projectName" }
     Surface(
-        onClick = onClick,
+        onClick = onClick ?: {},
+        enabled = onClick != null,
         shape = RectangleShape,
-        color = ProjectColors.colorForProject(projectId),
-        modifier = Modifier
-            .padding(start = Spacing.md)
-            .widthIn(max = Sizing.chipMaxWidth)
+        color = ProjectColors.colorForProject(projectKey),
+        modifier = modifier
     ) {
         Box(
             contentAlignment = Alignment.Center,
@@ -673,7 +715,7 @@ private fun ProjectChip(
             Text(
                 text = projectName,
                 style = MaterialTheme.typography.labelMedium,
-                color = ProjectColors.textColorForProject(projectId),
+                color = ProjectColors.textColorForProject(projectKey),
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
@@ -763,13 +805,15 @@ private fun NewSessionDialog(
     var title by remember { mutableStateOf("") }
     // Default to null (Global) unless a specific project is requested
     var selectedProject by remember(defaultProjectId, projects) {
-        mutableStateOf(if (defaultProjectId != null && !initialUseCustomDirectory) {
-            projects.find {
-                it.id == defaultProjectId
+        mutableStateOf(
+            if (defaultProjectId != null && !initialUseCustomDirectory) {
+                projects.find {
+                    it.id == defaultProjectId
+                }
+            } else {
+                null
             }
-        } else {
-            null
-        })
+        )
     }
     var expanded by remember { mutableStateOf(false) }
     var useCustomDirectory by remember { mutableStateOf(initialUseCustomDirectory) }

@@ -7,8 +7,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -27,9 +30,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Command
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
@@ -69,15 +74,21 @@ fun ChatInputBar(
     commandLoadError: String? = null,
     onRetryCommands: () -> Unit = {},
     onCommandSelected: (Command) -> Unit = {},
-    requestFocus: Boolean = false
+    requestFocus: Boolean = false,
+    enterToSend: Boolean = false,
 ) {
     val theme = LocalOpenCodeTheme.current
     val focusRequester = remember { FocusRequester() }
-    var inputFieldValue by remember { mutableStateOf(TextFieldValue(value)) }
+    var inputFieldValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(value, selection = TextRange(value.length)))
+    }
 
     LaunchedEffect(value) {
         if (value != inputFieldValue.text) {
-            inputFieldValue = TextFieldValue(value)
+            inputFieldValue = inputFieldValue.copy(
+                text = value,
+                selection = TextRange(value.length)
+            )
         }
     }
 
@@ -93,7 +104,8 @@ fun ChatInputBar(
     }
 
     // Determine button state
-    val hasContent = value.isNotBlank() || attachedFiles.isNotEmpty()
+    val currentText = inputFieldValue.text
+    val hasContent = currentText.isNotBlank() || attachedFiles.isNotEmpty()
     val queueIsFull = queuedCount >= 10
     val canSend = hasContent && enabled && !isLoading && !isBusy
     val canQueue = hasContent && enabled && isBusy && !queueIsFull
@@ -115,9 +127,9 @@ fun ChatInputBar(
     }
 
     // Show slash commands popup when input starts with "/"
-    val showSlashCommands = value.startsWith("/") && !value.contains(" ")
-    val filteredCommands = remember(commands, value) {
-        val searchTerm = value.removePrefix("/").lowercase()
+    val showSlashCommands = currentText.startsWith("/") && !currentText.contains(" ")
+    val filteredCommands = remember(commands, currentText) {
+        val searchTerm = currentText.removePrefix("/").lowercase()
         val matches = if (searchTerm.isEmpty()) {
             commands
         } else {
@@ -129,7 +141,7 @@ fun ChatInputBar(
         matches
     }
     var activeCommandIndex by remember { mutableIntStateOf(0) }
-    LaunchedEffect(value, filteredCommands.size) {
+    LaunchedEffect(currentText, filteredCommands.size) {
         activeCommandIndex = activeCommandIndex.coerceIn(0, (filteredCommands.size - 1).coerceAtLeast(0))
     }
 
@@ -139,6 +151,19 @@ fun ChatInputBar(
         onValueChange(inputFieldValue.text)
         onCommandSelected(command)
         return true
+    }
+
+    fun submitFromEnter(): Boolean = when {
+        showSlashCommands -> selectActiveCommand()
+        canSend -> {
+            onSend()
+            true
+        }
+        canQueue -> {
+            onQueueMessage()
+            true
+        }
+        else -> false
     }
 
     Box(modifier = modifier.fillMaxWidth()) {
@@ -231,7 +256,7 @@ fun ChatInputBar(
                             .padding(horizontal = Spacing.lg, vertical = Spacing.md),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        if (value.isEmpty()) {
+                        if (currentText.isEmpty()) {
                             Text(
                                 "> Message...",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -241,7 +266,7 @@ fun ChatInputBar(
                         }
                         BasicTextField(
                             value = inputFieldValue,
-                            onValueChange = { nextValue ->
+                            onValueChange = { nextValue: TextFieldValue ->
                                 inputFieldValue = nextValue
                                 onValueChange(nextValue.text)
                             },
@@ -249,11 +274,12 @@ fun ChatInputBar(
                                 .fillMaxWidth()
                                 .focusRequester(focusRequester)
                                 .onPreviewKeyEvent { event ->
-                                    if (!showSlashCommands || event.type != KeyEventType.KeyDown) {
+                                    if (event.type != KeyEventType.KeyDown) {
                                         return@onPreviewKeyEvent false
                                     }
                                     when (event.key) {
                                         Key.DirectionDown -> {
+                                            if (!showSlashCommands) return@onPreviewKeyEvent false
                                             if (filteredCommands.isNotEmpty()) {
                                                 activeCommandIndex = nextCommandIndex(
                                                     activeCommandIndex,
@@ -264,6 +290,7 @@ fun ChatInputBar(
                                             true
                                         }
                                         Key.DirectionUp -> {
+                                            if (!showSlashCommands) return@onPreviewKeyEvent false
                                             if (filteredCommands.isNotEmpty()) {
                                                 activeCommandIndex =
                                                     nextCommandIndex(
@@ -274,7 +301,14 @@ fun ChatInputBar(
                                             }
                                             true
                                         }
-                                        Key.Tab, Key.Enter, Key.NumPadEnter -> selectActiveCommand()
+                                        Key.Tab -> showSlashCommands && selectActiveCommand()
+                                        Key.Enter, Key.NumPadEnter -> {
+                                            when {
+                                                showSlashCommands -> selectActiveCommand()
+                                                enterToSend -> submitFromEnter()
+                                                else -> false
+                                            }
+                                        }
                                         else -> false
                                     }
                                 }
@@ -286,6 +320,15 @@ fun ChatInputBar(
                                 color = theme.text
                             ),
                             cursorBrush = SolidColor(theme.accent),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = if (enterToSend) ImeAction.Send else ImeAction.Default,
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onSend = {
+                                    if (enterToSend) submitFromEnter()
+                                },
+                            ),
                             maxLines = 4
                         )
                     }
@@ -342,7 +385,7 @@ fun ChatInputBar(
             SlashCommandsPopup(
                 state = SlashCommandsPopupState(
                     commands = commands,
-                    filter = value,
+                    filter = currentText,
                     isLoading = isLoadingCommands,
                     error = commandLoadError,
                     activeCommandName = filteredCommands.getOrNull(activeCommandIndex)?.name

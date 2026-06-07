@@ -44,13 +44,15 @@ sealed class Screen(val route: String) {
     }
 
     data object SessionsFiltered : Screen("sessions?projectId={projectId}") {
-        fun createRoute(projectId: String) = "sessions?projectId=$projectId"
+        fun createRoute(projectId: String) = "sessions?projectId=${Uri.encode(projectId)}"
         const val ARG_PROJECT_ID = "projectId"
     }
 
     data object Settings : Screen("settings")
 
     data object VisualSettings : Screen("settings/visual")
+
+    data object ChatSettings : Screen("settings/chat")
 
     data object ModelControls : Screen("settings/models")
 

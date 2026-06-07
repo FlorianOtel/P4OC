@@ -578,6 +578,16 @@ class EventMapper constructor(
                     delta = partDto.delta
                 )
             }
+            "message.part.delta" -> {
+                val props = json.decodeFromJsonElement<PartDeltaDto>(dto.properties)
+                OpenCodeEvent.MessagePartDelta(
+                    sessionID = props.sessionID,
+                    messageID = props.messageID,
+                    partID = props.partID,
+                    field = props.field,
+                    delta = props.delta,
+                )
+            }
             "message.removed" -> {
                 val props = json.decodeFromJsonElement<MessageRemovedPropertiesDto>(dto.properties)
                 OpenCodeEvent.MessageRemoved(props.sessionID, props.messageID)
@@ -631,7 +641,6 @@ class EventMapper constructor(
             }
             "permission.asked" -> {
                 val permissionDto = json.decodeFromJsonElement<PermissionDto>(dto.properties)
-                val title = generatePermissionTitle(permissionDto.permission, permissionDto.patterns)
                 OpenCodeEvent.PermissionRequested(
                     Permission(
                         id = permissionDto.id,
@@ -640,7 +649,6 @@ class EventMapper constructor(
                         sessionID = permissionDto.sessionID,
                         messageID = permissionDto.tool?.messageID ?: "",
                         callID = permissionDto.tool?.callID,
-                        title = title,
                         metadata = permissionDto.metadata,
                         always = permissionDto.always
                     )
@@ -758,6 +766,15 @@ private data class PartUpdateDto(
 )
 
 @kotlinx.serialization.Serializable
+private data class PartDeltaDto(
+    @SerialName("sessionID") val sessionID: String? = null,
+    @SerialName("messageID") val messageID: String,
+    @SerialName("partID") val partID: String,
+    val field: String,
+    val delta: String,
+)
+
+@kotlinx.serialization.Serializable
 private data class SessionStatusEventDto(
     @SerialName("sessionID") val sessionID: String,
     val status: SessionStatusDto
@@ -819,19 +836,3 @@ private data class PtyDeletedPropertiesDto(
 private data class ServerInstanceDisposedPropertiesDto(
     val directory: String
 )
-
-private fun generatePermissionTitle(permission: String, patterns: List<String>): String {
-    val action = when (permission) {
-        "bash", "shell" -> "Execute command"
-        "edit", "write" -> "Write to file"
-        "patch" -> "Edit file"
-        "webfetch" -> "Fetch URL"
-        "task" -> "Run sub-agent"
-        "skill" -> "Use skill"
-        "external_directory" -> "Access external directory"
-        "doom_loop" -> "Continue execution"
-        else -> permission.replaceFirstChar { it.uppercase() }
-    }
-    val pattern = patterns.firstOrNull() ?: ""
-    return if (pattern.isNotEmpty()) "$action: $pattern" else action
-}

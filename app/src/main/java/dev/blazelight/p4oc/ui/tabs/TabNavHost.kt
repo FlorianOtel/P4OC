@@ -499,6 +499,9 @@ fun TabNavHost(
                     onProviderConfig = {
                         navController.navigate(Screen.ProviderConfig.route)
                     },
+                    onChatSettings = {
+                        navController.navigate(Screen.ChatSettings.route)
+                    },
                     onVisualSettings = {
                         navController.navigate(Screen.VisualSettings.route)
                     },
@@ -537,6 +540,13 @@ fun TabNavHost(
             composable(Screen.VisualSettings.route) { backStackEntry ->
                 TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 VisualSettingsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(Screen.ChatSettings.route) { backStackEntry ->
+                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                ChatSettingsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

@@ -21,6 +21,7 @@ import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.data.remote.dto.AgentDto
 import dev.blazelight.p4oc.data.remote.dto.ModelDto
 import dev.blazelight.p4oc.data.remote.dto.ModelInput
+import dev.blazelight.p4oc.data.remote.dto.reasoningEfforts
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
@@ -46,11 +47,13 @@ data class EnhancedModelInfo(
     val contextWindow: Int?,
     val hasReasoning: Boolean,
     val hasTools: Boolean,
+    val reasoningEfforts: List<String> = emptyList(),
     val isFavorite: Boolean = false,
     val isRecent: Boolean = false
 )
 
 @Composable
+@Suppress("LongParameterList", "LongMethod", "FunctionNaming")
 fun ModelAgentSelectorBar(
     availableAgents: List<AgentDto>,
     selectedAgent: String?,
@@ -58,6 +61,8 @@ fun ModelAgentSelectorBar(
     availableModels: List<Pair<String, ModelDto>>,
     selectedModel: ModelInput?,
     onModelSelected: (ModelInput) -> Unit,
+    selectedReasoningEffort: String?,
+    onReasoningEffortSelected: (String?) -> Unit,
     favoriteModels: Set<ModelInput> = emptySet(),
     recentModels: List<ModelInput> = emptyList(),
     onToggleFavorite: (ModelInput) -> Unit = {},
@@ -67,10 +72,20 @@ fun ModelAgentSelectorBar(
     var showModelPicker by remember { mutableStateOf(false) }
 
     val selectModelText = stringResource(R.string.select_model)
-    val selectedModelName = remember(selectedModel, availableModels, selectModelText) {
-        if (selectedModel == null) return@remember selectModelText
-        availableModels.find { it.first == selectedModel.providerID && it.second.id == selectedModel.modelID }
-            ?.second?.name ?: selectedModel.modelID
+    val selectedModelDto = remember(selectedModel, availableModels) {
+        if (selectedModel == null) {
+            null
+        } else {
+            availableModels.find {
+                it.first == selectedModel.providerID && it.second.id == selectedModel.modelID
+            }?.second
+        }
+    }
+    val selectedModelName = remember(selectedModel, selectedModelDto, selectModelText) {
+        selectedModelDto?.name ?: selectedModel?.modelID ?: selectModelText
+    }
+    val selectedReasoningEfforts = remember(selectedModelDto) {
+        selectedModelDto?.reasoningEfforts().orEmpty()
     }
 
     Surface(
@@ -150,6 +165,14 @@ fun ModelAgentSelectorBar(
                     }
                 }
             }
+
+            if (selectedReasoningEfforts.size > 1) {
+                ReasoningEffortSelect(
+                    efforts = selectedReasoningEfforts,
+                    selectedEffort = selectedReasoningEffort,
+                    onEffortSelected = onReasoningEffortSelected,
+                )
+            }
         }
     }
 
@@ -194,6 +217,7 @@ fun ModelPickerDialog(
                 contextWindow = model.limit?.context,
                 hasReasoning = model.capabilities?.reasoning == true,
                 hasTools = model.capabilities?.toolcall == true,
+                reasoningEfforts = model.reasoningEfforts(),
                 isFavorite = modelInput in favoriteModels,
                 isRecent = modelInput in recentModels
             )
@@ -426,6 +450,67 @@ fun ModelPickerDialog(
 }
 
 @Composable
+private fun ReasoningEffortSelect(
+    efforts: List<String>,
+    selectedEffort: String?,
+    onEffortSelected: (String?) -> Unit,
+) {
+    val theme = LocalOpenCodeTheme.current
+    var expanded by remember { mutableStateOf(false) }
+    val options = remember(efforts) { listOf<String?>(null) + efforts }
+    val currentLabel = selectedEffort ?: "default"
+
+    Box {
+        Surface(
+            onClick = { expanded = true },
+            shape = RectangleShape,
+            color = theme.background,
+            border = androidx.compose.foundation.BorderStroke(Sizing.strokeMd, theme.border),
+            modifier = Modifier
+                .height(Sizing.buttonHeightMd)
+                .testTag("reasoning_effort_select")
+        ) {
+            Box(
+                modifier = Modifier.padding(horizontal = Spacing.lg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = currentLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    color = if (selectedEffort == null) theme.textMuted else theme.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            containerColor = theme.backgroundPanel,
+        ) {
+            options.forEach { effort ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = effort ?: "default",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = if (effort == selectedEffort) theme.accent else theme.text,
+                        )
+                    },
+                    onClick = {
+                        onEffortSelected(effort)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun TuiFilterTab(
     text: String,
     selected: Boolean,
@@ -533,8 +618,13 @@ private fun TuiModelListItem(
                         }
                     }
                     if (model.hasReasoning) {
+                        val reasoningLabel = if (model.reasoningEfforts.isEmpty()) {
+                            "[R]"
+                        } else {
+                            "[R:${model.reasoningEfforts.joinToString("/")}]"
+                        }
                         Text(
-                            text = "[R]",
+                            text = reasoningLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = theme.warning
                         )

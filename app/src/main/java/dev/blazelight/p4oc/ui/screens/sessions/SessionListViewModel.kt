@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 class SessionListViewModel constructor(
     private val sessionRepository: SessionRepositoryImpl,
@@ -24,6 +25,10 @@ class SessionListViewModel constructor(
     private val _uiState = MutableStateFlow(SessionListUiState())
     val uiState: StateFlow<SessionListUiState> = _uiState.asStateFlow()
 
+    private companion object {
+        const val LOAD_TIMEOUT_MS = 30_000L
+    }
+
     init {
         viewModelScope.launch {
             sessionRepository.state.collect { repoState ->
@@ -31,6 +36,21 @@ class SessionListViewModel constructor(
                 _uiState.update { state ->
                     state.copy(
                         isLoading = repoState is RepoState.Hydrating,
+                        loadingText = if (repoState is RepoState.Hydrating) {
+                            repoState.currentStep ?: "Loading projects and sessions"
+                        } else {
+                            null
+                        },
+                        loadingProgress = if (repoState is RepoState.Hydrating && repoState.totalSteps > 0) {
+                            repoState.completedSteps.toFloat() / repoState.totalSteps.toFloat()
+                        } else {
+                            null
+                        },
+                        loadingCounts = if (repoState is RepoState.Hydrating && repoState.totalSteps > 0) {
+                            "${repoState.completedSteps}/${repoState.totalSteps}"
+                        } else {
+                            null
+                        },
                         sessions = snapshot.sessions.values
                             .map { workspaceSession -> workspaceSession.session.toSessionWithProject(
                                 snapshot.projects
@@ -51,13 +71,19 @@ class SessionListViewModel constructor(
 
     fun refresh() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            sessionRepository.awaitOrFetch().fold(
+            _uiState.update { it.copy(isLoading = true, loadingText = "Loading projects and sessions", error = null) }
+            val result = withTimeoutOrNull(LOAD_TIMEOUT_MS) {
+                sessionRepository.awaitOrFetch()
+            } ?: Result.failure(IllegalStateException("Timed out while loading sessions"))
+            result.fold(
                 onSuccess = { cached ->
                     val snapshot = cached.snapshot
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            loadingText = null,
+                            loadingProgress = null,
+                            loadingCounts = null,
                             sessions = snapshot.sessions.values
                                 .map { workspaceSession -> workspaceSession.session.toSessionWithProject(
                                     snapshot.projects
@@ -75,7 +101,15 @@ class SessionListViewModel constructor(
                     }
                 },
                 onFailure = { error ->
-                    _uiState.update { it.copy(isLoading = false, error = "Failed to load sessions: ${error.message}") }
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            loadingText = null,
+                            loadingProgress = null,
+                            loadingCounts = null,
+                            error = "Failed to load sessions: ${error.message}"
+                        )
+                    }
                 },
             )
         }
@@ -83,11 +117,14 @@ class SessionListViewModel constructor(
 
     fun createSession(title: String?, directory: String? = null) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _uiState.update { it.copy(isLoading = true, loadingText = "Creating session", error = null) }
             try {
                 if (directory != null && directory != sessionRepository.workspace.directory) {
                     _uiState.update { it.copy(
                         isLoading = false,
+                        loadingText = null,
+                        loadingProgress = null,
+                        loadingCounts = null,
                         error = "Switch to $directory before creating a session"
                     ) }
                     return@launch
@@ -96,6 +133,9 @@ class SessionListViewModel constructor(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        loadingText = null,
+                        loadingProgress = null,
+                        loadingCounts = null,
                         newSessionId = created.id.value,
                         newSessionDirectory = created.session.directory,
                     )
@@ -103,7 +143,15 @@ class SessionListViewModel constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, error = "Failed to create session: ${e.message}") }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        loadingText = null,
+                        loadingProgress = null,
+                        loadingCounts = null,
+                        error = "Failed to create session: ${e.message}"
+                    )
+                }
             }
         }
     }
@@ -182,11 +230,11 @@ class SessionListViewModel constructor(
     }
 
     private fun Session.toSessionWithProject(projects: List<ProjectDto>): SessionWithProject {
-        val project = projects.find { it.worktree == directory || it.id == projectID }
+        val project = projects.find { it.worktree == directory }
         return SessionWithProject(
             session = this,
             projectId = project?.id,
-            projectName = project?.worktree?.substringAfterLast("/"),
+            projectName = (project?.worktree ?: directory).substringAfterLast("/"),
         )
     }
 
@@ -199,6 +247,9 @@ class SessionListViewModel constructor(
 
 data class SessionListUiState(
     val isLoading: Boolean = false,
+    val loadingText: String? = null,
+    val loadingProgress: Float? = null,
+    val loadingCounts: String? = null,
     val sessions: List<SessionWithProject> = emptyList(),
     val sessionStatuses: Map<String, SessionStatus> = emptyMap(),
     val sessionPresences: Map<String, SessionPresence> = emptyMap(),

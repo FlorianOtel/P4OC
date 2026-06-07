@@ -60,6 +60,7 @@ private data class ToolGroup(
 fun ToolGroupWidget(
     tools: List<Part.Tool>,
     defaultState: ToolWidgetState,
+    pendingPermissionCallIds: Set<String> = emptySet(),
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     onOpenSubSession: ((String) -> Unit)? = null,
@@ -188,7 +189,7 @@ fun ToolGroupWidget(
                             )
 
                             // Show approval buttons if pending
-                            if (tool.state is ToolState.Pending) {
+                            if (tool.state is ToolState.Pending && tool.callID in pendingPermissionCallIds) {
                                 PendingApprovalButtonsInline(
                                     onApprove = { onToolApprove(tool.callID) },
                                     onDeny = { onToolDeny(tool.callID) }
@@ -200,6 +201,7 @@ fun ToolGroupWidget(
                             ToolCallExpanded(
                                 tool = tool,
                                 onClick = { currentState = currentState.next() },
+                                showApprovalActions = tool.callID in pendingPermissionCallIds,
                                 onToolApprove = onToolApprove,
                                 onToolDeny = onToolDeny,
                                 onOpenSubSession = onOpenSubSession,

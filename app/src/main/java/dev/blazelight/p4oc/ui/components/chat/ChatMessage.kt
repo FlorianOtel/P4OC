@@ -9,15 +9,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.*
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
@@ -36,7 +40,7 @@ fun ChatMessage(
     onOpenSubSession: ((String) -> Unit)? = null,
     defaultToolWidgetState: ToolWidgetState = ToolWidgetState.COMPACT,
     pendingPermissionsByCallId: Map<String, Permission> = emptyMap(),
-    onRevert: ((String) -> Unit)? = null,
+    onRevert: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val message = messageWithParts.message
@@ -46,7 +50,7 @@ fun ChatMessage(
         modifier = modifier.fillMaxWidth()
     ) {
         if (isUser) {
-            UserMessage(messageWithParts)
+            UserMessage(messageWithParts, onRevert = onRevert)
         } else {
             AssistantMessages(
                 messagesWithParts = listOf(messageWithParts),
@@ -56,7 +60,6 @@ fun ChatMessage(
                 onOpenSubSession = onOpenSubSession,
                 defaultToolWidgetState = defaultToolWidgetState,
                 pendingPermissionsByCallId = pendingPermissionsByCallId,
-                onRevert = onRevert
             )
         }
     }
@@ -71,11 +74,12 @@ fun AssistantMessages(
     onOpenSubSession: ((String) -> Unit)? = null,
     defaultToolWidgetState: ToolWidgetState = ToolWidgetState.COMPACT,
     pendingPermissionsByCallId: Map<String, Permission> = emptyMap(),
-    onRevert: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.hairline, vertical = Spacing.xs),
         verticalArrangement = Arrangement.spacedBy(Spacing.hairline)
     ) {
         messagesWithParts.forEach { messageWithParts ->
@@ -87,7 +91,6 @@ fun AssistantMessages(
                 onOpenSubSession = onOpenSubSession,
                 defaultToolWidgetState = defaultToolWidgetState,
                 pendingPermissionsByCallId = pendingPermissionsByCallId,
-                onRevert = onRevert
             )
         }
     }
@@ -95,10 +98,15 @@ fun AssistantMessages(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun UserMessage(messageWithParts: MessageWithParts) {
+private fun UserMessage(
+    messageWithParts: MessageWithParts,
+    onRevert: (() -> Unit)? = null,
+) {
     val theme = LocalOpenCodeTheme.current
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    var revertActionWidthPx by remember { mutableIntStateOf(0) }
     // Filter out synthetic text parts (system prompts, AGENTS.md content, etc.)
     val textParts = messageWithParts.parts
         .filterIsInstance<Part.Text>()
@@ -137,10 +145,30 @@ private fun UserMessage(messageWithParts: MessageWithParts) {
                 )
                 .padding(horizontal = Spacing.mdLg, vertical = Spacing.md)
         ) {
+            val revertEndInset = if (onRevert != null) {
+                with(density) { revertActionWidthPx.toDp() } + Spacing.sm
+            } else {
+                0.dp
+            }
+
             StreamingMarkdown(
                 text = text,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = revertEndInset)
             )
+
+            onRevert?.let { revert ->
+                Text(
+                    text = "\u21BA ${stringResource(R.string.revert_changes)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = theme.textMuted,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .onSizeChanged { revertActionWidthPx = it.width }
+                        .clickable(role = Role.Button) { revert() }
+                )
+            }
         }
     }
 }
@@ -154,7 +182,6 @@ private fun AssistantMessageContent(
     onOpenSubSession: ((String) -> Unit)? = null,
     defaultToolWidgetState: ToolWidgetState = ToolWidgetState.COMPACT,
     pendingPermissionsByCallId: Map<String, Permission> = emptyMap(),
-    onRevert: ((String) -> Unit)? = null
 ) {
     // Build ordered groups: consecutive tools get batched, non-tools rendered individually
     // Invisible parts (StepStart, StepFinish, Snapshot, etc.) don't break tool groups
@@ -197,24 +224,11 @@ private fun AssistantMessageContent(
                     ToolGroupWidget(
                         tools = group.tools,
                         defaultState = defaultToolWidgetState,
+                        pendingPermissionCallIds = pendingPermissionsByCallId.keys,
                         onToolApprove = onToolApprove,
                         onToolDeny = onToolDeny,
                         onOpenSubSession = onOpenSubSession
                     )
-
-                    // Render inline permission prompts for tools with pending permissions
-                    group.tools.forEach { tool ->
-                        tool.callID?.let { callId ->
-                            pendingPermissionsByCallId[callId]?.let { permission ->
-                                InlinePermissionPrompt(
-                                    permission = permission,
-                                    onAllow = { onToolApprove(permission.id) },
-                                    onAlways = { onToolAlways(permission.id) },
-                                    onReject = { onToolDeny(permission.id) }
-                                )
-                            }
-                        }
-                    }
                 }
                 is PartGroupItem.Other -> {
                     when (val part = group.part) {
@@ -224,30 +238,6 @@ private fun AssistantMessageContent(
                         is Part.Patch -> CompactPatchPart(part)
                         else -> {} // Already handled invisible parts above
                     }
-                }
-            }
-        }
-
-        // Revert action for messages with file-changing tools
-        val hasCompletedTools = messageWithParts.parts.any { it is Part.Tool && it.state is ToolState.Completed }
-        if (hasCompletedTools && onRevert != null) {
-            val messageId = (messageWithParts.message as? Message.Assistant)?.id
-            if (messageId != null) {
-                val theme = LocalOpenCodeTheme.current
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = Spacing.md, vertical = Spacing.xs),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = "\u21BA ${stringResource(R.string.revert_changes)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = theme.textMuted,
-                        modifier = Modifier.clickable(role = Role.Button) {
-                            onRevert(messageId)
-                        }
-                    )
                 }
             }
         }
@@ -270,7 +260,6 @@ private fun AssistantError(error: MessageError) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = Spacing.md, vertical = Spacing.xs)
             .background(theme.error.copy(alpha = 0.1f))
             .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
     ) {
@@ -296,31 +285,22 @@ private fun TextPart(part: Part.Text) {
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-        verticalAlignment = Alignment.Top
-    ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        clipboardManager.setText(AnnotatedString(part.text))
-                    },
-                    onLongClickLabel = "Copy text"
-                )
-        ) {
-            StreamingMarkdown(
-                text = part.text,
-                modifier = Modifier.fillMaxWidth()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {},
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    clipboardManager.setText(AnnotatedString(part.text))
+                },
+                onLongClickLabel = "Copy text"
             )
-        }
-        if (part.isStreaming) {
-            TuiLoadingIndicator()
-        }
+    ) {
+        StreamingMarkdown(
+            text = part.text,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -330,23 +310,15 @@ private fun ReasoningPart(part: Part.Reasoning) {
     val theme = LocalOpenCodeTheme.current
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
-    var expanded by remember { mutableStateOf(false) }
-
-    val thinkingDuration = part.time?.let { time ->
-        val durationMs = (time.end ?: System.currentTimeMillis()) - time.start
-        when {
-            durationMs < 1000 -> "${durationMs}ms"
-            durationMs < 60000 -> "${durationMs / 1000}s"
-            else -> "${durationMs / 60000}m ${(durationMs % 60000) / 1000}s"
-        }
-    }
+    var expanded by rememberSaveable(part.id) { mutableStateOf(false) }
 
     val isThinking = part.time?.end == null
 
     Surface(
         onClick = { expanded = !expanded },
         color = theme.warning.copy(alpha = 0.1f),
-        shape = RectangleShape
+        shape = RectangleShape,
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(Spacing.sm)) {
             Row(
@@ -354,31 +326,28 @@ private fun ReasoningPart(part: Part.Reasoning) {
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                if (isThinking) {
-                    TuiLoadingIndicator()
-                } else {
-                    Icon(
-                        Icons.Default.Psychology,
-                        contentDescription = stringResource(R.string.models_reasoning),
-                        modifier = Modifier.size(Sizing.iconXs),
-                        tint = theme.warning
-                    )
+                Box(
+                    modifier = Modifier.size(Sizing.iconXs),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isThinking) {
+                        TuiLoadingIndicator()
+                    } else {
+                        Icon(
+                            Icons.Default.Psychology,
+                            contentDescription = stringResource(R.string.models_reasoning),
+                            modifier = Modifier.fillMaxSize(),
+                            tint = theme.warning
+                        )
+                    }
                 }
 
                 Text(
-                    text = if (isThinking) "Thinking..." else "Reasoning",
+                    text = "Reasoning",
                     style = MaterialTheme.typography.labelSmall,
                     color = theme.warning,
                     modifier = Modifier.weight(1f)
                 )
-
-                thinkingDuration?.let { duration ->
-                    Text(
-                        text = duration,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = theme.textMuted
-                    )
-                }
 
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -419,7 +388,8 @@ private fun FilePart(part: Part.File) {
     val theme = LocalOpenCodeTheme.current
     Surface(
         color = theme.backgroundElement,
-        shape = RectangleShape
+        shape = RectangleShape,
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier.padding(Spacing.sm),
@@ -456,7 +426,8 @@ private fun CompactPatchPart(part: Part.Patch) {
     Surface(
         onClick = { expanded = !expanded },
         color = theme.backgroundElement,
-        shape = RectangleShape
+        shape = RectangleShape,
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(Spacing.sm)) {
             Row(

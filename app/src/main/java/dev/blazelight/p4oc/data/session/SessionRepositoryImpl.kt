@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 
 class SessionRepositoryImpl(
@@ -214,6 +215,7 @@ class SessionRepositoryImpl(
             is OpenCodeEvent.TodoUpdated -> updateSession(event.sessionID) { it.copy(todos = event.todos) }
             is OpenCodeEvent.MessageUpdated -> upsertMessage(event.message)
             is OpenCodeEvent.MessagePartUpdated -> upsertPart(event.part, event.delta)
+            is OpenCodeEvent.MessagePartDelta -> applyPartDelta(event)
             is OpenCodeEvent.MessageRemoved -> removeMessage(event.sessionID, event.messageID)
             is OpenCodeEvent.PartRemoved -> removePart(event.sessionID, event.messageID, event.partID)
             else -> Unit
@@ -354,18 +356,46 @@ class SessionRepositoryImpl(
         try {
             val projects = seedProjects.sortedByDescending { it.worktree }
             val semaphore = Semaphore(MAX_CONCURRENT)
+            val totalSteps = (projects.size + 1) * 2
+            val completedSteps = AtomicInteger(0)
+
+            fun updateHydrationState(currentStep: String? = null, completed: Int = completedSteps.get()) {
+                val current = _state.value as? RepoState.Hydrating
+                _state.value = RepoState.Hydrating(
+                    snapshot = state.value.snapshot,
+                    bufferedEvents = current?.bufferedEvents ?: hydrateBuffer.size,
+                    completedSteps = completed,
+                    totalSteps = totalSteps,
+                    currentStep = currentStep,
+                )
+            }
+
+            suspend fun <T> trackedStep(label: String, block: suspend () -> T): T {
+                updateHydrationState(currentStep = label)
+                return try {
+                    block()
+                } finally {
+                    updateHydrationState(completed = completedSteps.incrementAndGet())
+                }
+            }
+
+            updateHydrationState()
 
             val (sessions, statuses) = coroutineScope {
                 val sessionsDeferred = async {
                     val globalDeferred = async {
-                        semaphore.withPermit {
-                            client.listSessions(directory = null, roots = true, limit = 100)
+                        trackedStep("Loading global sessions") {
+                            semaphore.withPermit {
+                                client.listSessions(directory = null, roots = true, limit = 100)
+                            }
                         }
                     }
                     val projectDeferreds = projects.map { project ->
                         async {
-                            semaphore.withPermit {
-                                client.listSessions(directory = project.worktree, roots = true, limit = 100)
+                            trackedStep("Loading sessions for ${project.worktree.substringAfterLast('/')}") {
+                                semaphore.withPermit {
+                                    client.listSessions(directory = project.worktree, roots = true, limit = 100)
+                                }
                             } to project
                         }
                     }
@@ -397,8 +427,11 @@ class SessionRepositoryImpl(
                     val directories = listOf<String?>(null) + projects.map { it.worktree }
                     directories.map { directory ->
                         async {
-                            semaphore.withPermit {
-                                directory to runCatching { client.getSessionStatuses(directory) }
+                            val label = directory?.substringAfterLast("/") ?: "global"
+                            trackedStep("Loading status for $label") {
+                                semaphore.withPermit {
+                                    directory to runCatching { client.getSessionStatuses(directory) }
+                                }
                             }
                         }
                     }.awaitAll().fold(mutableMapOf<String, SessionStatus>()) { acc, (_, result) ->
@@ -534,6 +567,30 @@ class SessionRepositoryImpl(
         }
     }
 
+    private fun applyPartDelta(event: OpenCodeEvent.MessagePartDelta) {
+        val sessionId = event.sessionID ?: findSessionIdForPart(event.messageID, event.partID) ?: return
+        messageState(sessionId).update { messages ->
+            messages.map { message ->
+                if (message.message.id != event.messageID) return@map message
+                message.copy(
+                    parts = message.parts.map { part ->
+                        if (part.id == event.partID) appendDeltaToPart(part, event.field, event.delta) else part
+                    }
+                )
+            }
+        }
+    }
+
+    private fun findSessionIdForPart(messageId: String, partId: String): String? = messageStates.entries.firstOrNull { (_, flow) ->
+        flow.value.any { message -> message.message.id == messageId && message.parts.any { it.id == partId } }
+    }?.key
+
+    private fun appendDeltaToPart(part: Part, field: String, delta: String): Part = when (part) {
+        is Part.Text -> if (field == "text") part.copy(text = part.text + delta, isStreaming = true) else part
+        is Part.Reasoning -> if (field == "text") part.copy(text = part.text + delta) else part
+        else -> part
+    }
+
     private fun removeMessage(sessionId: String, messageId: String) {
         messageState(sessionId).update { messages -> messages.filterNot { it.message.id == messageId } }
     }
@@ -551,10 +608,14 @@ class SessionRepositoryImpl(
     }
 
     private fun applyDelta(existing: Part, incoming: Part, delta: String?): Part =
-        if (delta != null && incoming is Part.Text && existing is Part.Text) {
-            incoming.copy(text = existing.text + delta, isStreaming = true)
-        } else {
-            incoming
+        when {
+            delta != null && incoming is Part.Text && existing is Part.Text -> {
+                incoming.copy(text = existing.text + delta, isStreaming = true)
+            }
+            delta != null && incoming is Part.Reasoning && existing is Part.Reasoning -> {
+                incoming.copy(text = existing.text + delta)
+            }
+            else -> incoming
         }
 
     private fun createPlaceholderMessage(sessionId: String, messageId: String): MessageWithParts = MessageWithParts(
@@ -581,7 +642,8 @@ class SessionRepositoryImpl(
         is OpenCodeEvent.SessionDiff,
         is OpenCodeEvent.SessionIdle,
         is OpenCodeEvent.SessionCompacted,
-        is OpenCodeEvent.SessionError -> true
+        is OpenCodeEvent.SessionError,
+        is OpenCodeEvent.MessagePartDelta -> true
         else -> false
     }
 

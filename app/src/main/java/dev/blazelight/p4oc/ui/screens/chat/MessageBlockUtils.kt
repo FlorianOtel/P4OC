@@ -3,7 +3,9 @@ package dev.blazelight.p4oc.ui.screens.chat
 import androidx.compose.runtime.Composable
 import dev.blazelight.p4oc.domain.model.Message
 import dev.blazelight.p4oc.domain.model.MessageWithParts
+import dev.blazelight.p4oc.domain.model.Part
 import dev.blazelight.p4oc.domain.model.Permission
+import dev.blazelight.p4oc.domain.model.ToolState
 import dev.blazelight.p4oc.ui.components.chat.AssistantMessages
 import dev.blazelight.p4oc.ui.components.chat.ChatMessage
 import dev.blazelight.p4oc.ui.components.toolwidgets.ToolWidgetState
@@ -13,7 +15,10 @@ import dev.blazelight.p4oc.ui.components.toolwidgets.ToolWidgetState
  * User messages are their own block. Consecutive assistant messages are merged.
  */
 internal sealed class MessageBlock {
-    data class UserBlock(val message: MessageWithParts) : MessageBlock()
+    data class UserBlock(
+        val message: MessageWithParts,
+        val revertMessageId: String? = null,
+    ) : MessageBlock()
     data class AssistantBlock(val messages: List<MessageWithParts>) : MessageBlock()
 }
 
@@ -23,6 +28,7 @@ internal sealed class MessageBlock {
 internal fun groupMessagesIntoBlocks(messages: List<MessageWithParts>): List<MessageBlock> {
     if (messages.isEmpty()) return emptyList()
 
+    val revertTargetsByUserId = revertTargetsByUserId(messages)
     val blocks = mutableListOf<MessageBlock>()
     var i = 0
 
@@ -30,7 +36,7 @@ internal fun groupMessagesIntoBlocks(messages: List<MessageWithParts>): List<Mes
         val current = messages[i]
 
         if (current.message is Message.User) {
-            blocks.add(MessageBlock.UserBlock(current))
+            blocks.add(MessageBlock.UserBlock(current, revertMessageId = revertTargetsByUserId[current.message.id]))
             i++
         } else {
             // Collect consecutive assistant messages
@@ -44,6 +50,14 @@ internal fun groupMessagesIntoBlocks(messages: List<MessageWithParts>): List<Mes
     }
 
     return blocks
+}
+
+private fun revertTargetsByUserId(messages: List<MessageWithParts>): Map<String, String> = buildMap {
+    messages.forEach { messageWithParts ->
+        val message = messageWithParts.message as? Message.Assistant ?: return@forEach
+        val hasCompletedTools = messageWithParts.parts.any { it is Part.Tool && it.state is ToolState.Completed }
+        if (hasCompletedTools && !containsKey(message.parentID)) put(message.parentID, message.id)
+    }
 }
 
 @Composable
@@ -67,7 +81,9 @@ internal fun MessageBlockView(
                 onOpenSubSession = onOpenSubSession,
                 defaultToolWidgetState = defaultToolWidgetState,
                 pendingPermissionsByCallId = pendingPermissionsByCallId,
-                onRevert = onRevert
+                onRevert = block.revertMessageId?.let { messageId ->
+                    onRevert?.let { revert -> { revert(messageId) } }
+                },
             )
         }
         is MessageBlock.AssistantBlock -> {
@@ -79,7 +95,6 @@ internal fun MessageBlockView(
                 onOpenSubSession = onOpenSubSession,
                 defaultToolWidgetState = defaultToolWidgetState,
                 pendingPermissionsByCallId = pendingPermissionsByCallId,
-                onRevert = onRevert
             )
         }
     }

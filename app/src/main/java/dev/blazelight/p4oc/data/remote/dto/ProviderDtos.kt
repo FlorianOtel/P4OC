@@ -30,6 +30,8 @@ data class ModelDto(
     val limit: ModelLimitDto? = null,
     val status: String? = null, // "alpha" | "beta" | "deprecated" | "active"
     val options: JsonObject? = null,
+    val variants: JsonObject? = null,
+    val variant: JsonObject? = null,
     val headers: Map<String, String>? = null,
     val contextLength: Int? = null,
     val inputCostPer1k: Double? = null,

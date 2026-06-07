@@ -205,6 +205,7 @@ fun ToolCallCompact(
 fun ToolCallExpanded(
     tool: Part.Tool,
     onClick: (() -> Unit)?,
+    showApprovalActions: Boolean = true,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     onOpenSubSession: ((String) -> Unit)? = null,
@@ -214,6 +215,7 @@ fun ToolCallExpanded(
         "bash", "execute", "shell" -> BashWidgetExpanded(
             tool = tool,
             onClick = onClick,
+            showApprovalActions = showApprovalActions,
             onToolApprove = onToolApprove,
             onToolDeny = onToolDeny,
             modifier = modifier
@@ -231,6 +233,7 @@ fun ToolCallExpanded(
         "task" -> TaskWidgetExpanded(
             tool = tool,
             onClick = onClick,
+            showApprovalActions = showApprovalActions,
             onToolApprove = onToolApprove,
             onToolDeny = onToolDeny,
             onOpenSubSession = onOpenSubSession,
@@ -239,6 +242,7 @@ fun ToolCallExpanded(
         else -> DefaultWidgetExpanded(
             tool = tool,
             onClick = onClick,
+            showApprovalActions = showApprovalActions,
             onToolApprove = onToolApprove,
             onToolDeny = onToolDeny,
             modifier = modifier

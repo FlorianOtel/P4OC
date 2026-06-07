@@ -86,6 +86,7 @@ data class SendMessageRequest(
     val noReply: Boolean? = null,
     val system: String? = null,
     val tools: JsonObject? = null,
+    val variant: String? = null,
     val parts: List<PartInputDto>
 )
 

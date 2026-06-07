@@ -3,6 +3,7 @@ package dev.blazelight.p4oc.ui.screens.chat
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.blazelight.p4oc.core.datastore.ChatSettings
 import dev.blazelight.p4oc.core.datastore.NotificationSettings
 import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.haptic.HapticFeedback
@@ -119,9 +120,20 @@ class ChatViewModel constructor(
     val visualSettings = settingsDataStore.visualSettings
         .stateIn(viewModelScope, SharingStarted.Eagerly, dev.blazelight.p4oc.core.datastore.VisualSettings())
 
+    val chatSettings = settingsDataStore.chatSettings
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ChatSettings())
+
     private val notificationSettings: StateFlow<NotificationSettings> =
         settingsDataStore.notificationSettings
             .stateIn(viewModelScope, SharingStarted.Eagerly, NotificationSettings())
+
+    private fun beginLoadStep(step: String) {
+        _uiState.update { it.copy(loadingSteps = it.loadingSteps + step) }
+    }
+
+    private fun endLoadStep(step: String) {
+        _uiState.update { it.copy(loadingSteps = it.loadingSteps - step) }
+    }
 
     private companion object {
         const val TAG = "ChatViewModel"
@@ -185,7 +197,9 @@ class ChatViewModel constructor(
 
     private fun loadSession() {
         viewModelScope.launch {
+            beginLoadStep("Loading session metadata")
             val result = safeApiCall { workspaceClient.getSession(sessionId) }
+            endLoadStep("Loading session metadata")
             when (result) {
                 is ApiResult.Success -> {
                     val session = SessionMapper.mapToDomain(result.data)
@@ -207,9 +221,11 @@ class ChatViewModel constructor(
     private fun loadMessages() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
+            beginLoadStep("Loading session messages")
             AppLog.d(TAG, "loadMessages() called for session: $sessionId")
 
             val result = safeApiCall { sessionRepository.loadMessages(SessionId(sessionId), limit = null) }
+            endLoadStep("Loading session messages")
 
             when (result) {
                 is ApiResult.Success -> {
@@ -232,10 +248,12 @@ class ChatViewModel constructor(
 
     private fun loadVcsInfo() {
         viewModelScope.launch {
+            beginLoadStep("Loading workspace status")
             when (val result = safeApiCall { workspaceClient.getVcsInfo() }) {
                 is ApiResult.Success -> _branchName.value = result.data.branch
                 is ApiResult.Error -> AppLog.w(TAG, "Failed to load VCS info: ${result.message}")
             }
+            endLoadStep("Loading workspace status")
         }
     }
 
@@ -293,6 +311,7 @@ class ChatViewModel constructor(
 
         val selectedAgent = modelAgentManager.selectedAgent.value
         val selectedModel = modelAgentManager.selectedModel.value
+        val selectedVariant = modelAgentManager.currentReasoningEffort()
         _uiState.update { it.copy(inputText = "", isSending = true) }
         filePickerManager.clearAttachedFiles()
 
@@ -301,7 +320,8 @@ class ChatViewModel constructor(
             val request = SendMessageRequest(
                 parts = parts,
                 agent = selectedAgent,
-                model = selectedModel
+                model = selectedModel,
+                variant = selectedVariant
             )
 
             val result = sessionRepository.sendMessageAsync(SessionId(sessionId), request).await().toApiResult()
@@ -343,6 +363,7 @@ class ChatViewModel constructor(
 
         val selectedAgent = modelAgentManager.selectedAgent.value
         val selectedModel = modelAgentManager.selectedModel.value
+        val selectedVariant = modelAgentManager.currentReasoningEffort()
 
         _uiState.update {
             it.copy(
@@ -351,7 +372,8 @@ class ChatViewModel constructor(
                     text = text,
                     attachedFiles = attachedFiles,
                     agent = selectedAgent,
-                    model = selectedModel
+                    model = selectedModel,
+                    variant = selectedVariant
                 )
             )
         }
@@ -381,7 +403,8 @@ class ChatViewModel constructor(
             val request = SendMessageRequest(
                 parts = parts,
                 agent = queued.agent,
-                model = queued.model
+                model = queued.model,
+                variant = queued.variant
             )
 
             val result = sessionRepository.sendMessageAsync(SessionId(sessionId), request).await().toApiResult()
@@ -434,11 +457,18 @@ class ChatViewModel constructor(
         viewModelScope.launch {
             val request = PermissionResponseRequest(reply = response)
             when (val result = safeApiCall { workspaceClient.respondToPermission(permissionId, request) }) {
-                is ApiResult.Success -> sessionRepository.clearPermission(SessionId(sessionId), permissionId)
+                is ApiResult.Success -> {
+                    dialogManager.clearPermission(permissionId)
+                    sessionRepository.clearPermission(SessionId(sessionId), permissionId)
+                }
                 is ApiResult.Error -> _uiState.update {
-                    it.copy(
-                        error = "Failed to respond to permission: ${result.message}"
-                    )
+                    if (result.message.contains("bad request", ignoreCase = true)) {
+                        dialogManager.clearPermission(permissionId)
+                        sessionRepository.clearPermission(SessionId(sessionId), permissionId)
+                        it
+                    } else {
+                        it.copy(error = "Failed to respond to permission: ${result.message}")
+                    }
                 }
             }
         }
@@ -473,7 +503,9 @@ class ChatViewModel constructor(
                     commands = it.commands.ifEmpty { BUILTIN_COMMANDS }
                 )
             }
+            beginLoadStep("Loading slash commands")
             val result = safeApiCall { workspaceClient.listCommands() }
+            endLoadStep("Loading slash commands")
             when (result) {
                 is ApiResult.Success -> {
                     AppLog.d(TAG, "loadCommands: Got ${result.data.size} commands from API")
@@ -535,7 +567,9 @@ class ChatViewModel constructor(
     fun loadTodos() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingTodos = true) }
+            beginLoadStep("Loading todos")
             val result = safeApiCall { workspaceClient.getSessionTodos(sessionId) }
+            endLoadStep("Loading todos")
             when (result) {
                 is ApiResult.Success -> {
                     val todos = result.data.map { TodoMapper.mapToDomain(it) }
@@ -618,6 +652,7 @@ data class ChatUiState(
     val session: Session? = null,
     val inputText: String = "",
     val isLoading: Boolean = false,
+    val loadingSteps: Set<String> = emptySet(),
     val isSending: Boolean = false,
     val isBusy: Boolean = false,
     val error: String? = null,
@@ -635,5 +670,6 @@ data class QueuedMessage(
     val text: String,
     val attachedFiles: List<SelectedFile> = emptyList(),
     val agent: String? = null,
-    val model: ModelInput? = null
+    val model: ModelInput? = null,
+    val variant: String? = null
 )
