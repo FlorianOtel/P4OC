@@ -64,7 +64,7 @@ internal data class NormalizedSeed(
 )
 
 internal fun normalizeSeed(seed: DiscoverySeed): NormalizedSeed? {
-    val canonicalUrl = ServerUrl.normalizeConnectUrl(seed.rawUrl) ?: return null
+    val canonicalUrl = normalizeSeedUrl(seed.rawUrl) ?: return null
     val parsed = canonicalUrl.toHttpUrlOrNull() ?: return null
     val host = if (':' in parsed.host) "[${parsed.host}]" else parsed.host
 
@@ -75,6 +75,51 @@ internal fun normalizeSeed(seed: DiscoverySeed): NormalizedSeed? {
         scheme = parsed.scheme,
         allowInsecure = seed.allowInsecure,
     )
+}
+
+private fun normalizeSeedUrl(rawUrl: String): String? {
+    val trimmed = rawUrl.trim()
+    if (trimmed.isBlank()) return null
+
+    val candidate = if (trimmed.contains("://")) trimmed else "http://$trimmed"
+    val parsed = candidate.toHttpUrlOrNull() ?: return null
+    if (parsed.scheme != "http" && parsed.scheme != "https") return null
+
+    val builder = parsed.newBuilder()
+        .query(null)
+        .fragment(null)
+
+    if (!hasExplicitSeedPort(candidate)) {
+        builder.port(ServerUrl.DEFAULT_PORT)
+    }
+
+    val normalized = builder.build()
+    val path = normalized.encodedPath.takeUnless { it == "/" }?.trimEnd('/').orEmpty()
+    return buildString {
+        append(normalized.scheme)
+        append("://")
+        append(formatSeedHost(normalized.host))
+        append(':')
+        append(normalized.port)
+        append(path)
+    }
+}
+
+private fun formatSeedHost(host: String): String = if (':' in host) "[$host]" else host
+
+private fun hasExplicitSeedPort(candidate: String): Boolean {
+    val authority = candidate
+        .substringAfter("://")
+        .substringBefore('/')
+        .substringBefore('?')
+        .substringBefore('#')
+        .substringAfterLast('@')
+
+    if (authority.startsWith("[")) {
+        return authority.substringAfter("]", missingDelimiterValue = "").startsWith(":")
+    }
+
+    return authority.contains(':')
 }
 
 internal fun endpointKey(url: String): String = ServerUrl.endpointKey(url) ?: url.trim()
