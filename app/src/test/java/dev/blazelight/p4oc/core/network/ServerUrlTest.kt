@@ -18,13 +18,13 @@ class ServerUrlTest {
     }
 
     @Test
-    fun `explicit http without port uses default http port`() {
-        assertEquals("http://example.com:80", ServerUrl.normalizeConnectUrl("http://example.com"))
+    fun `explicit http without port uses opencode default port`() {
+        assertEquals("http://example.com:4096", ServerUrl.normalizeConnectUrl("http://example.com"))
     }
 
     @Test
-    fun `explicit https without port uses default https port`() {
-        assertEquals("https://example.com:443", ServerUrl.normalizeConnectUrl("https://example.com"))
+    fun `explicit https without port uses opencode default port`() {
+        assertEquals("https://example.com:4096", ServerUrl.normalizeConnectUrl("https://example.com"))
     }
 
     @Test
@@ -45,7 +45,7 @@ class ServerUrlTest {
 
     @Test
     fun `host is lowercased`() {
-        assertEquals("https://example.com:443", ServerUrl.normalizeConnectUrl("https://EXAMPLE.COM"))
+        assertEquals("https://example.com:4096", ServerUrl.normalizeConnectUrl("https://EXAMPLE.COM"))
     }
 
     @Test
@@ -61,7 +61,7 @@ class ServerUrlTest {
     @Test
     fun `ipv6 is bracketed and zone id is stripped with path preserved`() {
         assertEquals(
-            "http://[2001:db8::1]:80/foo",
+            "http://[2001:db8::1]:4096/foo",
             ServerUrl.normalizeConnectUrl("http://[2001:db8::1%wlan0]/foo"),
         )
     }

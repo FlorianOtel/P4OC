@@ -31,6 +31,7 @@ import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -121,6 +122,22 @@ class ConnectionManager constructor(
         disconnect()
         _connectionState.value = ConnectionState.Connecting
 
+        val configsToTry = connectionCandidates(config)
+        var lastError: Throwable? = null
+        configsToTry.forEachIndexed { index, candidate ->
+            if (index > 0) {
+                AppLog.d(TAG, "Retrying connection with fallback URL ${candidate.url}")
+            }
+
+            val result = connectSingle(candidate, password)
+            if (result.isSuccess) return result
+            lastError = result.exceptionOrNull()
+        }
+
+        return Result.failure(lastError ?: Exception("Connection failed"))
+    }
+
+    private suspend fun connectSingle(config: ServerConfig, password: String? = null): Result<List<ProjectDto>> {
         return try {
             val baseClient = buildBaseOkHttpClient(config, password)
             val okHttpClient = buildOkHttpClient(baseClient)
@@ -182,6 +199,22 @@ class ConnectionManager constructor(
             _authOkHttpClient.value = null
             Result.failure(e)
         }
+    }
+
+    private fun connectionCandidates(config: ServerConfig): List<ServerConfig> {
+        val parsed = config.url.toHttpUrlOrNull() ?: return listOf(config)
+        if (parsed.port != ServerUrl.DEFAULT_PORT) return listOf(config)
+
+        val fallbackPort = when (parsed.scheme) {
+            "http" -> 80
+            "https" -> 443
+            else -> return listOf(config)
+        }
+
+        val fallbackUrl = parsed.newBuilder().port(fallbackPort).build().toString().trimEnd('/')
+        if (fallbackUrl == config.url.trimEnd('/')) return listOf(config)
+
+        return listOf(config, config.copy(url = fallbackUrl))
     }
 
     /**
