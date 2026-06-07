@@ -156,6 +156,7 @@ fun TabNavHost(
             // Sessions list (start destination for new tabs)
             composable(Screen.Sessions.route) { backStackEntry ->
                 val workspaceViewModel = TouchWorkspaceViewModel(
+                    backStackEntry,
                     navController,
                     workspaceRoute,
                     workspaceOwner,
@@ -228,6 +229,7 @@ fun TabNavHost(
                 )
             ) { backStackEntry ->
                 val workspaceViewModel = TouchWorkspaceViewModel(
+                    backStackEntry,
                     navController,
                     workspaceRoute,
                     workspaceOwner,
@@ -300,6 +302,7 @@ fun TabNavHost(
                 arguments = listOf(navArgument(Screen.Chat.ARG_SESSION_ID) { type = NavType.StringType })
             ) { backStackEntry ->
                 val workspaceViewModel = TouchWorkspaceViewModel(
+                    backStackEntry,
                     navController,
                     workspaceRoute,
                     workspaceOwner,
@@ -358,7 +361,7 @@ fun TabNavHost(
 
             // Projects screen
             composable(Screen.Projects.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 ProjectsScreen(
                     onNavigateBack = {
                         navController.popBackStack()
@@ -382,7 +385,7 @@ fun TabNavHost(
                     navArgument(Screen.Terminal.ARG_PTY_ID) { type = NavType.StringType }
                 )
             ) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 TerminalScreen(
                     onPtyLoaded = { ptyId, ptyTitle ->
                         // Update tab binding with PTY id and title
@@ -394,6 +397,7 @@ fun TabNavHost(
             // Files screen
             composable(Screen.Files.route) { backStackEntry ->
                 val workspaceViewModel = TouchWorkspaceViewModel(
+                    backStackEntry,
                     navController,
                     workspaceRoute,
                     workspaceOwner,
@@ -428,6 +432,7 @@ fun TabNavHost(
                 )
             ) { backStackEntry ->
                 val workspaceViewModel = TouchWorkspaceViewModel(
+                    backStackEntry,
                     navController,
                     workspaceRoute,
                     workspaceOwner,
@@ -460,7 +465,7 @@ fun TabNavHost(
                     }
                 )
             ) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 val encodedContent = backStackEntry.arguments?.getString(Screen.DiffViewer.ARG_CONTENT) ?: ""
                 val encodedFileName = backStackEntry.arguments?.getString(Screen.DiffViewer.ARG_FILE_NAME) ?: ""
                 DiffViewerScreen(
@@ -477,6 +482,7 @@ fun TabNavHost(
                 )
             ) { backStackEntry ->
                 val workspaceViewModel = TouchWorkspaceViewModel(
+                    backStackEntry,
                     navController,
                     workspaceRoute,
                     workspaceOwner,
@@ -492,7 +498,7 @@ fun TabNavHost(
 
             // Settings screens
             composable(Screen.Settings.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 SettingsScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onDisconnect = onDisconnect,
@@ -524,63 +530,63 @@ fun TabNavHost(
             }
 
             composable(Screen.Licenses.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 dev.blazelight.p4oc.ui.screens.licenses.LicensesScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.ProviderConfig.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 ProviderConfigScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.VisualSettings.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 VisualSettingsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.ChatSettings.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 ChatSettingsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.ModelControls.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 ModelControlsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.AgentsConfig.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 AgentsConfigScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.Skills.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 SkillsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.NotificationSettings.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 NotificationSettingsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.ConnectionSettings.route) { backStackEntry ->
-                TouchWorkspaceViewModel(navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
+                TouchWorkspaceViewModel(backStackEntry, navController, workspaceRoute, workspaceOwner, backStackEntry.destination.route)
                 ConnectionSettingsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
@@ -591,6 +597,7 @@ fun TabNavHost(
 
 @Composable
 private fun TouchWorkspaceViewModel(
+    owner: NavBackStackEntry,
     navController: NavHostController,
     workspaceRoute: String,
     workspaceOwner: WorkspaceRepositoryOwner,
@@ -598,6 +605,7 @@ private fun TouchWorkspaceViewModel(
 ): WorkspaceViewModel {
     val viewModel = workspaceViewModelForTab(
         navController = navController,
+        owner = owner,
         workspaceRoute = workspaceRoute,
         workspaceOwner = workspaceOwner,
     )
@@ -610,10 +618,11 @@ private fun TouchWorkspaceViewModel(
 @Composable
 private fun workspaceViewModelForTab(
     navController: NavHostController,
+    owner: NavBackStackEntry,
     workspaceRoute: String,
     workspaceOwner: WorkspaceRepositoryOwner,
 ): WorkspaceViewModel {
-    val parentEntry = remember(navController, workspaceRoute) {
+    val parentEntry = remember(owner, navController, workspaceRoute) {
         navController.getBackStackEntry(WORKSPACE_GRAPH_ROUTE)
     }
     return koinViewModel(

@@ -46,6 +46,7 @@ fun LicensesScreen(
     val texts by viewModel.texts.collectAsState()
     val loading by viewModel.loadingTexts.collectAsState()
     val entries = remember { LicenseCatalogue.all }
+    val requestChannelUrl = stringResource(R.string.licenses_request_channel_url)
     var expandedKey by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
@@ -80,10 +81,7 @@ fun LicensesScreen(
                         showLgpl = entries.any { it.license == License.LGPL_2_1 },
                         showGpl = entries.any { it.license == License.GPL_3_0 },
                         onOpenRequestChannel = {
-                            openUrl(
-                                context,
-                                context.getString(R.string.licenses_request_channel_url),
-                            )
+                            openUrl(context, requestChannelUrl)
                         },
                     )
                 }

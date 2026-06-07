@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.annotation.RequiresApi
 import dev.blazelight.p4oc.core.datastore.VibrationPattern
 import dev.blazelight.p4oc.core.log.AppLog
 
@@ -63,6 +64,7 @@ class HapticFeedback(private val context: Context) {
         context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun VibrationPattern.toEffect(): VibrationEffect = when (this) {
         VibrationPattern.None -> VibrationEffect.createOneShot(0L, 0)
         VibrationPattern.Tick -> predefinedOrFallback(VibrationEffect.EFFECT_TICK, TICK_DURATION_MS)
@@ -101,12 +103,14 @@ class HapticFeedback(private val context: Context) {
         )
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun predefinedOrFallback(effectId: Int, fallbackDurationMs: Long): VibrationEffect = runCatching {
         VibrationEffect.createPredefined(effectId)
     }.getOrElse {
         VibrationEffect.createOneShot(fallbackDurationMs, VibrationEffect.DEFAULT_AMPLITUDE)
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun predefinedOrFallback(effectId: Int, fallbackTimings: LongArray): VibrationEffect = runCatching {
         VibrationEffect.createPredefined(effectId)
     }.getOrElse {
