@@ -54,7 +54,8 @@ data class Session(
     val compactingAt: Long? = null,
     val summary: SessionSummary? = null,
     val shareUrl: String? = null,
-    val revert: SessionRevert? = null
+    val revert: SessionRevert? = null,
+    val model: ModelRef? = null
 )
 
 @Serializable
