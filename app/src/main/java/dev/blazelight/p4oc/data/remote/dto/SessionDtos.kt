@@ -25,7 +25,8 @@ data class SessionDto(
     val time: TimeDto,
     val summary: SessionSummaryDto? = null,
     val share: SessionShareDto? = null,
-    val revert: SessionRevertDto? = null
+    val revert: SessionRevertDto? = null,
+    val model: SessionModelDto? = null
 )
 
 @Serializable
@@ -97,4 +98,11 @@ data class InitSessionRequest(
     @SerialName("messageID") val messageID: String,
     @SerialName("providerID") val providerID: String,
     @SerialName("modelID") val modelID: String
+)
+
+@Serializable
+data class SessionModelDto(
+    val id: String,
+    @SerialName("providerID") val providerID: String,
+    val variant: String? = null
 )

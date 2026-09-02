@@ -204,6 +204,7 @@ class ChatViewModel constructor(
                 is ApiResult.Success -> {
                     val session = SessionMapper.mapToDomain(result.data)
                     _uiState.update { it.copy(session = session) }
+                    modelAgentManager.setSessionModel(session.model)
                     // Reload VCS now that we have the canonical session directory
                     loadVcsInfo()
                 }

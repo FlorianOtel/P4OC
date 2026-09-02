@@ -55,7 +55,8 @@ object SessionMapper {
         compactingAt = dto.time.compacting,
         summary = dto.summary?.let { mapSummaryToDomain(it) },
         shareUrl = dto.share?.url,
-        revert = dto.revert?.let { mapRevertToDomain(it) }
+        revert = dto.revert?.let { mapRevertToDomain(it) },
+        model = dto.model?.let { ModelRef(it.providerID, it.id) }
     )
 
     private fun mapSummaryToDomain(dto: SessionSummaryDto): SessionSummary = SessionSummary(

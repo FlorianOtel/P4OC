@@ -9,6 +9,7 @@ import dev.blazelight.p4oc.data.remote.dto.AgentDto
 import dev.blazelight.p4oc.data.remote.dto.ModelDto
 import dev.blazelight.p4oc.data.remote.dto.ModelInput
 import dev.blazelight.p4oc.data.remote.dto.reasoningEfforts
+import dev.blazelight.p4oc.domain.model.ModelRef
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -42,6 +43,9 @@ class ModelAgentManager(
     val selectedReasoningEffort: StateFlow<String?> = _selectedReasoningEffort.asStateFlow()
 
     private var selectedModelFromAgent = false
+    private var sessionModel: ModelRef? = null
+    private var selectedModelFromSession = false
+    private var selectedModelFromUser = false
 
     val favoriteModels: StateFlow<Set<ModelInput>> = settingsDataStore.favoriteModels
         .stateIn(scope, SharingStarted.Eagerly, emptySet())
@@ -97,6 +101,7 @@ class ModelAgentManager(
             modelID = agentModel.modelID
         )
         selectedModelFromAgent = true
+        selectedModelFromUser = false
     }
 
     fun loadModels() {
@@ -125,8 +130,16 @@ class ModelAgentManager(
                         defaultModel
                     }
                     _availableModels.value = models
-                    if (!selectedModelFromAgent) {
-                        _selectedModel.value = selectedModel
+                    if (!selectedModelFromAgent && !selectedModelFromSession) {
+                        val sessionInput = sessionModel?.let {
+                            ModelInput(providerID = it.providerID, modelID = it.modelID)
+                        }
+                        if (sessionInput != null) {
+                            _selectedModel.value = sessionInput
+                            selectedModelFromSession = true
+                        } else {
+                            _selectedModel.value = selectedModel
+                        }
                     }
                 }
                 is ApiResult.Error -> {}
@@ -140,9 +153,25 @@ class ModelAgentManager(
         }
         _selectedModel.value = model
         selectedModelFromAgent = false
+        selectedModelFromSession = false
+        selectedModelFromUser = true
         scope.launch {
             settingsDataStore.addRecentModel(model)
         }
+    }
+
+    fun setSessionModel(model: ModelRef?) {
+        sessionModel = model
+        if (model == null) {
+            selectedModelFromSession = false
+            return
+        }
+        if (selectedModelFromAgent || selectedModelFromSession || selectedModelFromUser) return
+        _selectedModel.value = ModelInput(
+            providerID = model.providerID,
+            modelID = model.modelID
+        )
+        selectedModelFromSession = true
     }
 
     fun selectReasoningEffort(reasoningEffort: String?) {
