@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -44,6 +45,7 @@ class OpenCodeEventSource(
     companion object {
         private const val TAG = "OpenCodeEventSource"
         private const val MAX_CONSECUTIVE_ERRORS = 15
+        internal const val MAX_EVENT_DATA_CHARS = 4 * 1024 * 1024
     }
 
     private val eventPumpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -57,6 +59,13 @@ class OpenCodeEventSource(
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    // Monotonic reconnect counter. Increments on every active-generation onOpen, before
+    // Connected is published. It is the authoritative reconnect signal: rapid or conflated
+    // Connecting->Connected transitions that a StateFlow<ConnectionState> may coalesce
+    // remain individually observable here, and downstream owners can key recovery off it.
+    private val _connectionEpoch = MutableStateFlow(0L)
+    val connectionEpoch: StateFlow<Long> = _connectionEpoch.asStateFlow()
 
     // Lifecycle lock — guards backgroundEventSource reference only.
     // close() is called OUTSIDE the lock to avoid blocking other callers (~2s executor shutdown).
@@ -116,8 +125,6 @@ class OpenCodeEventSource(
             _connectionState.value = ConnectionState.Disconnected
         }
         toClose?.closeSafely()
-        eventPumpScope.cancel("OpenCodeEventSource shut down")
-        eventChannel.close()
     }
 
     fun reconnect() {
@@ -155,6 +162,8 @@ class OpenCodeEventSource(
             _connectionState.value = ConnectionState.Disconnected
         }
         toClose?.closeSafely()
+        eventChannel.cancel()
+        eventPumpScope.cancel("OpenCodeEventSource shut down")
     }
 
     /**
@@ -174,17 +183,16 @@ class OpenCodeEventSource(
         try {
             close()
         } catch (e: Exception) {
-            AppLog.w(TAG, "Error closing BackgroundEventSource: ${e.message}", e)
+            AppLog.w(TAG, "Error closing BackgroundEventSource: ${e.javaClass.simpleName}")
         }
     }
 
     private fun createBackgroundEventSource(gen: Long): BackgroundEventSource {
         val eventUrl = "$baseUrl/global/event"
-        AppLog.d(TAG, "SSE target URL: $eventUrl")
+        AppLog.d(TAG, "Creating SSE event source")
 
         val connectStrategy = ConnectStrategy.http(URI(eventUrl))
             .httpClient(okHttpClient)
-            .readTimeout(0, TimeUnit.SECONDS)
 
         val eventSourceBuilder = EventSource.Builder(connectStrategy)
             .errorStrategy(ErrorStrategy.alwaysContinue())
@@ -195,25 +203,36 @@ class OpenCodeEventSource(
         return BackgroundEventSource.Builder(handler, eventSourceBuilder)
             .threadBaseName("OpenCodeSSE")
             .connectionErrorHandler(
-                ConnectionErrorHandler { t ->
-                    // Decision-only — do NOT emit events here to avoid duplicates with onError/onClosed.
-                    if (isShutdown || !isActiveGeneration(gen)) {
-                        AppLog.d(TAG, "Connection error after shutdown/stale → SHUTDOWN (${t.message})")
-                        ConnectionErrorHandler.Action.SHUTDOWN
-                    } else {
-                        AppLog.d(TAG, "Connection error, library will retry: ${t.message}")
-                        ConnectionErrorHandler.Action.PROCEED
-                    }
-                }
+                ConnectionErrorHandler { t -> connectionErrorAction(t, gen) }
             )
             .build()
     }
+
+    // Decision-only — do NOT emit events here to avoid duplicates with onError/onClosed.
+    private fun connectionErrorAction(t: Throwable, gen: Long): ConnectionErrorHandler.Action =
+        if (isShutdown || !isActiveGeneration(gen)) {
+            AppLog.d(TAG, "Connection error after shutdown/stale → SHUTDOWN (${t.javaClass.simpleName})")
+            ConnectionErrorHandler.Action.SHUTDOWN
+        } else if (consecutiveErrors.get() >= MAX_CONSECUTIVE_ERRORS) {
+            AppLog.w(
+                TAG,
+                "Connection error cap reached (${consecutiveErrors.get()}) → SHUTDOWN (${t.javaClass.simpleName})"
+            )
+            ConnectionErrorHandler.Action.SHUTDOWN
+        } else {
+            AppLog.d(TAG, "Connection error; library will retry: ${t.javaClass.simpleName}")
+            ConnectionErrorHandler.Action.PROCEED
+        }
 
     /** Returns true if [gen] matches the current active generation and we're not shut down. */
     private fun isActiveGeneration(gen: Long): Boolean =
         !isShutdown && generation == gen
 
     private fun parseAndEmitEvent(data: String, gen: Long) {
+        if (data.length > MAX_EVENT_DATA_CHARS) {
+            rejectOversizedEvent(data.length, gen)
+            return
+        }
         try {
             val globalEvent = json.decodeFromString<GlobalEventDto>(data)
             val event = eventMapper.mapToEvent(globalEvent.payload)
@@ -231,9 +250,20 @@ class OpenCodeEventSource(
                 }
             } catch (e2: Exception) {
                 if (!data.contains("server.heartbeat") && !data.contains("server.connected")) {
-                    AppLog.e(TAG, "Failed to parse event (${data.length} chars): ${data.take(80)}…", e2)
+                    AppLog.e(TAG, "Failed to parse event (${data.length} chars): ${e2.javaClass.simpleName}")
                 }
             }
+        }
+    }
+
+    private fun rejectOversizedEvent(length: Int, gen: Long) {
+        AppLog.w(TAG, "Rejecting oversized SSE event ($length chars)")
+        if (!isActiveGeneration(gen)) return
+        val error = IllegalStateException("SSE event exceeded the safe size limit")
+        _connectionState.value = ConnectionState.Error(error.message.orEmpty())
+        enqueueEvent(OpenCodeEvent.Error(error), gen)
+        eventPumpScope.launch {
+            if (isActiveGeneration(gen)) reconnect()
         }
     }
 
@@ -242,7 +272,7 @@ class OpenCodeEventSource(
             QueuedEvent(event = event, directory = null, includeDirectoryEvent = false, generation = gen)
         )
         if (result.isFailure) {
-            AppLog.e(TAG, "Failed to queue event: ${event::class.simpleName}", result.exceptionOrNull())
+            AppLog.e(TAG, "Failed to queue event: ${event::class.simpleName}")
         }
     }
 
@@ -251,7 +281,7 @@ class OpenCodeEventSource(
             QueuedEvent(event = event, directory = directory, includeDirectoryEvent = true, generation = gen)
         )
         if (result.isFailure) {
-            AppLog.e(TAG, "Failed to queue mapped event: ${event::class.simpleName}", result.exceptionOrNull())
+            AppLog.e(TAG, "Failed to queue mapped event: ${event::class.simpleName}")
         }
     }
 
@@ -279,6 +309,9 @@ class OpenCodeEventSource(
             AppLog.d(TAG, "SSE connected (onOpen)")
             errorFiredSinceOpen = false
             consecutiveErrors.set(0)
+            // Bump the reconnect epoch before publishing Connected so every successful
+            // (re)connection is observable even if the state transition is coalesced.
+            _connectionEpoch.update { it + 1 }
             _connectionState.value = ConnectionState.Connected
             enqueueEvent(OpenCodeEvent.Connected, gen)
         }
@@ -327,13 +360,12 @@ class OpenCodeEventSource(
             if (errorCount >= MAX_CONSECUTIVE_ERRORS) {
                 AppLog.e(
                     TAG,
-                    "SSE error (onError): ${t.message}, $errorCount consecutive errors – escalating to Disconnected",
-                    t
+                    "SSE error: ${t.javaClass.simpleName}, $errorCount consecutive errors; disconnecting",
                 )
                 _connectionState.value = ConnectionState.Disconnected
             } else {
-                AppLog.e(TAG, "SSE error (onError): ${t.message}, consecutiveErrors=$errorCount", t)
-                _connectionState.value = ConnectionState.Error(t.message)
+                AppLog.e(TAG, "SSE error (onError): ${t.javaClass.simpleName}, consecutiveErrors=$errorCount")
+                _connectionState.value = ConnectionState.Error("Live updates are temporarily unavailable")
             }
             enqueueEvent(OpenCodeEvent.Error(t), gen)
         }

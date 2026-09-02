@@ -1,0 +1,4 @@
+# Go test and coverage artifacts
+*.test
+*.out
+coverage.*

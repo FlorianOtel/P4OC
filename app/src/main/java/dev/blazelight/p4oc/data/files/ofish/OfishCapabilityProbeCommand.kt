@@ -39,9 +39,18 @@ internal object OfishCapabilityProbeCommand {
         has_rm=0; have rm && has_rm=1 || missing="${'$'}missing rm"
         has_awk=0; have awk && has_awk=1 || missing="${'$'}missing awk"
         has_mktemp=0; have mktemp && has_mktemp=1 || missing="${'$'}missing mktemp"
+        has_chmod=0; have chmod && has_chmod=1 || missing="${'$'}missing chmod"
+        mode=""
+        if have stat && stat -c '%a' . >/dev/null 2>&1; then
+          mode="stat -c %a"
+        elif have stat && stat -f '%Lp' . >/dev/null 2>&1; then
+          mode="stat -f %Lp"
+        else
+          missing="${'$'}missing stat_mode"
+        fi
 
-        printf 'caps base64=%s base64_decode=%s hash=%s mv=%s mkdir=%s rm=%s awk=%s mktemp=%s\n' \
-          "${'$'}base64_present" "${'$'}base64_decode" "${'$'}hash" "${'$'}has_mv" "${'$'}has_mkdir" "${'$'}has_rm" "${'$'}has_awk" "${'$'}has_mktemp"
+        printf 'caps base64=%s base64_decode=%s hash=%s mv=%s mkdir=%s rm=%s awk=%s mktemp=%s chmod=%s mode=%s\n' \
+          "${'$'}base64_present" "${'$'}base64_decode" "${'$'}hash" "${'$'}has_mv" "${'$'}has_mkdir" "${'$'}has_rm" "${'$'}has_awk" "${'$'}has_mktemp" "${'$'}has_chmod" "${'$'}mode"
 
         if [ -n "${'$'}missing" ]; then
           printf '### 501 caps_missing%s\n' "${'$'}missing"

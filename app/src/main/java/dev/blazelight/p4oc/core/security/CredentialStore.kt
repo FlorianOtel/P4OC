@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.io.IOException
+import java.security.GeneralSecurityException
 
 /**
  * Encrypted credential storage backed by EncryptedSharedPreferences.
@@ -15,26 +17,59 @@ import androidx.security.crypto.MasterKey
  * This is the SOLE authority for password storage. No passwords should be
  * persisted in DataStore, ServerConfig, or RecentServer JSON.
  */
-class CredentialStore(context: Context) {
+class CredentialStore private constructor(
+    private val prefs: SharedPreferences,
+) {
+
+    constructor(context: Context) : this(
+        createWithRecovery(
+            create = { createEncryptedPreferences(context) },
+            reset = { context.deleteSharedPreferences(FILE_NAME) },
+        ),
+    )
+
+    internal constructor(
+        context: Context,
+        createPreferences: (Context) -> SharedPreferences,
+        deletePreferences: (Context) -> Unit,
+    ) : this(
+        createWithRecovery(
+            create = { createPreferences(context) },
+            reset = { deletePreferences(context) },
+        ),
+    )
 
     companion object {
         private const val FILE_NAME = "p4oc_credentials"
         private const val KEY_ACTIVE_PASSWORD = "active_password"
         private fun serverPasswordKey(url: String): String = "server_password:$url"
-    }
 
-    private val prefs: SharedPreferences = run {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
+        private fun createEncryptedPreferences(context: Context): SharedPreferences {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
 
-        EncryptedSharedPreferences.create(
-            context,
-            FILE_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+            return EncryptedSharedPreferences.create(
+                context,
+                FILE_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        }
+
+        private fun createWithRecovery(
+            create: () -> SharedPreferences,
+            reset: () -> Unit,
+        ): SharedPreferences = try {
+            create()
+        } catch (_: GeneralSecurityException) {
+            reset()
+            create()
+        } catch (_: IOException) {
+            reset()
+            create()
+        }
     }
 
     // ── Active connection password ──────────────────────────────────────

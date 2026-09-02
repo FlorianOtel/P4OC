@@ -181,7 +181,7 @@ private fun UploadItemRow(item: UploadItem) {
         UploadPhase.Reading -> stringResource(R.string.upload_phase_reading) to theme.info
         UploadPhase.Uploading -> stringResource(R.string.upload_phase_uploading) to theme.accent
         UploadPhase.Done -> stringResource(R.string.upload_phase_done) to theme.success
-        is UploadPhase.Failed -> (phase.message.ifBlank { stringResource(R.string.upload_phase_failed) }) to theme.error
+        is UploadPhase.Failed -> stringResource(R.string.upload_phase_failed) to theme.error
     }
     val probeFailure = item.probeFailure
     Row(
@@ -197,7 +197,11 @@ private fun UploadItemRow(item: UploadItem) {
             color = theme.textMuted,
         )
         Text(
-            text = if (probeFailure == null) item.displayName else "${item.displayName} · probe failed: $probeFailure",
+            text = if (probeFailure == null) {
+                item.displayName
+            } else {
+                stringResource(R.string.upload_probe_failed_for, item.displayName)
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = theme.text,
             modifier = Modifier.weight(1f),

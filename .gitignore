@@ -11,6 +11,7 @@
 
 # Generated files
 bin/
+!demo/**/bin/
 gen/
 out/
 
@@ -73,5 +74,12 @@ detekt-*.html
 detekt-*.txt
 repomix-*.xml
 temp_research/
+BUG_FIXING.md
+msg.txt
+local-adb-screenshots/
+.opencode/package-lock.json
 *.png
 !screenshots/*.png
+
+# Local Docker demo credentials
+.env.demo

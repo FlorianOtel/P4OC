@@ -3,20 +3,21 @@ package dev.blazelight.p4oc.core.notification
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import dev.blazelight.p4oc.core.datastore.NotificationRoutingMode
 import dev.blazelight.p4oc.core.datastore.NotificationSettings
 import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.haptic.HapticFeedback
 import dev.blazelight.p4oc.core.log.AppLog
-import dev.blazelight.p4oc.core.network.ConnectionManager
+import dev.blazelight.p4oc.core.network.ServerConnectionRegistry
 import dev.blazelight.p4oc.domain.model.OpenCodeEvent
 import dev.blazelight.p4oc.domain.model.SessionStatus
+import dev.blazelight.p4oc.domain.server.ScopedEvent
+import dev.blazelight.p4oc.domain.server.ServerRef
+import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -28,7 +29,7 @@ import kotlinx.coroutines.launch
  * notifications are NOT guaranteed.
  */
 class NotificationEventObserver constructor(
-    private val connectionManager: ConnectionManager,
+    private val serverConnectionRegistry: ServerConnectionRegistry,
     private val notificationHelper: NotificationHelper,
     private val settingsDataStore: SettingsDataStore,
     private val hapticFeedback: HapticFeedback,
@@ -44,7 +45,7 @@ class NotificationEventObserver constructor(
     @Volatile
     private var cachedSettings = NotificationSettings()
 
-    private val busySessions = mutableSetOf<String>()
+    private val completionTracker = CompletionTracker()
 
     fun start() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
@@ -59,6 +60,7 @@ class NotificationEventObserver constructor(
 
     override fun onStart(owner: LifecycleOwner) {
         isInForeground = true
+        completionTracker.clear()
         notificationHelper.clearNotifications()
     }
 
@@ -74,65 +76,129 @@ class NotificationEventObserver constructor(
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeEvents() {
         scope.launch {
-            connectionManager.connection
-                .filterNotNull()
-                .flatMapLatest { it.eventSource.events }
-                .collect { event ->
-                    if (!isInForeground) {
-                        handleEventInBackground(event)
-                    }
-                }
+            serverConnectionRegistry.scopedEvents.collect { event ->
+                handleEvent(event)
+            }
         }
     }
 
-    private fun handleEventInBackground(event: OpenCodeEvent) {
-        if (!cachedSettings.enabled) return
-
-        when (event) {
-            is OpenCodeEvent.PermissionRequested -> {
-                if (!cachedSettings.permissionRequests) return
-                AppLog.d(TAG, "Permission requested in background: ${event.permission.title}")
-                notificationHelper.showPermissionNotification(
-                    sessionId = event.permission.sessionID,
-                    title = event.permission.title
-                )
-            }
-            is OpenCodeEvent.QuestionAsked -> {
-                if (!cachedSettings.questions) return
-                val firstQuestion = event.request.questions.firstOrNull()?.question ?: "AI has a question"
-                AppLog.d(TAG, "Question asked in background: $firstQuestion")
-                notificationHelper.showQuestionNotification(
-                    sessionId = event.request.sessionID,
-                    question = firstQuestion
-                )
-            }
-            is OpenCodeEvent.SessionStatusChanged -> {
-                val isBusy = event.status is SessionStatus.Busy || event.status is SessionStatus.Retry
-                if (isBusy) {
-                    busySessions.add(event.sessionID)
-                } else if (busySessions.remove(event.sessionID)) {
-                    showCompletionFeedback(event.sessionID)
-                }
-            }
-            is OpenCodeEvent.SessionIdle -> {
-                if (busySessions.remove(event.sessionID)) {
-                    showCompletionFeedback(event.sessionID)
-                }
-            }
+    private fun handleEvent(scopedEvent: ScopedEvent) {
+        when (val event = scopedEvent.event) {
+            is OpenCodeEvent.PermissionRequested -> handlePermission(scopedEvent, event)
+            is OpenCodeEvent.QuestionAsked -> handleQuestion(scopedEvent, event)
+            is OpenCodeEvent.SessionStatusChanged -> handleStatus(scopedEvent, event)
+            is OpenCodeEvent.SessionIdle -> complete(scopedEvent.route(event.sessionID))
+            is OpenCodeEvent.Disconnected -> completionTracker.clearServer(scopedEvent.serverRef)
+            OpenCodeEvent.GlobalDisposed -> completionTracker.clearServer(scopedEvent.serverRef)
+            is OpenCodeEvent.ServerInstanceDisposed -> completionTracker.clearWorkspace(
+                scopedEvent.serverRef,
+                scopedEvent.workspaceKey,
+            )
             else -> {}
         }
     }
 
-    private fun showCompletionFeedback(sessionId: String) {
-        hapticFeedback.vibrate(cachedSettings.vibrationPattern)
+    /** Per-server routing gate; absent entry defaults to [NotificationRoutingMode.All]. */
+    private fun routingModeFor(serverRef: ServerRef): NotificationRoutingMode =
+        cachedSettings.serverRouting[serverRef.endpointKey] ?: NotificationRoutingMode.All
+
+    private fun handlePermission(scopedEvent: ScopedEvent, event: OpenCodeEvent.PermissionRequested) {
+        if (isInForeground || !cachedSettings.enabled || !cachedSettings.permissionRequests) return
+        // Awaiting-input events are "mentions": All and Mentions deliver, Off suppresses.
+        if (!shouldDeliverAwaitingInput(routingModeFor(scopedEvent.serverRef))) return
+        AppLog.d(TAG, "Permission requested in background")
+        notificationHelper.showPermissionNotification(
+            sessionId = event.permission.sessionID,
+            serverRef = scopedEvent.serverRef,
+            workspaceKey = scopedEvent.workspaceKey,
+            permission = event.permission,
+        )
+    }
+
+    private fun handleQuestion(scopedEvent: ScopedEvent, event: OpenCodeEvent.QuestionAsked) {
+        if (isInForeground || !cachedSettings.enabled || !cachedSettings.questions) return
+        if (!shouldDeliverAwaitingInput(routingModeFor(scopedEvent.serverRef))) return
+        AppLog.d(TAG, "Question asked in background")
+        notificationHelper.showQuestionNotification(
+            sessionId = event.request.sessionID,
+            serverRef = scopedEvent.serverRef,
+            workspaceKey = scopedEvent.workspaceKey,
+            question = event.request.questions.firstOrNull()?.question,
+        )
+    }
+
+    private fun handleStatus(scopedEvent: ScopedEvent, event: OpenCodeEvent.SessionStatusChanged) {
+        val route = scopedEvent.route(event.sessionID)
+        if (event.status is SessionStatus.Busy || event.status is SessionStatus.Retry) {
+            completionTracker.markBusy(route)
+        } else {
+            complete(route)
+        }
+    }
+
+    private fun complete(route: NotificationRoute) {
+        if (completionTracker.complete(route)) showCompletionFeedbackIfBackground(route)
+    }
+
+    private fun showCompletionFeedbackIfBackground(route: NotificationRoute) {
+        if (shouldEmitCompletionFeedback(cachedSettings, isInForeground)) showCompletionFeedback(route)
+    }
+
+    private fun showCompletionFeedback(route: NotificationRoute) {
+        // Turn-complete is not a "mention": only the All routing mode delivers it.
+        if (!shouldDeliverCompletion(routingModeFor(route.serverRef))) return
         if (cachedSettings.notifyOnCompletion) {
+            hapticFeedback.vibrate(cachedSettings.vibrationPattern)
             notificationHelper.showCompletionNotification(
-                sessionId = sessionId,
+                sessionId = route.sessionId,
+                serverRef = route.serverRef,
+                workspaceKey = route.workspaceKey,
                 sessionTitle = null,
             )
         }
+    }
+
+    private fun ScopedEvent.route(sessionId: String) = NotificationRoute(
+        sessionId = sessionId,
+        serverRef = serverRef,
+        workspaceKey = workspaceKey,
+    )
+}
+
+internal fun shouldEmitCompletionFeedback(settings: NotificationSettings, isInForeground: Boolean): Boolean =
+    settings.enabled && settings.notifyOnCompletion && !isInForeground
+
+/** Awaiting-input (permission/question) notifications: delivered unless the server is routed Off. */
+internal fun shouldDeliverAwaitingInput(mode: NotificationRoutingMode): Boolean =
+    mode != NotificationRoutingMode.Off
+
+/** Turn-complete notifications: only the All routing mode delivers them (Mentions/Off suppress). */
+internal fun shouldDeliverCompletion(mode: NotificationRoutingMode): Boolean =
+    mode == NotificationRoutingMode.All
+
+internal class CompletionTracker {
+    private val busySessions = mutableSetOf<NotificationRoute>()
+
+    fun markBusy(route: NotificationRoute) {
+        busySessions.add(route)
+    }
+
+    fun complete(route: NotificationRoute): Boolean = busySessions.remove(route)
+
+    fun clear() {
+        busySessions.clear()
+    }
+
+    fun clearServer(serverRef: ServerRef) {
+        busySessions.removeAll { it.serverRef == serverRef }
+    }
+
+    fun clearWorkspace(
+        serverRef: ServerRef,
+        workspaceKey: WorkspaceKey,
+    ) {
+        busySessions.removeAll { it.serverRef == serverRef && it.workspaceKey == workspaceKey }
     }
 }

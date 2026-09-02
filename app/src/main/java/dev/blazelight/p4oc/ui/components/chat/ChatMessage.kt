@@ -1,5 +1,6 @@
 package dev.blazelight.p4oc.ui.components.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,9 +19,13 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.*
@@ -28,20 +33,32 @@ import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.components.toolwidgets.ToolGroupWidget
 import dev.blazelight.p4oc.ui.components.toolwidgets.ToolWidgetState
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
+import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+
+internal fun MessageWithParts.hasVisibleUserText(): Boolean =
+    message is Message.User && parts.any { part ->
+        (part is Part.Text && !part.synthetic && !part.ignored && part.text.isNotBlank()) ||
+            part is Part.File
+    }
 
 @Composable
+@Suppress("LongParameterList", "FunctionNaming")
 fun ChatMessage(
     messageWithParts: MessageWithParts,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     onToolAlways: (String) -> Unit,
     onOpenSubSession: ((String) -> Unit)? = null,
+    onProviderAuthRequired: ((String) -> Unit)? = null,
     defaultToolWidgetState: ToolWidgetState = ToolWidgetState.COMPACT,
     pendingPermissionsByCallId: Map<String, Permission> = emptyMap(),
     onRevert: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    isQueued: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val message = messageWithParts.message
     val isUser = message is Message.User
@@ -50,7 +67,7 @@ fun ChatMessage(
         modifier = modifier.fillMaxWidth()
     ) {
         if (isUser) {
-            UserMessage(messageWithParts, onRevert = onRevert)
+            UserMessage(messageWithParts, onRevert = onRevert, isQueued = isQueued)
         } else {
             AssistantMessages(
                 messagesWithParts = listOf(messageWithParts),
@@ -58,6 +75,7 @@ fun ChatMessage(
                 onToolDeny = onToolDeny,
                 onToolAlways = onToolAlways,
                 onOpenSubSession = onOpenSubSession,
+                onProviderAuthRequired = onProviderAuthRequired,
                 defaultToolWidgetState = defaultToolWidgetState,
                 pendingPermissionsByCallId = pendingPermissionsByCallId,
             )
@@ -66,12 +84,14 @@ fun ChatMessage(
 }
 
 @Composable
+@Suppress("LongParameterList", "FunctionNaming")
 fun AssistantMessages(
     messagesWithParts: List<MessageWithParts>,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     onToolAlways: (String) -> Unit,
     onOpenSubSession: ((String) -> Unit)? = null,
+    onProviderAuthRequired: ((String) -> Unit)? = null,
     defaultToolWidgetState: ToolWidgetState = ToolWidgetState.COMPACT,
     pendingPermissionsByCallId: Map<String, Permission> = emptyMap(),
     modifier: Modifier = Modifier
@@ -89,6 +109,7 @@ fun AssistantMessages(
                 onToolDeny = onToolDeny,
                 onToolAlways = onToolAlways,
                 onOpenSubSession = onOpenSubSession,
+                onProviderAuthRequired = onProviderAuthRequired,
                 defaultToolWidgetState = defaultToolWidgetState,
                 pendingPermissionsByCallId = pendingPermissionsByCallId,
             )
@@ -101,47 +122,45 @@ fun AssistantMessages(
 private fun UserMessage(
     messageWithParts: MessageWithParts,
     onRevert: (() -> Unit)? = null,
+    isQueued: Boolean = false,
 ) {
     val theme = LocalOpenCodeTheme.current
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     var revertActionWidthPx by remember { mutableIntStateOf(0) }
+
     // Filter out synthetic text parts (system prompts, AGENTS.md content, etc.)
     val textParts = messageWithParts.parts
         .filterIsInstance<Part.Text>()
-        .filter { !it.synthetic && !it.ignored }
+        .filter { !it.synthetic && !it.ignored && it.text.isNotBlank() }
+    val fileParts = messageWithParts.parts.filterIsInstance<Part.File>()
+    if (textParts.isEmpty() && fileParts.isEmpty()) return
     val text = textParts.joinToString("\n") { it.text }
 
-    // Don't render anything if there's no visible text
-    if (text.isBlank()) return
-
-    // TUI style: Distinct background with accent left border for user messages
-    Row(
+    // TUI style: flat panel surface with a "you" label — matches the design's user block.
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = Spacing.xs)
     ) {
-        // Accent left border (thicker for user messages)
-        Box(
-            modifier = Modifier
-                .width(Spacing.xs)
-                .fillMaxHeight()
-                .background(theme.primary)
-        )
-
-        // Content with distinct background - use primary tint for better contrast
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(theme.primary.copy(alpha = 0.12f))
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        clipboardManager.setText(AnnotatedString(text))
-                    },
-                    onLongClickLabel = "Copy message"
+                .background(theme.backgroundPanel)
+                .then(
+                    if (text.isNotBlank()) {
+                        Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                clipboardManager.setText(AnnotatedString(text))
+                            },
+                            onLongClickLabel = "Copy message"
+                        )
+                    } else {
+                        Modifier
+                    }
                 )
                 .padding(horizontal = Spacing.mdLg, vertical = Spacing.md)
         ) {
@@ -151,12 +170,39 @@ private fun UserMessage(
                 0.dp
             }
 
-            StreamingMarkdown(
-                text = text,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(end = revertEndInset)
-            )
+            ) {
+                Text(
+                    text = stringResource(R.string.chat_user_label),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = theme.textMuted,
+                    modifier = Modifier.padding(bottom = Spacing.xxs)
+                )
+                if (text.isNotBlank()) {
+                    StreamingMarkdown(text = text, modifier = Modifier.fillMaxWidth())
+                }
+                if (fileParts.isNotEmpty()) {
+                    if (text.isNotBlank()) Spacer(Modifier.height(Spacing.sm))
+                    ChatAttachmentList(parts = fileParts)
+                }
+
+                if (isQueued) {
+                    Text(
+                        text = stringResource(R.string.chat_queued_prefix),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = theme.background,
+                        modifier = Modifier
+                            .padding(top = Spacing.xs)
+                            .background(theme.primary, RectangleShape)
+                            .padding(horizontal = Spacing.xs, vertical = Spacing.hairline)
+                    )
+                }
+            }
 
             onRevert?.let { revert ->
                 Text(
@@ -174,48 +220,34 @@ private fun UserMessage(
 }
 
 @Composable
+@Suppress("LongParameterList", "FunctionNaming")
 private fun AssistantMessageContent(
     messageWithParts: MessageWithParts,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     onToolAlways: (String) -> Unit,
     onOpenSubSession: ((String) -> Unit)? = null,
+    onProviderAuthRequired: ((String) -> Unit)? = null,
     defaultToolWidgetState: ToolWidgetState = ToolWidgetState.COMPACT,
     pendingPermissionsByCallId: Map<String, Permission> = emptyMap(),
 ) {
+    val assistant = messageWithParts.message as? Message.Assistant
     // Build ordered groups: consecutive tools get batched, non-tools rendered individually
     // Invisible parts (StepStart, StepFinish, Snapshot, etc.) don't break tool groups
-    val partGroups = buildList {
-        var currentToolBatch = mutableListOf<Part.Tool>()
-
-        for (part in messageWithParts.parts) {
-            when (part) {
-                is Part.Tool -> currentToolBatch.add(part)
-                // Invisible parts - don't break tool groups, just skip
-                is Part.StepStart, is Part.StepFinish, is Part.Snapshot,
-                is Part.Agent, is Part.Retry, is Part.Compaction, is Part.Subtask -> {
-                    // Skip - truly invisible
-                }
-                // Visible parts - flush tools before rendering
-                else -> {
-                    if (currentToolBatch.isNotEmpty()) {
-                        add(PartGroupItem.Tools(currentToolBatch.toList()))
-                        currentToolBatch = mutableListOf()
-                    }
-                    add(PartGroupItem.Other(part))
-                }
-            }
-        }
-        // Flush any trailing tools
-        if (currentToolBatch.isNotEmpty()) {
-            add(PartGroupItem.Tools(currentToolBatch.toList()))
-        }
-    }
+    val partGroups = buildPartGroups(messageWithParts.parts)
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Spacing.hairline)
     ) {
+        // Per-turn attribution header: `@build · claude-sonnet-4-5` (design 05).
+        assistant?.let { assistantMessage ->
+            val attribution = assistantAttribution(assistantMessage.agent, assistantMessage.modelID)
+            if (partGroups.isNotEmpty() && attribution != null) {
+                AssistantAttributionHeader(attribution)
+            }
+        }
+
         // Render part groups in order
         partGroups.forEach { group ->
             when (group) {
@@ -224,50 +256,214 @@ private fun AssistantMessageContent(
                     ToolGroupWidget(
                         tools = group.tools,
                         defaultState = defaultToolWidgetState,
-                        pendingPermissionCallIds = pendingPermissionsByCallId.keys,
+                        pendingPermissionIdsByCallId = pendingPermissionsByCallId.mapValues { it.value.id },
                         onToolApprove = onToolApprove,
                         onToolDeny = onToolDeny,
+                        onToolAlways = onToolAlways,
                         onOpenSubSession = onOpenSubSession
                     )
                 }
-                is PartGroupItem.Other -> {
-                    when (val part = group.part) {
-                        is Part.Text -> TextPart(part)
-                        is Part.Reasoning -> ReasoningPart(part)
-                        is Part.File -> FilePart(part)
-                        is Part.Patch -> CompactPatchPart(part)
-                        else -> {} // Already handled invisible parts above
-                    }
-                }
+                is PartGroupItem.Other -> renderOtherPart(group.part)
             }
         }
 
-        (messageWithParts.message as? Message.Assistant)?.error?.let { error ->
-            AssistantError(error)
+        assistant?.error?.let { error ->
+            AssistantError(error, onProviderAuthRequired)
+        }
+
+        if (assistant != null && (assistant.tokens.hasUsage() || assistant.cost > 0.0)) {
+            TokenUsageInfo(tokens = assistant.tokens, cost = assistant.cost)
+        }
+    }
+}
+
+private fun buildPartGroups(parts: List<Part>): List<PartGroupItem> = buildList {
+    var currentToolBatch = mutableListOf<Part.Tool>()
+
+    for (part in parts) {
+        when (part) {
+            is Part.Tool -> currentToolBatch.add(part)
+            // Invisible parts - don't break tool groups, just skip
+            is Part.StepStart, is Part.StepFinish, is Part.Snapshot,
+            is Part.Agent -> {
+                // Skip - truly invisible
+            }
+            // Visible parts - flush tools before rendering
+            else -> {
+                if (currentToolBatch.isNotEmpty()) {
+                    add(PartGroupItem.Tools(currentToolBatch.toList()))
+                    currentToolBatch = mutableListOf()
+                }
+                add(PartGroupItem.Other(part))
+            }
+        }
+    }
+    // Flush any trailing tools
+    if (currentToolBatch.isNotEmpty()) {
+        add(PartGroupItem.Tools(currentToolBatch.toList()))
+    }
+}
+
+@Composable
+private fun renderOtherPart(part: Part) {
+    when (part) {
+        is Part.Text -> TextPart(part)
+        is Part.Reasoning -> ReasoningPart(part)
+        is Part.File -> ChatAttachment(part)
+        is Part.Patch -> CompactPatchPart(part)
+        is Part.Subtask -> activityMarker(stringResource(R.string.chat_delegated_to, part.agent, part.description))
+        is Part.Retry -> activityMarker(stringResource(R.string.chat_retry_attempt, part.attempt))
+        is Part.Compaction -> activityMarker(stringResource(R.string.chat_context_compacted))
+        else -> Unit
+    }
+}
+
+/**
+ * Assistant turn attribution header — `@build · claude-sonnet-4-5` (design 05).
+ * `@agent` takes the agent's accent color; the model id trails muted.
+ */
+internal data class AssistantAttribution(
+    val agent: String?,
+    val modelID: String?,
+) {
+    val showSeparator: Boolean get() = agent != null && modelID != null
+}
+
+internal fun assistantAttribution(agent: String, modelID: String): AssistantAttribution? {
+    val visibleAgent = agent.trim().takeIf(String::isNotEmpty)
+    val visibleModelID = modelID.trim().takeIf(String::isNotEmpty)
+    return if (visibleAgent == null && visibleModelID == null) {
+        null
+    } else {
+        AssistantAttribution(visibleAgent, visibleModelID)
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun AssistantAttributionHeader(attribution: AssistantAttribution) {
+    val theme = LocalOpenCodeTheme.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = Spacing.xs, bottom = Spacing.xxs),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        attribution.agent?.let { agent ->
+            Text(
+                text = "@${agent.lowercase()}",
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                fontWeight = FontWeight.SemiBold,
+                color = SemanticColors.AgentSelector.forName(agent)
+            )
+        }
+        if (attribution.showSeparator) {
+            Text(
+                text = "·",
+                style = MaterialTheme.typography.labelMedium,
+                color = theme.textMuted
+            )
+        }
+        attribution.modelID?.let { modelID ->
+            Text(
+                text = modelID,
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                color = theme.textMuted,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
         }
     }
 }
 
 @Composable
-private fun AssistantError(error: MessageError) {
+private fun activityMarker(label: String) {
     val theme = LocalOpenCodeTheme.current
-    val message = when {
-        error.name == "MessageAbortedError" -> "Run aborted"
-        !error.message.isNullOrBlank() -> error.message
-        else -> "Run failed"
-    }
+    Text(
+        text = label,
+        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
+        style = MaterialTheme.typography.labelSmall,
+        color = theme.textMuted,
+    )
+}
 
-    Box(
+@Composable
+@Suppress("FunctionNaming")
+private fun AssistantError(error: MessageError, onProviderAuthRequired: ((String) -> Unit)? = null) {
+    val theme = LocalOpenCodeTheme.current
+    val isAuth = error.name == "ProviderAuthError"
+    val isAborted = error.name == "MessageAbortedError"
+    val message = assistantErrorMessage(error, isAuth, isAborted)
+    val accent = if (isAborted) theme.warning else theme.error
+    val header = assistantErrorHeader(error, isAuth, isAborted)
+
+    // Left-border error card, matching design 20's provider-auth banner.
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(theme.error.copy(alpha = 0.1f))
-            .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
+            .height(IntrinsicSize.Min)
+            .background(theme.backgroundElement)
     ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodySmall,
-            color = theme.error
+        Box(
+            modifier = Modifier
+                .width(Sizing.strokeThick)
+                .fillMaxHeight()
+                .background(accent)
         )
+        Column(
+            modifier = Modifier.padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Text(
+                text = header,
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                color = accent
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = theme.text
+            )
+            if (isAuth && error.providerID != null && onProviderAuthRequired != null) {
+                OutlinedButton(
+                    onClick = { onProviderAuthRequired(error.providerID) },
+                    shape = RectangleShape,
+                    contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.none),
+                    border = BorderStroke(Sizing.strokeMd, theme.primary),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.primary)
+                ) {
+                    Text(
+                        stringResource(R.string.provider_auth_action),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun assistantErrorMessage(error: MessageError, isAuth: Boolean, isAborted: Boolean): String = when {
+    isAborted -> stringResource(R.string.chat_run_aborted)
+    isAuth -> stringResource(R.string.chat_provider_auth_required)
+    error.isRetryable -> stringResource(R.string.chat_run_retryable_error)
+    else -> stringResource(R.string.chat_run_failed)
+}
+
+private fun assistantErrorHeader(error: MessageError, isAuth: Boolean, isAborted: Boolean): String {
+    val title = when {
+        isAuth -> "provider auth error"
+        isAborted -> "run aborted"
+        error.isRetryable -> "run error · retryable"
+        else -> "run failed"
+    }
+    return buildString {
+        append(title)
+        error.statusCode?.let {
+            append(" · ")
+            append(it)
+        }
     }
 }
 
@@ -342,11 +538,16 @@ private fun ReasoningPart(part: Part.Reasoning) {
                     }
                 }
 
+                val detailTitle = reasoningDetailTitle(part)
                 Text(
-                    text = "Reasoning",
+                    text = detailTitle?.let {
+                        stringResource(R.string.reasoning_with_title, it)
+                    } ?: stringResource(R.string.models_reasoning),
                     style = MaterialTheme.typography.labelSmall,
                     color = theme.warning,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
 
                 Icon(
@@ -383,40 +584,33 @@ private fun ReasoningPart(part: Part.Reasoning) {
     }
 }
 
-@Composable
-private fun FilePart(part: Part.File) {
-    val theme = LocalOpenCodeTheme.current
-    Surface(
-        color = theme.backgroundElement,
-        shape = RectangleShape,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(Spacing.sm),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Default.AttachFile,
-                contentDescription = stringResource(R.string.cd_attach_file),
-                modifier = Modifier.size(Sizing.iconXs),
-                tint = theme.textMuted
-            )
-            Column {
-                Text(
-                    text = part.filename ?: "File",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = theme.text
-                )
-                Text(
-                    text = part.mime,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = theme.textMuted
-                )
-            }
+internal fun reasoningDetailTitle(part: Part.Reasoning): String? {
+    val metadataTitle = REASONING_TITLE_METADATA_KEYS
+        .firstNotNullOfOrNull { key ->
+            val value = part.metadata?.get(key) as? JsonPrimitive
+            if (value != null && value.isString) value.contentOrNull else null
         }
-    }
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    val source = metadataTitle ?: part.text.lineSequence()
+        .map(String::trim)
+        .firstOrNull { it.isNotBlank() }
+        ?.trimStart('#')
+        ?.trim()
+    return source
+        ?.stripReasoningTitleMarkdown()
+        ?.replace(REASONING_WHITESPACE_REGEX, " ")
+        ?.take(REASONING_TITLE_MAX_CHARS)
+        ?.takeIf { it.isNotBlank() && !it.equals("reasoning", ignoreCase = true) }
 }
+
+private fun String.stripReasoningTitleMarkdown(): String =
+    replace("**", "")
+        .replace("__", "")
+
+private const val REASONING_TITLE_MAX_CHARS = 80
+private val REASONING_TITLE_METADATA_KEYS = listOf("title", "summary", "subject", "heading")
+private val REASONING_WHITESPACE_REGEX = Regex("\\s+")
 
 @Composable
 private fun CompactPatchPart(part: Part.Patch) {
@@ -442,7 +636,7 @@ private fun CompactPatchPart(part: Part.Patch) {
                     tint = theme.accent
                 )
                 Text(
-                    text = "Patch: ${part.files.size} file(s)",
+                    text = stringResource(R.string.chat_patch_files, part.files.size),
                     style = MaterialTheme.typography.labelSmall,
                     color = theme.text,
                     modifier = Modifier.weight(1f)
@@ -475,12 +669,29 @@ private fun CompactPatchPart(part: Part.Patch) {
     }
 }
 
+private fun TokenUsage.hasUsage(): Boolean =
+    (input or output or reasoning or cacheRead or cacheWrite) != 0
+
+private const val MINIMUM_VISIBLE_COST = 0.0001
+
 @Composable
-private fun TokenUsageInfo(tokens: TokenUsage, cost: Double) {
+@Suppress("FunctionNaming")
+private fun TokenUsageInfo(tokens: TokenUsage, cost: Double, modifier: Modifier = Modifier) {
     val theme = LocalOpenCodeTheme.current
+    val total = tokens.input.toLong() +
+        tokens.output.toLong() +
+        tokens.reasoning.toLong() +
+        tokens.cacheRead.toLong() +
+        tokens.cacheWrite.toLong()
     Row(
+        modifier = modifier.testTag("assistant_token_usage"),
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
+        Text(
+            text = "$total total",
+            style = MaterialTheme.typography.labelSmall,
+            color = theme.textMuted
+        )
         Text(
             text = "${tokens.input}/${tokens.output}",
             style = MaterialTheme.typography.labelSmall,
@@ -488,7 +699,11 @@ private fun TokenUsageInfo(tokens: TokenUsage, cost: Double) {
         )
         if (cost > 0) {
             Text(
-                text = "$${String.format(java.util.Locale.US, "%.4f", cost)}",
+                text = if (cost < MINIMUM_VISIBLE_COST) {
+                    "<\$0.0001"
+                } else {
+                    "$${String.format(java.util.Locale.US, "%.4f", cost)}"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = theme.textMuted
             )

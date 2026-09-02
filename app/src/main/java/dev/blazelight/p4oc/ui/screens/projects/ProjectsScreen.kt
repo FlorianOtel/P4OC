@@ -31,20 +31,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
+import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
 import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Spacing
-import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.koin.androidx.compose.koinViewModel
+import org.koin.core.parameter.parametersOf
+import kotlin.time.Instant
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("FunctionNaming", "LongMethod")
 @Composable
 fun ProjectsScreen(
-    viewModel: ProjectsViewModel = koinViewModel(),
+    workspaceClient: WorkspaceClient,
+    viewModel: ProjectsViewModel = koinViewModel(parameters = { parametersOf(workspaceClient) }),
     onNavigateBack: (() -> Unit)? = null,
     onProjectClick: (projectId: String, worktree: String) -> Unit = { _, _ -> }
 ) {
@@ -83,7 +87,7 @@ fun ProjectsScreen(
                             color = theme.error
                         )
                         Text(
-                            text = uiState.error ?: "Unknown error",
+                            text = stringResource(R.string.projects_load_failed),
                             color = theme.error
                         )
                         TuiButton(onClick = { viewModel.loadProjects() }) {
@@ -166,7 +170,7 @@ private fun ProjectRow(
         val instant = Instant.fromEpochMilliseconds(project.time.created)
         val localDateTime = instant.toLocalDateTime(TimeZone.currentSystemDefault())
         "${localDateTime.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }} " +
-            localDateTime.dayOfMonth.toString().padStart(2, '0')
+            localDateTime.day.toString().padStart(2, '0')
     }
 
     Surface(

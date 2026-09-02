@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class EventDataDto(
+    val id: String? = null,
     val type: String,
     // Some server events carry no `properties` — notably the v2 "sync" mirror
     // (`{type:"sync", syncEvent:{…}}`) the daemon emits alongside every normal
@@ -27,6 +28,8 @@ data class GlobalEventDto(
     // so kotlinx deserialization accepts those events while workspace routing
     // still receives explicit non-null directories when the server sends them.
     val directory: String? = null,
+    val project: String? = null,
+    val workspace: String? = null,
     val payload: EventDataDto
 )
 

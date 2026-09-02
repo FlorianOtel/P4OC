@@ -13,6 +13,8 @@ class ServerRef private constructor(
     val endpointKey: String,
     val displayName: String,
 ) {
+    val badgeLabel: String
+        get() = ServerIdentity.derive(endpointKey, displayName).badgeLabel
     override fun equals(other: Any?): Boolean =
         this === other || (other is ServerRef && endpointKey == other.endpointKey)
 
@@ -22,19 +24,21 @@ class ServerRef private constructor(
 
     companion object {
         fun fromEndpoint(input: String, displayName: String? = null): ServerRef {
+            val identity = ServerIdentity.derive(input, displayName)
             val key = ServerUrl.endpointKey(input)
                 ?: throw IllegalArgumentException("Invalid server endpoint: $input")
             return ServerRef(
                 endpointKey = key,
-                displayName = displayName?.takeIf { it.isNotBlank() } ?: key,
+                displayName = identity.displayName,
             )
         }
 
         fun fromEndpointKey(endpointKey: String, displayName: String? = null): ServerRef {
             require(endpointKey.isNotBlank()) { "Endpoint key must not be blank" }
+            val identity = ServerIdentity.derive(endpointKey, displayName)
             return ServerRef(
                 endpointKey = endpointKey,
-                displayName = displayName?.takeIf { it.isNotBlank() } ?: endpointKey,
+                displayName = identity.displayName,
             )
         }
     }

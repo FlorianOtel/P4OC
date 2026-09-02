@@ -17,6 +17,7 @@ import dev.blazelight.p4oc.data.remote.dto.SessionDto
 import dev.blazelight.p4oc.data.remote.dto.ShellCommandRequest
 import dev.blazelight.p4oc.data.remote.dto.TimeDto
 import dev.blazelight.p4oc.domain.model.FileContent
+import dev.blazelight.p4oc.domain.model.FileNode
 import dev.blazelight.p4oc.domain.model.Symbol
 import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.workspace.Workspace
@@ -36,6 +37,8 @@ class OfishFileRepositoryTest {
         hasRm = true,
         hasAwk = true,
         hasMktemp = true,
+        hasChmod = true,
+        modeCommand = ModeCommand.STAT_GNU,
     )
 
     @Test
@@ -174,6 +177,9 @@ class OfishFileRepositoryTest {
 
         override suspend fun readFile(path: String): FileOperationResult<FileContent> = readResult
 
+        override suspend fun searchFiles(query: String): FileOperationResult<List<FileNode>> =
+            FileOperationResult.Ok(emptyList())
+
         override suspend fun searchSymbols(query: String): FileOperationResult<List<Symbol>> =
             FileOperationResult.Ok(emptyList())
 
@@ -220,7 +226,11 @@ class OfishFileRepositoryTest {
             val script = encoded?.let { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.orEmpty()
             val responseText = if (script.contains("#OFISH_HASH")) {
                 val path = hashFor.keys.firstOrNull { script.contains(it) }
-                if (path != null) "### 200 ok hash=${hashFor.getValue(path)}" else "### 200 ok"
+                if (path != null) {
+                    "#OFISH_HASH\n### 200 ok hash=${hashFor.getValue(path)}"
+                } else {
+                    "#OFISH_HASH\n### 200 ok"
+                }
             } else {
                 "### 200 ok"
             }

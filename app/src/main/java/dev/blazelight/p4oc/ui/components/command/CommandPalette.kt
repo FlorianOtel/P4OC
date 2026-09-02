@@ -5,7 +5,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Command
 import dev.blazelight.p4oc.domain.model.CommandSource
+import dev.blazelight.p4oc.ui.components.TuiBackButton
 import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.components.TuiTextField
@@ -30,14 +30,16 @@ import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
 
+@Suppress("LongParameterList", "LongMethod", "FunctionNaming")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CommandPalette(
     commands: List<Command>,
     isLoading: Boolean,
     error: String?,
+    executionError: String?,
     onRetry: () -> Unit,
-    onCommandSelected: (Command, String) -> Unit,
+    onCommandSelected: (Command, String) -> Boolean,
     onDismiss: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
@@ -122,20 +124,36 @@ fun CommandPalette(
                     CommandArgumentsView(
                         command = command,
                         arguments = commandArgs,
+                        error = executionError,
                         onArgumentsChange = { commandArgs = it },
                         onBack = {
-                            selectedCommand = null;
+                            selectedCommand = null
                             commandArgs = ""
                         },
                         onExecute = {
-                            onCommandSelected(command, commandArgs)
-                            onDismiss()
+                            executePaletteCommand(
+                                command = command,
+                                arguments = commandArgs,
+                                onCommandSelected = onCommandSelected,
+                                onDismiss = onDismiss,
+                            )
                         }
                     )
                 }
             }
         }
     }
+}
+
+internal fun executePaletteCommand(
+    command: Command,
+    arguments: String,
+    onCommandSelected: (Command, String) -> Boolean,
+    onDismiss: () -> Unit,
+): Boolean {
+    val accepted = onCommandSelected(command, arguments)
+    if (accepted) onDismiss()
+    return accepted
 }
 
 @Composable
@@ -418,10 +436,12 @@ private fun CommandSource.paletteLabel(): String = when (this) {
     CommandSource.Subtask -> "[subtask]"
 }
 
+@Suppress("LongParameterList", "FunctionNaming")
 @Composable
 private fun CommandArgumentsView(
     command: Command,
     arguments: String,
+    error: String?,
     onArgumentsChange: (String) -> Unit,
     onBack: () -> Unit,
     onExecute: () -> Unit
@@ -435,17 +455,7 @@ private fun CommandArgumentsView(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(bottom = Spacing.md)
         ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.size(Sizing.iconButtonSm)
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = stringResource(R.string.back),
-                    tint = theme.textMuted,
-                    modifier = Modifier.size(Sizing.iconSm)
-                )
-            }
+            TuiBackButton(onClick = onBack, description = stringResource(R.string.back))
             Spacer(Modifier.width(Spacing.sm))
             Text(
                 text = "/${command.name}",
@@ -475,6 +485,15 @@ private fun CommandArgumentsView(
         )
 
         Spacer(modifier = Modifier.height(Spacing.md))
+
+        error?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = theme.warning,
+                modifier = Modifier.padding(bottom = Spacing.md)
+            )
+        }
 
         TuiButton(
             onClick = onExecute,

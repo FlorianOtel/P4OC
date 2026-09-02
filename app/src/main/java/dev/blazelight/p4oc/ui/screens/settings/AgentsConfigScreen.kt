@@ -1,5 +1,6 @@
 package dev.blazelight.p4oc.ui.screens.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,9 +19,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ApiResult
-import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.safeApiCall
+import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.ui.components.TuiAlertDialog
+import dev.blazelight.p4oc.ui.components.TuiBadge
 import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
 import dev.blazelight.p4oc.ui.components.TuiTextButton
@@ -34,14 +36,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.koin.androidx.compose.koinViewModel
 
 data class AgentInfo(
     val name: String,
     val description: String,
     val systemPrompt: String? = null,
     val tools: List<String> = emptyList(),
-    val isEnabled: Boolean = true,
     val isBuiltIn: Boolean = true
 )
 
@@ -53,7 +53,8 @@ data class AgentsConfigState(
 )
 
 class AgentsConfigViewModel constructor(
-    private val connectionManager: ConnectionManager
+    private val workspaceClient: WorkspaceClient,
+    serverConnectionRegistry: dev.blazelight.p4oc.core.network.ServerConnectionRegistry? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AgentsConfigState())
@@ -61,16 +62,21 @@ class AgentsConfigViewModel constructor(
 
     init {
         loadAgents()
+        serverConnectionRegistry?.observeWorkspaceCatalogEvents(
+            workspaceClient,
+            viewModelScope,
+            includeMcp = true,
+        ) {
+            loadAgents(background = true)
+        }
     }
 
-    fun loadAgents() {
+    fun loadAgents() = loadAgents(background = false)
+
+    private fun loadAgents(background: Boolean) {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
-            val api = connectionManager.getApi() ?: run {
-                _state.update { it.copy(isLoading = false, error = "Not connected") }
-                return@launch
-            }
-            val result = safeApiCall { api.getAgents() }
+            if (!background) _state.update { it.copy(isLoading = true) }
+            val result = safeApiCall { workspaceClient.getAgents() }
             when (result) {
                 is ApiResult.Success -> {
                     val agents = result.data.map { dto ->
@@ -79,14 +85,20 @@ class AgentsConfigViewModel constructor(
                             description = dto.description ?: "",
                             systemPrompt = dto.systemPrompt,
                             tools = dto.tools?.keys?.toList() ?: emptyList(),
-                            isEnabled = dto.isEnabled ?: true,
                             isBuiltIn = dto.isBuiltIn ?: dto.builtIn
                         )
                     }
-                    _state.update { it.copy(agents = agents, isLoading = false) }
+                    _state.update { it.copy(agents = agents, isLoading = false, error = null) }
                 }
                 is ApiResult.Error -> {
-                    _state.update { it.copy(isLoading = false, error = result.message) }
+                    if (!background) {
+                        _state.update {
+                            it.copy(
+                                isLoading = false,
+                                error = "Could not load agents. Check the connection and try again.",
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -95,33 +107,16 @@ class AgentsConfigViewModel constructor(
     fun selectAgent(agent: AgentInfo?) {
         _state.update { it.copy(selectedAgent = agent) }
     }
-
-    fun clearError() {
-        _state.update { it.copy(error = null) }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("FunctionNaming", "LongMethod", "NoNameShadowing")
 @Composable
 fun AgentsConfigScreen(
-    viewModel: AgentsConfigViewModel = koinViewModel(),
+    viewModel: AgentsConfigViewModel,
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
-    val dismissLabel = stringResource(R.string.dismiss)
-
-    LaunchedEffect(state.error) {
-        state.error?.let { error ->
-            snackbarHostState.showSnackbar(
-                message = error,
-                actionLabel = dismissLabel,
-                duration = SnackbarDuration.Long
-            )
-            viewModel.clearError()
-        }
-    }
-
     val theme = LocalOpenCodeTheme.current
     Scaffold(
         containerColor = theme.background,
@@ -142,8 +137,7 @@ fun AgentsConfigScreen(
                     }
                 }
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        }
     ) { padding ->
         if (state.isLoading) {
             TuiLoadingScreen(
@@ -251,6 +245,12 @@ fun AgentsConfigScreen(
     }
 }
 
+@Suppress("FunctionNaming")
+@Composable
+internal fun AgentToolLabel(tool: String) {
+    TuiBadge(text = tool)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AgentCard(
@@ -258,71 +258,74 @@ private fun AgentCard(
     onClick: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    Card(
+    val agentColor = getAgentColor(agent.name)
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        onClick = onClick
+        onClick = onClick,
+        shape = RectangleShape,
+        color = theme.backgroundElement,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(Spacing.md),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            verticalAlignment = Alignment.Top
         ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RectangleShape,
-                    color = getAgentColor(agent.name).copy(alpha = 0.2f)
+            // Square status dot in the agent's color (design 14)
+            Box(
+                modifier = Modifier
+                    .padding(top = Spacing.xs)
+                    .size(Sizing.indicatorDotActive)
+                    .background(agentColor, RectangleShape)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        getAgentIcon(agent.name),
-                        contentDescription = stringResource(R.string.cd_agent_icon),
-                        modifier = Modifier.padding(Spacing.md),
-                        tint = getAgentColor(agent.name)
+                    Text(
+                        text = "@${agent.name}",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        ),
+                        fontWeight = FontWeight.SemiBold,
+                        color = theme.text
                     )
+                    if (agent.isBuiltIn) {
+                        Surface(shape = RectangleShape, color = agentColor) {
+                            Text(
+                                text = stringResource(R.string.agents_builtin),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                ),
+                                color = theme.background,
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs)
+                            )
+                        }
+                    }
                 }
+                Text(
+                    text = agent.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = theme.textMuted,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = Spacing.xxs)
+                )
 
-                Column {
-                    Text(
-                        text = agent.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = agent.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = theme.textMuted,
-                        maxLines = 2
-                    )
-
-                    if (agent.tools.isNotEmpty()) {
-                        Spacer(Modifier.height(Spacing.xs))
-                        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            agent.tools.take(3).forEach { tool ->
-                                SuggestionChip(
-                                    onClick = {},
-                                    label = {
-                                        Text(
-                                            tool,
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    },
-                                    shape = RectangleShape,
-                                    modifier = Modifier.height(Sizing.iconLg)
-                                )
-                            }
-                            if (agent.tools.size > 3) {
-                                Text(
-                                    text = "+${agent.tools.size - 3}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = theme.textMuted,
-                                    modifier = Modifier.align(Alignment.CenterVertically)
-                                )
-                            }
+                if (agent.tools.isNotEmpty()) {
+                    Spacer(Modifier.height(Spacing.xs))
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        agent.tools.take(3).forEach { tool ->
+                            AgentToolLabel(tool)
+                        }
+                        if (agent.tools.size > 3) {
+                            Text(
+                                text = "+${agent.tools.size - 3}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = theme.textMuted,
+                                modifier = Modifier.align(Alignment.CenterVertically)
+                            )
                         }
                     }
                 }
@@ -348,52 +351,55 @@ private fun AgentDetailDialog(
         }
     ) {
         Text(agent.description)
+        AgentTools(agent.tools)
+        agent.systemPrompt?.let { AgentSystemPrompt(it, theme.backgroundElement) }
+    }
+}
 
-        if (agent.tools.isNotEmpty()) {
-            Text(
-                text = stringResource(R.string.agents_tools),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                agent.tools.forEach { tool ->
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.Build,
-                            contentDescription = stringResource(R.string.agents_tools),
-                            modifier = Modifier.size(Sizing.iconXs),
-                            tint = theme.textMuted
-                        )
-                        Text(
-                            text = tool,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-        }
-
-        agent.systemPrompt?.let { prompt ->
-            Text(
-                text = stringResource(R.string.agents_system_prompt),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium
-            )
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = theme.backgroundElement
-                )
+@Composable
+@Suppress("FunctionNaming")
+private fun AgentTools(tools: List<String>) {
+    if (tools.isEmpty()) return
+    val theme = LocalOpenCodeTheme.current
+    Text(
+        text = stringResource(R.string.agents_tools),
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.Medium,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        tools.forEach { tool ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = prompt.take(500) + if (prompt.length > 500) "..." else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(Spacing.lg)
+                Icon(
+                    Icons.Default.Build,
+                    contentDescription = stringResource(R.string.agents_tools),
+                    modifier = Modifier.size(Sizing.iconXs),
+                    tint = theme.textMuted,
                 )
+                Text(text = tool, style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun AgentSystemPrompt(prompt: String, backgroundColor: Color) {
+    Text(
+        text = stringResource(R.string.agents_system_prompt),
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.Medium,
+    )
+    Surface(shape = RectangleShape, color = backgroundColor) {
+        Text(
+            text = prompt.take(500) + if (prompt.length > 500) "..." else "",
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            ),
+            modifier = Modifier.padding(Spacing.lg),
+        )
     }
 }
 

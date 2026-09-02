@@ -1,0 +1,93 @@
+x-opencode-demo-common: &opencode-demo-common
+  image: p4oc-opencode-demo:1.18.18
+  build:
+    context: .
+    dockerfile: demo/opencode/Dockerfile
+  init: true
+  restart: unless-stopped
+  group_add:
+    - opencode-demo
+  environment: &opencode-demo-environment
+    OPENCODE_CONFIG_DIR: /opt/opencode/config
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+    OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    GROQ_API_KEY: ${GROQ_API_KEY:-}
+  healthcheck: &opencode-demo-healthcheck
+    test:
+      - CMD-SHELL
+      - >-
+        curl --fail --silent --show-error
+        --user "$${OPENCODE_SERVER_USERNAME}:$${OPENCODE_SERVER_PASSWORD}"
+        http://127.0.0.1:4096/global/health >/dev/null
+    interval: 10s
+    timeout: 5s
+    retries: 6
+    start_period: 15s
+
+services:
+  opencode-demo-ada:
+    <<: *opencode-demo-common
+    container_name: opencode-demo-server-ada
+    hostname: opencode-demo-server-ada
+    user: "10001:10001"
+    environment:
+      <<: *opencode-demo-environment
+      DEMO_PROFILE: ada
+      HOME: /home/ada
+      OPENCODE_SERVER_USERNAME: ada
+      OPENCODE_SERVER_PASSWORD: ${ADA_OPENCODE_SERVER_PASSWORD:?Set ADA_OPENCODE_SERVER_PASSWORD in .env.demo}
+    ports:
+      - "4096:4096"
+    volumes:
+      - opencode-demo-ada-state:/home/ada/.local/share/opencode
+    labels:
+      dev.blazelight.p4oc.demo.name: "OpenCode Demo Server — ada"
+      dev.blazelight.p4oc.demo.profile: ada
+
+  opencode-demo-linus:
+    <<: *opencode-demo-common
+    container_name: opencode-demo-server-linus
+    hostname: opencode-demo-server-linus
+    user: "10002:10002"
+    environment:
+      <<: *opencode-demo-environment
+      DEMO_PROFILE: linus
+      HOME: /home/linus
+      OPENCODE_SERVER_USERNAME: linus
+      OPENCODE_SERVER_PASSWORD: ${LINUS_OPENCODE_SERVER_PASSWORD:?Set LINUS_OPENCODE_SERVER_PASSWORD in .env.demo}
+    ports:
+      - "4097:4096"
+    volumes:
+      - opencode-demo-linus-state:/home/linus/.local/share/opencode
+    labels:
+      dev.blazelight.p4oc.demo.name: "OpenCode Demo Server — linus"
+      dev.blazelight.p4oc.demo.profile: linus
+
+  opencode-demo-grace:
+    <<: *opencode-demo-common
+    container_name: opencode-demo-server-grace
+    hostname: opencode-demo-server-grace
+    user: "10003:10003"
+    environment:
+      <<: *opencode-demo-environment
+      DEMO_PROFILE: grace
+      HOME: /home/grace
+      OPENCODE_SERVER_USERNAME: grace
+      OPENCODE_SERVER_PASSWORD: ${GRACE_OPENCODE_SERVER_PASSWORD:?Set GRACE_OPENCODE_SERVER_PASSWORD in .env.demo}
+    ports:
+      - "4098:4096"
+    volumes:
+      - opencode-demo-grace-state:/home/grace/.local/share/opencode
+    labels:
+      dev.blazelight.p4oc.demo.name: "OpenCode Demo Server — grace"
+      dev.blazelight.p4oc.demo.profile: grace
+
+volumes:
+  opencode-demo-ada-state:
+    name: opencode-demo-ada-state
+  opencode-demo-linus-state:
+    name: opencode-demo-linus-state
+  opencode-demo-grace-state:
+    name: opencode-demo-grace-state

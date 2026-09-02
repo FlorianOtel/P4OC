@@ -1,5 +1,6 @@
 package dev.blazelight.p4oc.ui.screens.files.editor
 
+import dev.blazelight.p4oc.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -75,6 +76,27 @@ class SoraLanguageRegistryTest {
         assertEquals("source.python", SoraLanguageRegistry.scopeFor("Main.PY"))
         assertEquals("source.kotlin", SoraLanguageRegistry.scopeFor("Foo.KTS"))
         assertEquals("text.xml", SoraLanguageRegistry.scopeFor("layout.XML"))
+    }
+
+    @Test
+    fun `display labels map known scopes to language resources`() {
+        val cases = mapOf(
+            "source.kotlin" to R.string.file_language_kotlin,
+            "text.html.markdown" to R.string.file_language_markdown,
+        )
+
+        cases.forEach { (scope, expected) ->
+            assertEquals("label resource for $scope", expected, displayLabelResForScope(scope))
+        }
+    }
+
+    @Test
+    fun `display labels fall back to plain text for null and unknown scopes`() {
+        assertEquals(R.string.file_language_plain_text, displayLabelResForScope(null))
+        assertEquals(
+            R.string.file_language_plain_text,
+            displayLabelResForScope("source.language-we-do-not-ship"),
+        )
     }
 
     @Test

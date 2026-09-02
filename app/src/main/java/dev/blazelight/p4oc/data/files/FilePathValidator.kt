@@ -15,6 +15,10 @@ internal object FilePathValidator {
             return if (allowRoot) Result.success("") else invalid("Root file path is not allowed for mutations")
         }
 
+        if (!allowRoot && path != trimmed) {
+            return invalid("Leading or trailing whitespace is not allowed in file paths")
+        }
+
         if (trimmed.startsWith("~")) {
             return invalid("Home-relative file paths are not allowed")
         }
@@ -55,7 +59,7 @@ internal object FilePathValidator {
     private fun invalid(message: String): Result<String> = Result.failure(InvalidFilePathException(message))
 
     private val WINDOWS_DRIVE_PATTERN = Regex("^[A-Za-z]:.*")
-    private val URI_SCHEME_PATTERN = Regex("^[A-Za-z][A-Za-z0-9+.-]*:.*")
+    private val URI_SCHEME_PATTERN = Regex("^[A-Za-z][A-Za-z0-9+.-]*:/+.*")
 }
 
 internal class InvalidFilePathException(message: String) : IllegalArgumentException(message)

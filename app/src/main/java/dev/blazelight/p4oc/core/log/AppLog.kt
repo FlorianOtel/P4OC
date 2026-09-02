@@ -30,18 +30,18 @@ object AppLog {
     }
 
     fun w(tag: String, msg: String) {
-        Log.w(tag, msg)
+        if (BuildConfig.DEBUG) Log.w(tag, msg)
     }
 
     fun w(tag: String, msg: String, throwable: Throwable?) {
-        Log.w(tag, msg, throwable)
+        if (BuildConfig.DEBUG) Log.w(tag, msg, throwable)
     }
 
     fun e(tag: String, msg: String) {
-        Log.e(tag, msg)
+        if (BuildConfig.DEBUG) Log.e(tag, msg)
     }
 
     fun e(tag: String, msg: String, throwable: Throwable?) {
-        Log.e(tag, msg, throwable)
+        if (BuildConfig.DEBUG) Log.e(tag, msg, throwable)
     }
 }

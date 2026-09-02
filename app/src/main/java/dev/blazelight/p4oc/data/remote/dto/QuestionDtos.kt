@@ -15,6 +15,12 @@ data class QuestionRequestDto(
     val tool: QuestionToolRefDto? = null
 )
 
+/** Exact response envelope returned by v2.session.question.list. */
+@Serializable
+data class QuestionV2RequestListResponseDto(
+    val data: List<QuestionV2Request>
+)
+
 @Serializable
 data class QuestionToolRefDto(
     @SerialName("messageID") val messageID: String,
@@ -40,3 +46,6 @@ data class QuestionOptionDto(
 data class QuestionReplyRequest(
     val answers: List<List<String>>
 )
+
+typealias QuestionV2Request = QuestionRequestDto
+typealias QuestionV2Reply = QuestionReplyRequest

@@ -16,23 +16,6 @@ data class Permission(
 ) {
     val kind: PermissionKind
         get() = PermissionKind.fromType(type)
-
-    val title: String
-        get() {
-            val action = when (kind) {
-                PermissionKind.Bash -> "Execute command"
-                PermissionKind.Edit -> "Write to file"
-                PermissionKind.Patch -> "Edit file"
-                PermissionKind.WebFetch -> "Fetch URL"
-                PermissionKind.Task -> "Run sub-agent"
-                PermissionKind.Skill -> "Use skill"
-                PermissionKind.ExternalDirectory -> "Access external directory"
-                PermissionKind.DoomLoop -> "Continue execution"
-                PermissionKind.Unknown -> type.replaceFirstChar { it.uppercase() }
-            }
-            val pattern = patterns.firstOrNull().orEmpty()
-            return if (pattern.isNotEmpty()) "$action: $pattern" else action
-        }
 }
 
 enum class PermissionKind {

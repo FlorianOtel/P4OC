@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "stage-chapters": {
+      "source": "ReviewStage/stage-cli",
+      "sourceType": "github",
+      "skillPath": "skills/stage-chapters/SKILL.md",
+      "computedHash": "f08eb857f6da4ab880303cc64f14c13e126bd7822db304a653515cd41c5109d2"
+    }
+  }
+}

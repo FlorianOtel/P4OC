@@ -112,8 +112,3 @@ data class PartInputDto(
     val description: String? = null,
     val agent: String? = null
 )
-
-@Serializable
-data class SetActiveModelRequest(
-    val model: ModelInput
-)

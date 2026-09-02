@@ -20,6 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import okhttp3.Authenticator
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -32,6 +33,17 @@ private const val SERVICE_TYPE = "_http._tcp."
 private const val SERVICE_NAME_PREFIX = "opencode-"
 private const val SEED_PROBE_TIMEOUT_SECONDS = 2L
 private const val SEED_PROBE_CONCURRENCY = 4
+
+internal fun buildSeedProbeClient(allowInsecure: Boolean): OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    .readTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    .callTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    .followRedirects(false)
+    .followSslRedirects(false)
+    .authenticator(Authenticator.NONE)
+    .proxyAuthenticator(Authenticator.NONE)
+    .apply { if (allowInsecure) applyInsecureTls() }
+    .build()
 
 enum class DiscoverySource {
     MDNS,
@@ -84,6 +96,7 @@ private fun normalizeSeedUrl(rawUrl: String): String? {
     val candidate = if (trimmed.contains("://")) trimmed else "http://$trimmed"
     val parsed = candidate.toHttpUrlOrNull() ?: return null
     if (parsed.scheme != "http" && parsed.scheme != "https") return null
+    if (parsed.username.isNotEmpty() || parsed.password.isNotEmpty()) return null
 
     val builder = parsed.newBuilder()
         .query(null)
@@ -134,13 +147,13 @@ internal fun mergeDiscoveredServer(
     val current = existing[existingIndex]
     val replacement = when {
         current.source == DiscoverySource.SEED && incoming.source == DiscoverySource.MDNS -> incoming.copy(
-            allowInsecure = current.allowInsecure || incoming.allowInsecure,
+            allowInsecure = current.allowInsecure,
         )
         current.source == DiscoverySource.MDNS && incoming.source == DiscoverySource.SEED -> current.copy(
-            allowInsecure = current.allowInsecure || incoming.allowInsecure,
+            allowInsecure = current.allowInsecure,
         )
         else -> incoming.copy(
-            allowInsecure = current.allowInsecure || incoming.allowInsecure,
+            allowInsecure = current.allowInsecure,
         )
     }
 
@@ -174,22 +187,9 @@ class MdnsDiscoveryManager(private val context: Context) {
     private var seedProbeJob: Job? = null
     private var resolveParentJob: Job? = null
 
-    private val strictProbeClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .callTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .build()
-    }
+    private val strictProbeClient: OkHttpClient by lazy { buildSeedProbeClient(allowInsecure = false) }
 
-    private val insecureProbeClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .callTimeout(SEED_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .applyInsecureTls()
-            .build()
-    }
+    private val insecureProbeClient: OkHttpClient by lazy { buildSeedProbeClient(allowInsecure = true) }
 
     private val _discoveredServers = MutableStateFlow<List<DiscoveredServer>>(emptyList())
     val discoveredServers: StateFlow<List<DiscoveredServer>> = _discoveredServers.asStateFlow()
@@ -220,28 +220,28 @@ class MdnsDiscoveryManager(private val context: Context) {
 
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {
-                AppLog.d(TAG, "Discovery started for $serviceType")
+                AppLog.d(TAG, "Discovery started")
             }
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 val name = serviceInfo.serviceName
-                AppLog.d(TAG, "Service found: $name")
+                AppLog.d(TAG, "Service found")
                 if (name.startsWith(SERVICE_NAME_PREFIX, ignoreCase = true)) {
-                    AppLog.d(TAG, "OpenCode service matched: $name, queuing resolve")
+                    AppLog.d(TAG, "OpenCode service matched; queuing resolve")
                     launchResolve(serviceInfo)
                 }
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                 val name = serviceInfo.serviceName
-                AppLog.d(TAG, "Service lost: $name")
+                AppLog.d(TAG, "Service lost")
                 _discoveredServers.update { servers ->
                     servers.filter { it.serviceName != name }
                 }
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
-                AppLog.d(TAG, "Discovery stopped for $serviceType")
+                AppLog.d(TAG, "Discovery stopped")
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
@@ -261,7 +261,7 @@ class MdnsDiscoveryManager(private val context: Context) {
             nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
             startSeedProbing(seeds)
         } catch (e: Exception) {
-            AppLog.e(TAG, "Failed to start discovery", e)
+            AppLog.e(TAG, "Failed to start discovery: ${e.javaClass.simpleName}")
             activeListener = null
             resolveParentJob?.cancel()
             resolveParentJob = null
@@ -285,7 +285,7 @@ class MdnsDiscoveryManager(private val context: Context) {
             try {
                 nsdManager.stopServiceDiscovery(listener)
             } catch (e: Exception) {
-                AppLog.w(TAG, "Error stopping discovery: ${e.message}")
+                AppLog.w(TAG, "Error stopping discovery: ${e.javaClass.simpleName}")
             }
         }
 
@@ -319,7 +319,7 @@ class MdnsDiscoveryManager(private val context: Context) {
 
         runCatching {
             client.newCall(request).execute().use { response ->
-                if (response.code == 200) {
+                if (response.code.isOpenCodeSeedResponse()) {
                     val server = DiscoveredServer(
                         serviceName = "seed:${seed.host}:${seed.port}",
                         host = seed.host,
@@ -328,14 +328,14 @@ class MdnsDiscoveryManager(private val context: Context) {
                         source = DiscoverySource.SEED,
                         allowInsecure = seed.allowInsecure,
                     )
-                    AppLog.d(TAG, "Seed probe passed for ${seed.canonicalUrl}")
+                    AppLog.d(TAG, "Seed probe passed")
                     _discoveredServers.update { servers -> mergeDiscoveredServer(servers, server) }
                 } else {
-                    AppLog.d(TAG, "Seed probe failed for ${seed.canonicalUrl}: HTTP ${response.code}")
+                    AppLog.d(TAG, "Seed probe failed: HTTP ${response.code}")
                 }
             }
         }.onFailure { error ->
-            AppLog.d(TAG, "Seed probe failed for ${seed.canonicalUrl}: ${error.message}")
+            AppLog.d(TAG, "Seed probe failed: ${error.javaClass.simpleName}")
         }
     }
 
@@ -346,7 +346,7 @@ class MdnsDiscoveryManager(private val context: Context) {
                 val resolvedInfo = resolveService(serviceInfo) ?: return@withLock
                 val server = resolvedInfo.toDiscoveredServer() ?: return@withLock
 
-                AppLog.d(TAG, "Resolved: ${server.serviceName} -> ${server.url}")
+                AppLog.d(TAG, "Service resolved")
 
                 _discoveredServers.update { servers ->
                     mergeDiscoveredServer(servers, server)
@@ -359,7 +359,7 @@ class MdnsDiscoveryManager(private val context: Context) {
         return suspendCancellableCoroutine { continuation ->
             val listener = object : NsdManager.ResolveListener {
                 override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
-                    AppLog.w(TAG, "Resolve failed for ${info.serviceName}: errorCode=$errorCode")
+                    AppLog.w(TAG, "Resolve failed: errorCode=$errorCode")
                     if (continuation.isActive) continuation.resume(null)
                 }
 
@@ -371,7 +371,7 @@ class MdnsDiscoveryManager(private val context: Context) {
             try {
                 nsdManager.resolveService(serviceInfo, listener)
             } catch (e: Exception) {
-                AppLog.e(TAG, "Error resolving service: ${e.message}", e)
+                AppLog.e(TAG, "Error resolving service: ${e.javaClass.simpleName}")
                 if (continuation.isActive) continuation.resume(null)
             }
         }
@@ -382,7 +382,7 @@ class MdnsDiscoveryManager(private val context: Context) {
         val port = port
         val hostAddress = host?.hostAddress
         if (hostAddress == null) {
-            AppLog.w(TAG, "Resolved $serviceName but hostAddress is null, skipping")
+            AppLog.w(TAG, "Resolved service has no host address; skipping")
             return null
         }
 
@@ -403,3 +403,8 @@ class MdnsDiscoveryManager(private val context: Context) {
         )
     }
 }
+
+private const val HTTP_OK = 200
+private const val HTTP_UNAUTHORIZED = 401
+
+internal fun Int.isOpenCodeSeedResponse(): Boolean = this == HTTP_OK || this == HTTP_UNAUTHORIZED

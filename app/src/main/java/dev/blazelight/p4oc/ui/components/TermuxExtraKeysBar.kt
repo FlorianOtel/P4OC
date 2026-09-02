@@ -2,11 +2,14 @@ package dev.blazelight.p4oc.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,6 +22,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import dev.blazelight.p4oc.ui.theme.SemanticColors
@@ -44,7 +54,8 @@ fun TermuxExtraKeysBar(
     onCtrlToggle: () -> Unit,
     onAltToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    onPaste: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -55,30 +66,33 @@ fun TermuxExtraKeysBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(Sizing.buttonHeightSm)
+                .height(Sizing.minTouchTarget)
+                .horizontalScroll(rememberScrollState())
         ) {
-            ExtraKey("ESC", "\u001B", enabled, onKeyPress, Modifier.weight(1f))
-            ExtraKey("/", "/", enabled, onKeyPress, Modifier.weight(1f))
-            ExtraKey("―", "-", enabled, onKeyPress, Modifier.weight(1f))
-            ExtraKey("HOME", "\u001B[H", enabled, onKeyPress, Modifier.weight(1f))
-            RepeatableExtraKey("↑", "\u001B[A", enabled, onKeyPress, Modifier.weight(1f))
-            ExtraKey("END", "\u001B[F", enabled, onKeyPress, Modifier.weight(1f))
-            ExtraKey("PGUP", "\u001B[5~", enabled, onKeyPress, Modifier.weight(1f))
+            ExtraKey("ESC", "\u001B", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ExtraKey("/", "/", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ExtraKey("―", "-", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ExtraKey("HOME", "\u001B[H", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            RepeatableExtraKey("↑", "\u001B[A", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ExtraKey("END", "\u001B[F", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ExtraKey("PGUP", "\u001B[5~", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ActionExtraKey("PST", enabled && onPaste != null, onPaste ?: {}, Modifier.width(Sizing.minTouchTarget))
         }
 
         // Row 2: TAB  CTRL  ALT  ←  ↓  →  PGDN
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(Sizing.buttonHeightSm)
+                .height(Sizing.minTouchTarget)
+                .horizontalScroll(rememberScrollState())
         ) {
-            ExtraKey("↹", "\t", enabled, onKeyPress, Modifier.weight(1f))
-            ModifierKey("CTRL", ctrlActive, enabled, onCtrlToggle, Modifier.weight(1f))
-            ModifierKey("ALT", altActive, enabled, onAltToggle, Modifier.weight(1f))
-            RepeatableExtraKey("←", "\u001B[D", enabled, onKeyPress, Modifier.weight(1f))
-            RepeatableExtraKey("↓", "\u001B[B", enabled, onKeyPress, Modifier.weight(1f))
-            RepeatableExtraKey("→", "\u001B[C", enabled, onKeyPress, Modifier.weight(1f))
-            ExtraKey("PGDN", "\u001B[6~", enabled, onKeyPress, Modifier.weight(1f))
+            ExtraKey("↹", "\t", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ModifierKey("CTRL", ctrlActive, enabled, onCtrlToggle, Modifier.width(Sizing.minTouchTarget))
+            ModifierKey("ALT", altActive, enabled, onAltToggle, Modifier.width(Sizing.minTouchTarget))
+            RepeatableExtraKey("←", "\u001B[D", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            RepeatableExtraKey("↓", "\u001B[B", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            RepeatableExtraKey("→", "\u001B[C", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
+            ExtraKey("PGDN", "\u001B[6~", enabled, onKeyPress, Modifier.width(Sizing.minTouchTarget))
         }
     }
 }
@@ -98,6 +112,14 @@ private fun ExtraKey(
 
     Box(
         modifier = modifier
+            .semantics {
+                role = Role.Button
+                if (!enabled) disabled()
+                onClick(label) {
+                    if (enabled) onKeyPress(sequence)
+                    enabled
+                }
+            }
             .background(
                 color = if (isPressed) SemanticColors.TerminalKeys.keyPressed else Color.Transparent,
                 shape = RectangleShape
@@ -133,6 +155,56 @@ private fun ExtraKey(
     }
 }
 
+@Composable
+private fun ActionExtraKey(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var isPressed by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = modifier
+            .semantics {
+                role = Role.Button
+                if (!enabled) disabled()
+                onClick(label) {
+                    if (enabled) onClick()
+                    enabled
+                }
+            }
+            .background(
+                color = if (isPressed) SemanticColors.TerminalKeys.keyPressed else Color.Transparent,
+                shape = RectangleShape
+            )
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures(
+                    onPress = {
+                        isPressed = true
+                        tryAwaitRelease()
+                        isPressed = false
+                    },
+                    onTap = { onClick() },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (enabled) {
+                SemanticColors.TerminalKeys.keyText
+            } else {
+                SemanticColors.TerminalKeys.keyText.copy(alpha = 0.5f)
+            },
+            fontSize = TuiCodeFontSize.md,
+            fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
 /**
  * Repeatable extra key button (long-press triggers repeat).
  * Matches Termux behavior: 400ms initial delay, then 80ms repeat interval.
@@ -151,6 +223,14 @@ private fun RepeatableExtraKey(
 
     Box(
         modifier = modifier
+            .semantics {
+                role = Role.Button
+                if (!enabled) disabled()
+                onClick(label) {
+                    if (enabled) onKeyPress(sequence)
+                    enabled
+                }
+            }
             .background(
                 color = if (isPressed) SemanticColors.TerminalKeys.keyPressed else Color.Transparent,
                 shape = RectangleShape
@@ -214,6 +294,15 @@ private fun ModifierKey(
 
     Box(
         modifier = modifier
+            .semantics {
+                role = Role.Checkbox
+                toggleableState = ToggleableState(active)
+                if (!enabled) disabled()
+                onClick(label) {
+                    if (enabled) onClick()
+                    enabled
+                }
+            }
             .background(
                 color = if (isPressed) SemanticColors.TerminalKeys.keyPressed else Color.Transparent,
                 shape = RectangleShape

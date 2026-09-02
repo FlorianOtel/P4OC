@@ -29,7 +29,7 @@ import androidx.compose.ui.text.font.FontFamily
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ApiResult
 import dev.blazelight.p4oc.core.network.safeApiCall
-import dev.blazelight.p4oc.data.remote.dto.FileDiffDto
+import dev.blazelight.p4oc.data.remote.dto.SnapshotFileDiffDto
 import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.ui.components.TuiEmptyState
 import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
@@ -46,7 +46,7 @@ fun SessionDiffScreen(
     onNavigateBack: () -> Unit,
 ) {
     val theme = LocalOpenCodeTheme.current
-    var diffs by remember { mutableStateOf<List<FileDiffDto>?>(null) }
+    var diffs by remember { mutableStateOf<List<SnapshotFileDiffDto>?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -60,7 +60,7 @@ fun SessionDiffScreen(
             }
         ) {
             is ApiResult.Success -> diffs = result.data
-            is ApiResult.Error -> errorMessage = result.message
+            is ApiResult.Error -> errorMessage = "failed"
         }
         isLoading = false
     }
@@ -91,7 +91,7 @@ fun SessionDiffScreen(
                 ) {
                     TuiEmptyState(
                         icon = Icons.Default.ErrorOutline,
-                        title = errorMessage.orEmpty()
+                        title = stringResource(R.string.session_diff_load_failed)
                     )
                 }
             }
@@ -112,8 +112,8 @@ fun SessionDiffScreen(
 
             else -> {
                 val fileList = diffs.orEmpty()
-                val totalAdditions = fileList.sumOf { it.additions }
-                val totalDeletions = fileList.sumOf { it.deletions }
+                val totalAdditions = fileList.sumOf { it.additions }.toInt()
+                val totalDeletions = fileList.sumOf { it.deletions }.toInt()
 
                 LazyColumn(
                     modifier = Modifier
@@ -140,19 +140,13 @@ fun SessionDiffScreen(
                         }
                     }
 
-                    items(fileList, key = { it.file }) { fileDiff ->
-                        val diffContent = remember(fileDiff.file, fileDiff.before, fileDiff.after) {
-                            dev.blazelight.p4oc.ui.diff.UnifiedDiffBuilder.build(
-                                filePath = fileDiff.file,
-                                before = fileDiff.before,
-                                after = fileDiff.after
-                            )
-                        }
+                    items(fileList) { fileDiff ->
+                        val fileName = fileDiff.file ?: stringResource(R.string.session_diff_unknown_file)
                         InlineDiffViewer(
-                            fileName = fileDiff.file,
-                            diffContent = diffContent,
-                            additions = fileDiff.additions,
-                            deletions = fileDiff.deletions
+                            fileName = fileName,
+                            diffContent = fileDiff.patch.orEmpty(),
+                            additions = fileDiff.additions.toInt(),
+                            deletions = fileDiff.deletions.toInt()
                         )
                     }
                 }

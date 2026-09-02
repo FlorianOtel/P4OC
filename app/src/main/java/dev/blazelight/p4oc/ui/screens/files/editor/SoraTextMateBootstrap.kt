@@ -1,9 +1,9 @@
 package dev.blazelight.p4oc.ui.screens.files.editor
 
 import android.content.Context
-import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.ui.components.code.OpenCodeScopeColors
 import dev.blazelight.p4oc.ui.theme.opencode.OpenCodeTheme
 import io.github.rosemoe.sora.langs.textmate.registry.FileProviderRegistry
@@ -66,7 +66,7 @@ internal object SoraTextMateBootstrap {
                 .addFileProvider(AssetsFileResolver(appCtx.assets))
             GrammarRegistry.getInstance().loadGrammars(LANGUAGES_CONFIG)
         }.onFailure { t ->
-            Log.w(TAG, "Grammar bootstrap failed; editor will fall back to plain text", t)
+            AppLog.w(TAG, "Grammar bootstrap failed; editor will fall back to plain text")
             // Mark as loaded anyway: retrying mid-session will not help and we
             // don't want every editor open to repeat the same failing load.
         }

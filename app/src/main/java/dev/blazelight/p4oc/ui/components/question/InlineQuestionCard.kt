@@ -55,7 +55,11 @@ fun InlineQuestionCard(
 
     val currentQuestion = questionData.questions.getOrNull(currentQuestionIndex)
     val isLastQuestion = currentQuestionIndex == questionData.questions.lastIndex
-    val hasAnswer = answers.getOrNull(currentQuestionIndex)?.isNotEmpty() == true
+    val sanitizedAnswers = currentQuestion?.let { q ->
+        val current = answers.getOrNull(currentQuestionIndex).orEmpty()
+        sanitizeAnswersForQuestion(q, current)
+    } ?: emptyList()
+    val hasAnswer = sanitizedAnswers.isNotEmpty()
 
     Column(
         modifier = modifier
@@ -112,7 +116,7 @@ fun InlineQuestionCard(
             // Options
             InlineQuestionOptions(
                 question = question,
-                selectedOptions = answers.getOrNull(currentQuestionIndex).orEmpty(),
+                selectedOptions = sanitizedAnswers,
                 onSelectionChange = { selected ->
                     answers = answers.mapIndexed { index, answer ->
                         if (index == currentQuestionIndex) selected else answer
@@ -164,6 +168,17 @@ fun InlineQuestionCard(
     }
 }
 
+internal fun shouldShowCustomAnswerOption(question: Question): Boolean = question.custom
+
+internal fun sanitizeAnswersForQuestion(
+    question: Question,
+    selectedOptions: List<String>
+): List<String> = if (question.custom) {
+    selectedOptions
+} else {
+    selectedOptions.filter { it in question.options.map { o -> o.label }.toSet() }
+}
+
 @Composable
 private fun InlineQuestionOptions(
     question: Question,
@@ -208,6 +223,8 @@ private fun InlineQuestionOptions(
                 }
             )
         }
+
+        if (!shouldShowCustomAnswerOption(question)) return@Column
 
         // Custom answer option
         if (showCustomInput) {

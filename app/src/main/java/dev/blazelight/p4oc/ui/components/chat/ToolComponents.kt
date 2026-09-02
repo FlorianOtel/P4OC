@@ -366,7 +366,7 @@ fun ToolOutputDialog(
 
                 HorizontalDivider(color = theme.border)
 
-                if (hasDiff && diffContent != null) {
+                if (hasDiff) {
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -555,7 +555,7 @@ fun EnhancedToolPart(
                     verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
                     if (hasDiff && state is ToolState.Completed) {
-                        val diffContent = metadata?.get("diff")?.jsonPrimitive?.contentOrNull
+                        val diffContent = metadata.get("diff")?.jsonPrimitive?.contentOrNull
                         if (diffContent != null) {
                             DiffPreview(
                                 diffContent = diffContent,

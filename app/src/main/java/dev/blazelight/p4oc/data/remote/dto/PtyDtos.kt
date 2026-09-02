@@ -14,15 +14,17 @@ data class PtyDto(
     val args: List<String>,
     val cwd: String,
     val status: String,
-    val pid: Int? = null // Server may return null for pid
+    // Some deployed servers return null while the process is starting despite the upstream schema.
+    val pid: Int? = null,
+    val exitCode: Int? = null,
 )
 
 @Serializable
 data class CreatePtyRequest(
-    val command: String = "/bin/bash",
+    val command: String? = null,
     val args: List<String> = emptyList(),
-    val cwd: String = ".",
-    val title: String = "Terminal",
+    val cwd: String? = null,
+    val title: String? = null,
     val env: Map<String, String> = emptyMap()
 )
 

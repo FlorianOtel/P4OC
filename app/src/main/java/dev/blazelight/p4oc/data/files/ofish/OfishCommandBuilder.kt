@@ -15,6 +15,7 @@ internal class OfishCommandBuilder {
             appendLine("printf '#OFISH_HASH\\n'")
             appendLine("P=${shellSingleQuote(path)}")
             appendHashFunction(requireHashCommand(capabilities))
+            appendSymlinkGuard("P")
             append(
                 """
             if [ ! -f "${'$'}P" ]; then printf '### 404 missing\n'; exit 0; fi
@@ -38,7 +39,10 @@ internal class OfishCommandBuilder {
             val delimiter = PAYLOAD_DELIMITER
             appendCommonHeader(marker = "#OFISH_WRITE", path = path, parent = parent, expectedHash = expectedHash)
             appendHashFunction(requireHashCommand(capabilities))
+            appendSymlinkGuard("P")
+            appendDirectoryGuard()
             appendExpectedHashGuard()
+            appendModeCapture(capabilities)
             append(
                 """
             mkdir -p -- "${'$'}D" || { printf '### 500 failed reason=mkdir\n'; exit 0; }
@@ -58,6 +62,8 @@ internal class OfishCommandBuilder {
             append(
                 """
             if [ ${'$'}? -ne 0 ]; then printf '### 500 failed reason=decode\n'; exit 0; fi
+            if [ -n "${'$'}MODE" ]; then chmod "${'$'}MODE" "${'$'}TMP" || { printf '### 500 failed reason=chmod\n'; exit 0; }; fi
+            if [ -L "${'$'}P" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             mv -f -- "${'$'}TMP" "${'$'}P" || { printf '### 500 failed reason=mv\n'; exit 0; }
             trap - EXIT INT TERM
             HASH=${'$'}(hash_file "${'$'}P")
@@ -78,8 +84,10 @@ internal class OfishCommandBuilder {
             appendLine("P=${shellSingleQuote(path)}")
             append(
                 """
+            if [ -L "${'$'}P" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             if [ ! -e "${'$'}P" ]; then printf '### 404 missing\n'; exit 0; fi
             if [ -d "${'$'}P" ]; then printf '### 412 precondition reason=directory\n'; exit 0; fi
+            if [ -L "${'$'}P" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             rm -f -- "${'$'}P" || { printf '### 500 failed reason=rm\n'; exit 0; }
             printf '### 204 deleted\n'
             exit 0
@@ -94,7 +102,9 @@ internal class OfishCommandBuilder {
             appendLine("P=${shellSingleQuote(path)}")
             append(
                 """
+            if [ -L "${'$'}P" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             if [ -e "${'$'}P" ]; then printf '### 409 conflict\n'; exit 0; fi
+            if [ -L "${'$'}P" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             mkdir -p -- "${'$'}P" || { printf '### 500 failed reason=mkdir\n'; exit 0; }
             printf '### 201 created\n'
             exit 0
@@ -111,9 +121,11 @@ internal class OfishCommandBuilder {
             appendLine("D=${shellSingleQuote(parentDirectory(toPath))}")
             append(
                 """
+            if [ -L "${'$'}FROM" ] || [ -L "${'$'}TO" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             if [ ! -e "${'$'}FROM" ]; then printf '### 404 missing\n'; exit 0; fi
             if [ -e "${'$'}TO" ]; then printf '### 409 conflict\n'; exit 0; fi
             mkdir -p -- "${'$'}D" || { printf '### 500 failed reason=mkdir\n'; exit 0; }
+            if [ -L "${'$'}FROM" ] || [ -L "${'$'}TO" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             mv -- "${'$'}FROM" "${'$'}TO" || { printf '### 500 failed reason=mv\n'; exit 0; }
             printf '### 200 ok\n'
             exit 0
@@ -131,6 +143,7 @@ internal class OfishCommandBuilder {
             val parent = parentDirectory(path)
             appendCommonHeader(marker = "#OFISH_UPLOAD_INIT", path = path, parent = parent, expectedHash = expectedHash)
             appendHashFunction(requireHashCommand(capabilities))
+            appendSymlinkGuard("P")
             appendExpectedHashGuard()
             append(
                 """
@@ -155,7 +168,9 @@ internal class OfishCommandBuilder {
             appendLine("TMP=${shellSingleQuote(uploadToken)}")
             append(
                 """
+            if [ -L "${'$'}TMP" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             if [ ! -f "${'$'}TMP" ]; then printf '### 412 precondition reason=missing_tmp\n'; exit 0; fi
+            if [ -L "${'$'}TMP" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             base64 ${base64DecodeFlag(capabilities)} >> "${'$'}TMP" <<'$delimiter'
                 """.trimIndent()
             )
@@ -189,10 +204,15 @@ internal class OfishCommandBuilder {
             )
             appendLine("TMP=${shellSingleQuote(uploadToken)}")
             appendHashFunction(requireHashCommand(capabilities))
+            appendSymlinkGuard("P")
             appendExpectedHashGuard()
+            appendModeCapture(capabilities)
             append(
                 """
+            if [ -L "${'$'}TMP" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             if [ ! -f "${'$'}TMP" ]; then printf '### 412 precondition reason=missing_tmp\n'; exit 0; fi
+            if [ -n "${'$'}MODE" ]; then chmod "${'$'}MODE" "${'$'}TMP" || { printf '### 500 failed reason=chmod\n'; exit 0; }; fi
+            if [ -L "${'$'}P" ] || [ -L "${'$'}TMP" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
             mv -f -- "${'$'}TMP" "${'$'}P" || { printf '### 500 failed reason=mv\n'; exit 0; }
             HASH=${'$'}(hash_file "${'$'}P")
             printf '### 200 ok hash=%s\n' "${'$'}HASH"
@@ -254,6 +274,7 @@ internal class OfishCommandBuilder {
         append(
             """
             if [ -n "${'$'}EXPECTED" ]; then
+              if [ -L "${'$'}P" ]; then printf '### 412 precondition reason=symlink\n'; exit 0; fi
               if [ ! -f "${'$'}P" ]; then printf '### 404 missing\n'; exit 0; fi
               ACTUAL=${'$'}(hash_file "${'$'}P")
               if [ "${'$'}ACTUAL" != "${'$'}EXPECTED" ]; then
@@ -264,6 +285,29 @@ internal class OfishCommandBuilder {
             """.trimIndent()
         )
         append('\n')
+    }
+
+    private fun StringBuilder.appendModeCapture(capabilities: OfishCapabilities) {
+        val command = when (capabilities.modeCommand) {
+            ModeCommand.STAT_GNU -> "stat -c '%a'"
+            ModeCommand.STAT_BSD -> "stat -f '%Lp'"
+            null -> error("OFISH mutation command requires a mode command")
+        }
+        require(capabilities.hasChmod) { "OFISH mutation command requires chmod" }
+        appendLine("MODE=''")
+        appendSymlinkGuard("P")
+        appendLine(
+            "if [ -e \"${'$'}P\" ]; then MODE=${'$'}($command \"${'$'}P\") || " +
+                "{ printf '### 500 failed reason=mode\\n'; exit 0; }; fi",
+        )
+    }
+
+    private fun StringBuilder.appendDirectoryGuard() {
+        appendLine("if [ -d \"${'$'}P\" ]; then printf '### 412 precondition reason=directory\\n'; exit 0; fi")
+    }
+
+    private fun StringBuilder.appendSymlinkGuard(variable: String) {
+        appendLine("if [ -L \"${'$'}$variable\" ]; then printf '### 412 precondition reason=symlink\\n'; exit 0; fi")
     }
 
     private fun requireHashCommand(capabilities: OfishCapabilities): HashCommand =

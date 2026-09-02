@@ -5,6 +5,8 @@ import dev.blazelight.p4oc.data.files.FileRepository
 import dev.blazelight.p4oc.data.files.FileRepositoryFactory
 import dev.blazelight.p4oc.data.session.SessionRepositoryImpl
 import dev.blazelight.p4oc.data.session.SessionRepositoryProvider
+import dev.blazelight.p4oc.data.vcs.WorkspaceChangesRepository
+import dev.blazelight.p4oc.data.vcs.WorkspaceChangesRepositoryImpl
 import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.domain.server.ServerGeneration
 import dev.blazelight.p4oc.domain.workspace.Workspace
@@ -13,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class WorkspaceRepositoryOwner(
     val tabId: String,
@@ -24,6 +27,7 @@ class WorkspaceRepositoryOwner(
     val workspaceClient: WorkspaceClient = repositoryLease.workspaceClient
     val sessionRepository: SessionRepositoryImpl = repositoryLease.repository
     val fileRepository: FileRepository = FileRepositoryFactory.create(workspaceClient)
+    val workspaceChangesRepository: WorkspaceChangesRepository = WorkspaceChangesRepositoryImpl(workspaceClient)
     private val uploadScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val uploadCoordinator = UploadCoordinator(
         scope = uploadScope,
@@ -34,11 +38,14 @@ class WorkspaceRepositoryOwner(
     private var closed = false
 
     init {
-        AppLog.i(TAG, logPrefix("init"))
+        AppLog.i(TAG, "WorkspaceRepositoryOwner.init")
+        uploadScope.launch {
+            sessionRepository.refresh()
+        }
     }
 
-    fun touch(destinationRoute: String?) {
-        AppLog.d(TAG) { "${logPrefix("touch")} destination=$destinationRoute" }
+    fun touch(@Suppress("UNUSED_PARAMETER") destinationRoute: String?) {
+        AppLog.d(TAG, "WorkspaceRepositoryOwner.touch")
     }
 
     fun close() {
@@ -47,11 +54,8 @@ class WorkspaceRepositoryOwner(
         uploadCoordinator.cancel()
         uploadScope.cancel()
         sessionRepositoryProvider.release(workspace, generation)
-        AppLog.i(TAG, logPrefix("close"))
+        AppLog.i(TAG, "WorkspaceRepositoryOwner.close")
     }
-
-    private fun logPrefix(event: String): String =
-        "WorkspaceRepositoryOwner.$event tabId=$tabId workspaceKey=${workspace.key} server=${workspace.server.endpointKey} generation=${generation.value} identity=$identityHash"
 
     private companion object {
         const val TAG = "WorkspaceRepositoryOwner"

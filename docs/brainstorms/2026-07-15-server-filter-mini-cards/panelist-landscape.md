@@ -1,0 +1,3 @@
+# Pass 1 panelist synthesis
+
+All three design lenses converged on one key rule: filter inclusion and connection health need independent encodings. Best compact direction is the user's two-line reference with a connection glyph at left, explicit ON/OFF at right, raw endpoint below, and a fixed-width session count. Best accessibility fallback is a three-line checkbox card. Horizontal overflow should use a clipped next card plus position-aware chevrons/hidden count. No All pseudo-card; all-on is simply every toggle enabled. All-off means zero results plus a Select all recovery action. Blank-search results interleave newest-first across enabled servers; global search preserves but temporarily ignores selections with explicit disclosure.

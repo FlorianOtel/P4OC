@@ -1,6 +1,5 @@
 package dev.blazelight.p4oc.data.remote.dto
 
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // ============================================================================
@@ -52,27 +51,6 @@ data class FileStatusDto(
     val status: String, // "added" | "deleted" | "modified"
     val added: Int = 0,
     val removed: Int = 0
-)
-
-@Serializable
-data class SearchResultDto(
-    val path: String,
-    val lines: List<SearchLineDto>? = null,
-    @SerialName("line_number") val lineNumber: Int? = null,
-    @SerialName("absolute_offset") val absoluteOffset: Int? = null,
-    val submatches: List<SubmatchDto>? = null
-)
-
-@Serializable
-data class SearchLineDto(
-    val text: String
-)
-
-@Serializable
-data class SubmatchDto(
-    val match: String,
-    val start: Int,
-    val end: Int
 )
 
 @Serializable

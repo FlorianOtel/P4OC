@@ -1,0 +1,5 @@
+{
+  "workers": 3,
+  "queueCapacity": 4,
+  "jobTimeout": "250ms"
+}

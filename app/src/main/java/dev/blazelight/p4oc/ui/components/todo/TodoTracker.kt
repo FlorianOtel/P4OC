@@ -28,6 +28,20 @@ import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
 
+internal const val TODO_STATUS_PENDING = "pending"
+internal const val TODO_STATUS_IN_PROGRESS = "in_progress"
+internal const val TODO_STATUS_COMPLETED = "completed"
+internal const val TODO_STATUS_CANCELLED = "cancelled"
+private const val PERCENT_FACTOR = 100
+
+internal fun todoStatusLabelRes(status: String): Int = when (status) {
+    TODO_STATUS_PENDING -> R.string.todo_status_pending
+    TODO_STATUS_IN_PROGRESS -> R.string.todo_status_in_progress
+    TODO_STATUS_COMPLETED -> R.string.todo_status_completed
+    TODO_STATUS_CANCELLED -> R.string.todo_status_cancelled
+    else -> R.string.todo_status_unknown
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodoTrackerSheet(
@@ -37,7 +51,7 @@ fun TodoTrackerSheet(
     onRefresh: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    val completedCount = todos.count { it.status == "completed" }
+    val completedCount = todos.count { it.status == TODO_STATUS_COMPLETED }
     val totalCount = todos.size
     val progress = if (totalCount > 0) completedCount.toFloat() / totalCount else 0f
 
@@ -76,7 +90,7 @@ fun TodoTrackerSheet(
                     ) {
                         if (totalCount > 0) {
                             Text(
-                                text = "$completedCount/$totalCount",
+                                text = stringResource(R.string.progress_count, completedCount, totalCount),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = theme.accent
                             )
@@ -126,7 +140,10 @@ fun TodoTrackerSheet(
                     )
                     Spacer(modifier = Modifier.height(Spacing.xs))
                     Text(
-                        text = "${(progress * 100).toInt()}% complete",
+                        text = stringResource(
+                            R.string.percent_complete,
+                            (progress * PERCENT_FACTOR).toInt(),
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = theme.textMuted
                     )
@@ -187,10 +204,10 @@ private fun TuiEmptyTodosView() {
 private fun TuiTodoList(todos: List<Todo>) {
     val theme = LocalOpenCodeTheme.current
     val groupedTodos = todos.groupBy { it.status }
-    val inProgress = groupedTodos["in_progress"] ?: emptyList()
-    val pending = groupedTodos["pending"] ?: emptyList()
-    val completed = groupedTodos["completed"] ?: emptyList()
-    val cancelled = groupedTodos["cancelled"] ?: emptyList()
+    val inProgress = groupedTodos[TODO_STATUS_IN_PROGRESS] ?: emptyList()
+    val pending = groupedTodos[TODO_STATUS_PENDING] ?: emptyList()
+    val completed = groupedTodos[TODO_STATUS_COMPLETED] ?: emptyList()
+    val cancelled = groupedTodos[TODO_STATUS_CANCELLED] ?: emptyList()
 
     LazyColumn(
         modifier = Modifier
@@ -200,7 +217,11 @@ private fun TuiTodoList(todos: List<Todo>) {
     ) {
         if (inProgress.isNotEmpty()) {
             item {
-                TuiTodoSectionHeader(title = "▶ in progress", count = inProgress.size, color = theme.accent)
+                TuiTodoSectionHeader(
+                    status = TODO_STATUS_IN_PROGRESS,
+                    count = inProgress.size,
+                    color = theme.accent,
+                )
             }
             items(inProgress, key = { it.id }) { todo ->
                 TuiTodoItem(todo = todo)
@@ -209,7 +230,11 @@ private fun TuiTodoList(todos: List<Todo>) {
 
         if (pending.isNotEmpty()) {
             item {
-                TuiTodoSectionHeader(title = "○ pending", count = pending.size, color = theme.textMuted)
+                TuiTodoSectionHeader(
+                    status = TODO_STATUS_PENDING,
+                    count = pending.size,
+                    color = theme.textMuted,
+                )
             }
             items(pending, key = { it.id }) { todo ->
                 TuiTodoItem(todo = todo)
@@ -218,7 +243,11 @@ private fun TuiTodoList(todos: List<Todo>) {
 
         if (completed.isNotEmpty()) {
             item {
-                TuiTodoSectionHeader(title = "✓ completed", count = completed.size, color = theme.success)
+                TuiTodoSectionHeader(
+                    status = TODO_STATUS_COMPLETED,
+                    count = completed.size,
+                    color = theme.success,
+                )
             }
             items(completed, key = { it.id }) { todo ->
                 TuiTodoItem(todo = todo)
@@ -227,7 +256,11 @@ private fun TuiTodoList(todos: List<Todo>) {
 
         if (cancelled.isNotEmpty()) {
             item {
-                TuiTodoSectionHeader(title = "✗ cancelled", count = cancelled.size, color = theme.error)
+                TuiTodoSectionHeader(
+                    status = TODO_STATUS_CANCELLED,
+                    count = cancelled.size,
+                    color = theme.error,
+                )
             }
             items(cancelled, key = { it.id }) { todo ->
                 TuiTodoItem(todo = todo)
@@ -237,8 +270,9 @@ private fun TuiTodoList(todos: List<Todo>) {
 }
 
 @Composable
-private fun TuiTodoSectionHeader(title: String, count: Int, color: Color) {
+private fun TuiTodoSectionHeader(status: String, count: Int, color: Color) {
     val theme = LocalOpenCodeTheme.current
+    val (statusIcon, _) = getStatusInfo(status)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -246,8 +280,14 @@ private fun TuiTodoSectionHeader(title: String, count: Int, color: Color) {
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Icon(
+            imageVector = statusIcon,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(Sizing.iconXs),
+        )
         Text(
-            text = title,
+            text = stringResource(todoStatusLabelRes(status)),
             style = MaterialTheme.typography.labelMedium,
             color = color
         )
@@ -264,8 +304,8 @@ private fun TuiTodoItem(todo: Todo) {
     val theme = LocalOpenCodeTheme.current
     val (statusIcon, statusColor) = getStatusInfo(todo.status)
     val priorityColor = getPriorityColor(todo.priority)
-    val isCompleted = todo.status == "completed"
-    val isCancelled = todo.status == "cancelled"
+    val isCompleted = todo.status == TODO_STATUS_COMPLETED
+    val isCancelled = todo.status == TODO_STATUS_CANCELLED
 
     var expanded by remember { mutableStateOf(false) }
 
@@ -289,22 +329,18 @@ private fun TuiTodoItem(todo: Todo) {
             verticalAlignment = Alignment.Top
         ) {
             // Status indicator
-            Text(
-                text = when (todo.status) {
-                    "in_progress" -> "▶"
-                    "completed" -> "✓"
-                    "cancelled" -> "✗"
-                    else -> "○"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = statusColor
+            Icon(
+                imageVector = statusIcon,
+                contentDescription = stringResource(todoStatusLabelRes(todo.status)),
+                tint = statusColor,
+                modifier = Modifier.size(Sizing.iconXs),
             )
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = todo.content,
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = if (todo.status == "in_progress") FontWeight.Medium else FontWeight.Normal,
+                    fontWeight = if (todo.status == TODO_STATUS_IN_PROGRESS) FontWeight.Medium else FontWeight.Normal,
                     textDecoration = if (isCompleted || isCancelled) TextDecoration.LineThrough else null,
                     color = if (isCompleted || isCancelled) {
                         theme.textMuted
@@ -335,10 +371,10 @@ private fun TuiTodoItem(todo: Todo) {
 @Composable
 private fun getStatusInfo(status: String): Pair<androidx.compose.ui.graphics.vector.ImageVector, Color> {
     return when (status) {
-        "pending" -> Icons.Default.Schedule to SemanticColors.Todo.pending
-        "in_progress" -> Icons.Default.PlayCircle to SemanticColors.Todo.inProgress
-        "completed" -> Icons.Default.CheckCircle to SemanticColors.Todo.completed
-        "cancelled" -> Icons.Default.Cancel to SemanticColors.Todo.cancelled
+        TODO_STATUS_PENDING -> Icons.Default.Schedule to SemanticColors.Todo.pending
+        TODO_STATUS_IN_PROGRESS -> Icons.Default.PlayCircle to SemanticColors.Todo.inProgress
+        TODO_STATUS_COMPLETED -> Icons.Default.CheckCircle to SemanticColors.Todo.completed
+        TODO_STATUS_CANCELLED -> Icons.Default.Cancel to SemanticColors.Todo.cancelled
         else -> Icons.Default.Circle to SemanticColors.Todo.pending
     }
 }

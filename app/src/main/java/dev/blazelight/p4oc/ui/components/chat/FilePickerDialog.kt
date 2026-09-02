@@ -35,11 +35,14 @@ import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
+import kotlinx.serialization.Serializable
 
+@Serializable
 data class SelectedFile(
     val path: String,
     val name: String,
     val mimeType: String? = null,
+    val available: Boolean = true,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -248,9 +251,13 @@ fun FilePickerDialog(
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
-                                    text = if (searchQuery.isNotBlank()) stringResource(
-                                        R.string.no_matching_files
-                                    ) else stringResource(R.string.empty_folder),
+                                    text = if (searchQuery.isNotBlank()) {
+                                        stringResource(
+                                            R.string.no_matching_files
+                                        )
+                                    } else {
+                                        stringResource(R.string.empty_folder)
+                                    },
                                     color = theme.textMuted,
                                     fontFamily = FontFamily.Monospace
                                 )

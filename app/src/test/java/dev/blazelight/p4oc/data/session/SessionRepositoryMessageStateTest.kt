@@ -9,6 +9,7 @@ import dev.blazelight.p4oc.domain.session.SessionId
 import dev.blazelight.p4oc.fakes.FakeWorkspaceClient
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -75,7 +76,7 @@ class SessionRepositoryMessageStateTest {
     }
 
     @Test
-    fun `part updated appends delta and marks streaming`() = runTest {
+    fun `part updated uses authoritative text snapshot and marks streaming`() = runTest {
         val repository = repository()
         repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
         repository.acceptEvent(
@@ -83,12 +84,88 @@ class SessionRepositoryMessageStateTest {
         )
 
         repository.acceptEvent(
-            OpenCodeEvent.MessagePartUpdated(textPart(id = "p1", messageId = "m1", text = "ignored"), delta = " world")
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", text = "Hello world"),
+                delta = " world",
+            )
         )
 
         val part = repository.messages(sessionId).value.single().parts.single() as Part.Text
         assertEquals("Hello world", part.text)
         assertTrue(part.isStreaming)
+    }
+
+    @Test
+    fun `authoritative part update repairs duplicated delta without dropping metadata or sibling parts`() = runTest {
+        val repository = repository()
+        repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
+        val metadata = buildJsonObject { put("source", JsonPrimitive("server")) }
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", text = "Hello").copy(metadata = metadata),
+                delta = null,
+            )
+        )
+        repository.acceptEvent(OpenCodeEvent.MessagePartUpdated(toolPart(id = "p2", messageId = "m1"), delta = null))
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartDelta(
+                sessionID = "s1",
+                messageID = "m1",
+                partID = "p1",
+                field = "text",
+                delta = " world",
+            )
+        )
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartDelta(
+                sessionID = "s1",
+                messageID = "m1",
+                partID = "p1",
+                field = "text",
+                delta = " world",
+            )
+        )
+        assertEquals(
+            "Hello world world",
+            (repository.messages(sessionId).value.single().parts.first() as Part.Text).text,
+        )
+
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                textPart(id = "p1", messageId = "m1", text = "Hello world"),
+                delta = " world",
+            )
+        )
+
+        val parts = repository.messages(sessionId).value.single().parts
+        val corrected = parts.first() as Part.Text
+        assertEquals("Hello world", corrected.text)
+        assertEquals(metadata, corrected.metadata)
+        assertEquals(listOf("p1", "p2"), parts.map { it.id })
+    }
+
+    @Test
+    fun `authoritative reasoning update repairs missed delta and preserves omitted metadata`() = runTest {
+        val repository = repository()
+        repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
+        val metadata = buildJsonObject { put("model", JsonPrimitive("reasoner")) }
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                reasoningPart(id = "p1", messageId = "m1", text = "Think").copy(metadata = metadata),
+                delta = null,
+            )
+        )
+
+        repository.acceptEvent(
+            OpenCodeEvent.MessagePartUpdated(
+                reasoningPart(id = "p1", messageId = "m1", text = "Think carefully"),
+                delta = " carefully",
+            )
+        )
+
+        val corrected = repository.messages(sessionId).value.single().parts.single() as Part.Reasoning
+        assertEquals("Think carefully", corrected.text)
+        assertEquals(metadata, corrected.metadata)
     }
 
     @Test
@@ -126,6 +203,19 @@ class SessionRepositoryMessageStateTest {
     }
 
     @Test
+    fun `session deletion clears and removes retained message state`() = runTest {
+        val repository = repository()
+        val retainedMessages = repository.messages(sessionId)
+        repository.acceptEvent(OpenCodeEvent.MessageUpdated(assistantMessage(id = "m1", createdAt = 100)))
+        assertEquals(listOf("m1"), retainedMessages.value.map { it.message.id })
+
+        repository.acceptEvent(OpenCodeEvent.SessionDeleted(session("s1")))
+
+        assertTrue(retainedMessages.value.isEmpty())
+        assertTrue(repository.messages(sessionId).value.isEmpty())
+    }
+
+    @Test
     fun `messages emit sorted by createdAt`() = runTest {
         val repository = repository()
 
@@ -148,6 +238,16 @@ class SessionRepositoryMessageStateTest {
     }
 
     private fun repository(): SessionRepositoryImpl = SessionRepositoryImpl(FakeWorkspaceClient())
+
+    private fun session(id: String) = dev.blazelight.p4oc.domain.model.Session(
+        id = id,
+        projectID = "project-$id",
+        directory = "/workspace",
+        title = id,
+        version = "1",
+        createdAt = 1L,
+        updatedAt = 1L,
+    )
 
     private fun assistantMessage(id: String, createdAt: Long): Message.Assistant = Message.Assistant(
         id = id,
@@ -173,6 +273,13 @@ class SessionRepositoryMessageStateTest {
         messageID = messageId,
         text = text,
         isStreaming = isStreaming,
+    )
+
+    private fun reasoningPart(id: String, messageId: String, text: String): Part.Reasoning = Part.Reasoning(
+        id = id,
+        sessionID = "s1",
+        messageID = messageId,
+        text = text,
     )
 
     private fun toolPart(id: String, messageId: String): Part.Tool = Part.Tool(

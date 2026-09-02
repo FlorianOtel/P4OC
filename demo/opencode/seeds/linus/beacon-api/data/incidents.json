@@ -1,0 +1,30 @@
+[
+  {
+    "id": "inc-0001",
+    "title": "Elevated checkout latency",
+    "service": "checkout",
+    "severity": "major",
+    "status": "monitoring"
+  },
+  {
+    "id": "inc-0002",
+    "title": "Delayed webhook delivery",
+    "service": "events",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "inc-0003",
+    "title": "Expired image signing key",
+    "service": "registry",
+    "severity": "critical",
+    "status": "resolved"
+  },
+  {
+    "id": "inc-0004",
+    "title": "Intermittent payment retries",
+    "service": "checkout",
+    "severity": "minor",
+    "status": "open"
+  }
+]

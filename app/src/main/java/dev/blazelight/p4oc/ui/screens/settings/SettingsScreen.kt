@@ -29,6 +29,7 @@ import dev.blazelight.p4oc.BuildConfig
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
+import dev.blazelight.p4oc.ui.components.TuiSectionHeader
 import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.components.status.SessionStatusDot
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
@@ -39,11 +40,13 @@ import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+@Suppress("CyclomaticComplexMethod", "FunctionNaming", "LongMethod", "LongParameterList")
 fun SettingsScreen(
     viewModel: SettingsViewModel = koinViewModel(),
     onNavigateBack: () -> Unit,
     onDisconnect: () -> Unit,
-    onProviderConfig: () -> Unit = {},
+    onProviderConfig: (() -> Unit)? = null,
+    onModelControls: (() -> Unit)? = null,
     onChatSettings: () -> Unit = {},
     onVisualSettings: () -> Unit = {},
     onAgentsConfig: () -> Unit = {},
@@ -77,52 +80,75 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Server info (non-clickable)
-            SettingsItem(
-                icon = if (uiState.isLocal) Icons.Default.PhoneAndroid else Icons.Default.Cloud,
-                title = stringResource(R.string.server),
-                subtitle = uiState.serverUrl
-            )
+            // Server-scoped configuration only appears when Settings was opened from a workspace
+            // tab; opened globally there is no single server these could apply to.
+            val scopedServerName = viewModel.scopedServerName
+            if (scopedServerName != null) {
+                // Server info (non-clickable)
+                SettingsItem(
+                    icon = if (uiState.isLocal) Icons.Default.PhoneAndroid else Icons.Default.Cloud,
+                    title = scopedServerName,
+                    subtitle = uiState.serverUrl
+                )
 
-            SettingsItem(
-                icon = Icons.Default.SmartToy,
-                title = stringResource(R.string.settings_provider_model),
-                subtitle = if (isConnected) {
-                    stringResource(R.string.settings_provider_model_desc)
-                } else {
-                    stringResource(R.string.settings_requires_connection)
-                },
-                onClick = if (isConnected) onProviderConfig else null,
-                showChevron = isConnected,
-                enabled = isConnected,
-                testTag = "settings_provider_item"
-            )
+                TuiSectionHeader(stringResource(R.string.settings_group_server, scopedServerName))
 
-            SettingsItem(
-                icon = Icons.Default.Groups,
-                title = stringResource(R.string.settings_agents),
-                subtitle = if (isConnected) {
-                    stringResource(R.string.settings_agents_desc)
-                } else {
-                    stringResource(R.string.settings_requires_connection)
-                },
-                onClick = if (isConnected) onAgentsConfig else null,
-                showChevron = isConnected,
-                enabled = isConnected
-            )
+                SettingsItem(
+                    icon = Icons.Default.SmartToy,
+                    title = stringResource(R.string.settings_providers),
+                    subtitle = if (isConnected && onProviderConfig != null) {
+                        stringResource(R.string.settings_providers_desc)
+                    } else {
+                        stringResource(R.string.settings_requires_connection)
+                    },
+                    onClick = onProviderConfig?.takeIf { isConnected },
+                    showChevron = isConnected && onProviderConfig != null,
+                    enabled = isConnected && onProviderConfig != null,
+                    testTag = "settings_provider_item"
+                )
 
-            SettingsItem(
-                icon = Icons.Default.Extension,
-                title = stringResource(R.string.settings_skills),
-                subtitle = if (isConnected) {
-                    stringResource(R.string.settings_skills_desc)
-                } else {
-                    stringResource(R.string.settings_requires_connection)
-                },
-                onClick = if (isConnected) onSkills else null,
-                showChevron = isConnected,
-                enabled = isConnected
-            )
+                SettingsItem(
+                    icon = Icons.Default.Tune,
+                    title = stringResource(R.string.settings_model_controls),
+                    subtitle = if (isConnected && onModelControls != null) {
+                        stringResource(R.string.settings_model_controls_desc)
+                    } else {
+                        stringResource(R.string.settings_requires_connection)
+                    },
+                    onClick = onModelControls?.takeIf { isConnected },
+                    showChevron = isConnected && onModelControls != null,
+                    enabled = isConnected && onModelControls != null,
+                    testTag = "settings_model_controls_item"
+                )
+
+                SettingsItem(
+                    icon = Icons.Default.Groups,
+                    title = stringResource(R.string.settings_agents),
+                    subtitle = if (isConnected) {
+                        stringResource(R.string.settings_agents_desc)
+                    } else {
+                        stringResource(R.string.settings_requires_connection)
+                    },
+                    onClick = if (isConnected) onAgentsConfig else null,
+                    showChevron = isConnected,
+                    enabled = isConnected
+                )
+
+                SettingsItem(
+                    icon = Icons.Default.Extension,
+                    title = stringResource(R.string.settings_skills),
+                    subtitle = if (isConnected) {
+                        stringResource(R.string.settings_skills_desc)
+                    } else {
+                        stringResource(R.string.settings_requires_connection)
+                    },
+                    onClick = if (isConnected) onSkills else null,
+                    showChevron = isConnected,
+                    enabled = isConnected
+                )
+            }
+
+            TuiSectionHeader(stringResource(R.string.settings_group_app))
 
             // These don't require connection
             SettingsItem(
@@ -200,6 +226,18 @@ fun SettingsScreen(
                     testTag = "settings_disconnect_button"
                 )
             }
+
+            // Version footer (design 13)
+            Text(
+                text = "P4OC v${BuildConfig.VERSION_NAME} · ${BuildConfig.APPLICATION_ID}",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                ),
+                color = theme.textMuted,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.lg, vertical = Spacing.md)
+            )
         }
     }
 
@@ -483,8 +521,8 @@ private fun SettingsItem(
             }
             if (showChevron) {
                 Text(
-                    text = "→",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "›",
+                    style = MaterialTheme.typography.titleMedium,
                     color = theme.textMuted.copy(alpha = contentAlpha)
                 )
             }

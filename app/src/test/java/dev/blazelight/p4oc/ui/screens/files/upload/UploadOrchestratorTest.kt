@@ -8,14 +8,21 @@ import dev.blazelight.p4oc.data.files.FileUploadRequest
 import dev.blazelight.p4oc.data.files.FileUploadResult
 import dev.blazelight.p4oc.data.files.FileWriteRequest
 import dev.blazelight.p4oc.data.files.FileWriteResult
+import dev.blazelight.p4oc.data.files.ofish.MAX_UPLOAD_SOURCE_BYTES
+import dev.blazelight.p4oc.data.files.ofish.UPLOAD_TOO_LARGE_MESSAGE
 import dev.blazelight.p4oc.domain.model.FileContent
+import dev.blazelight.p4oc.domain.model.FileNode
 import dev.blazelight.p4oc.domain.model.Symbol
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -149,6 +156,23 @@ class UploadOrchestratorTest {
     }
 
     @Test
+    fun `known file above source byte ceiling fails before repository mutation`() = runTest {
+        val source = FakeUploadSource(emptyMap())
+        val repo = FakeFileRepository(uploadOutcomes = mutableListOf())
+        val orchestrator = UploadOrchestrator(repo, source, retryDelayMillis = { 0L })
+
+        val state = orchestrator.run(
+            "",
+            listOf(plan("oversize-source", "large.bin", size = MAX_UPLOAD_SOURCE_BYTES + 1)),
+        )
+
+        assertEquals(0, repo.uploadCalls.size)
+        val phase = state.items.single().phase
+        assertTrue(phase is UploadPhase.Failed)
+        assertEquals(UPLOAD_TOO_LARGE_MESSAGE, (phase as UploadPhase.Failed).message)
+    }
+
+    @Test
     fun `retryFailed reruns only failed items and keeps successes`() = runTest {
         val source = FakeUploadSource(mapOf("a" to byteArrayOf(1), "b" to byteArrayOf(2)))
         val repo = FakeFileRepository(
@@ -205,6 +229,60 @@ class UploadOrchestratorTest {
         assertEquals("cancelled", (bPhase as UploadPhase.Failed).message)
         assertTrue(!orchestrator.state.value.isActive)
         assertTrue(orchestrator.state.value.cancelled)
+    }
+
+    @Test
+    fun `in-flight completion cannot overwrite cancelled state`() = runTest {
+        val source = FakeUploadSource(mapOf("a" to byteArrayOf(1)))
+        val repo = GatedFileRepository()
+        val orchestrator = UploadOrchestrator(repo, source, retryDelayMillis = { 0L })
+        val runJob = launch { orchestrator.run("", listOf(plan("a"))) }
+        repo.started.await()
+
+        orchestrator.markCancelled()
+        repo.release.complete(Unit)
+        runJob.join()
+
+        val state = orchestrator.state.value
+        assertTrue(state.cancelled)
+        assertFalse(state.isActive)
+        val phase = state.items.single().phase
+        assertTrue("expected Failed after late success, got $phase", phase is UploadPhase.Failed)
+        assertEquals("cancelled", (phase as UploadPhase.Failed).message)
+    }
+
+    @Test
+    fun `coordinator cancel remains cancelled after worker completion`() = runTest {
+        val repo = GatedFileRepository()
+        val coordinator = UploadCoordinator(this, repositoryFactory = { repo })
+        coordinator.upload(FakeUploadSource(mapOf("a" to byteArrayOf(1))), listOf("a"), "")
+        repo.started.await()
+
+        coordinator.cancel()
+        repo.release.complete(Unit)
+        repo.completed.await()
+        advanceUntilIdle()
+
+        val state = coordinator.state.value
+        assertTrue(state.cancelled)
+        assertFalse(state.isActive)
+        assertTrue(state.items.single().phase is UploadPhase.Failed)
+    }
+
+    @Test
+    fun `coordinator dismiss remains empty after cancelled worker completion`() = runTest {
+        val repo = GatedFileRepository()
+        val coordinator = UploadCoordinator(this, repositoryFactory = { repo })
+        coordinator.upload(FakeUploadSource(mapOf("a" to byteArrayOf(1))), listOf("a"), "")
+        repo.started.await()
+
+        coordinator.cancel()
+        coordinator.dismiss()
+        repo.release.complete(Unit)
+        repo.completed.await()
+        advanceUntilIdle()
+
+        assertEquals(UploadQueueState(), coordinator.state.value)
     }
 
     @Test
@@ -265,6 +343,8 @@ private class FakeFileRepository(
         FileOperationResult.Ok(FileList(path = path, files = emptyList()))
     override suspend fun readFile(path: String) =
         FileOperationResult.Ok(FileContent(type = "text", content = "", diff = null, mimeType = null))
+    override suspend fun searchFiles(query: String) =
+        FileOperationResult.Ok<List<FileNode>>(emptyList())
     override suspend fun searchSymbols(query: String) =
         FileOperationResult.Ok<List<Symbol>>(emptyList())
     override suspend fun writeFile(request: FileWriteRequest) =
@@ -277,5 +357,32 @@ private class FakeFileRepository(
         consumedPayloads += request.openStream().use { it.readBytes() }
         return uploadOutcomes.removeAt(0)
     }
+    override suspend fun capabilities() = FileCapabilities(canUpload = true)
+}
+
+private class GatedFileRepository : FileRepository {
+    val started = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val completed = CompletableDeferred<Unit>()
+
+    override suspend fun uploadFile(request: FileUploadRequest): FileOperationResult<FileUploadResult> {
+        started.complete(Unit)
+        return withContext(NonCancellable) {
+            release.await()
+            completed.complete(Unit)
+            FileOperationResult.Ok(FileUploadResult(path = request.path, hash = null))
+        }
+    }
+
+    override suspend fun listFiles(path: String) = FileOperationResult.Ok(FileList(path, emptyList()))
+    override suspend fun readFile(path: String) =
+        FileOperationResult.Ok(FileContent(type = "text", content = "", diff = null, mimeType = null))
+    override suspend fun searchFiles(query: String) = FileOperationResult.Ok<List<FileNode>>(emptyList())
+    override suspend fun searchSymbols(query: String) = FileOperationResult.Ok<List<Symbol>>(emptyList())
+    override suspend fun writeFile(request: FileWriteRequest) =
+        FileOperationResult.Ok(FileWriteResult(path = request.path, hash = null))
+    override suspend fun createDirectory(path: String) = FileOperationResult.Ok(Unit)
+    override suspend fun renameFile(fromPath: String, toPath: String) = FileOperationResult.Ok(Unit)
+    override suspend fun deleteFile(path: String) = FileOperationResult.Ok(Unit)
     override suspend fun capabilities() = FileCapabilities(canUpload = true)
 }

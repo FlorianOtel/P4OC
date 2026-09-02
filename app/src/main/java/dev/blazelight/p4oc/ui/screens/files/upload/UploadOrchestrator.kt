@@ -3,11 +3,14 @@ package dev.blazelight.p4oc.ui.screens.files.upload
 import dev.blazelight.p4oc.data.files.FileOperationResult
 import dev.blazelight.p4oc.data.files.FileRepository
 import dev.blazelight.p4oc.data.files.FileUploadRequest
+import dev.blazelight.p4oc.data.files.ofish.MAX_UPLOAD_SOURCE_BYTES
+import dev.blazelight.p4oc.data.files.ofish.UPLOAD_TOO_LARGE_MESSAGE
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Drives a serial whole-file upload batch and exposes per-item progress as
@@ -29,6 +32,7 @@ class UploadOrchestrator(
 ) {
     private val _state = MutableStateFlow(UploadQueueState())
     val state: StateFlow<UploadQueueState> = _state.asStateFlow()
+    private val operationGeneration = AtomicLong()
 
     data class Plan(
         val sourceId: String,
@@ -43,7 +47,9 @@ class UploadOrchestrator(
      * caller controls the scope/dispatcher. Safe to cancel via the calling
      * coroutine.
      */
+    @Suppress("ReturnCount")
     suspend fun run(currentPath: String?, plans: List<Plan>): UploadQueueState {
+        val generation = operationGeneration.incrementAndGet()
         val items = plans.map { plan ->
             val sanitized = sanitizeUploadName(plan.displayName, now())
             UploadItem(
@@ -55,14 +61,22 @@ class UploadOrchestrator(
                 probeFailure = plan.probeFailure,
             )
         }
-        _state.value = UploadQueueState(items = items, currentIndex = 0, isActive = items.isNotEmpty())
+        _state.update { state ->
+            if (operationGeneration.get() != generation) {
+                state
+            } else {
+                UploadQueueState(items = items, currentIndex = 0, isActive = items.isNotEmpty())
+            }
+        }
+        if (operationGeneration.get() != generation) return _state.value
 
         items.forEachIndexed { index, _ ->
-            mutate { it.copy(currentIndex = index) }
-            uploadOne(index)
+            if (operationGeneration.get() != generation) return _state.value
+            mutate(generation) { it.copy(currentIndex = index) }
+            uploadOne(index, generation)
         }
 
-        mutate { it.copy(isActive = false) }
+        mutate(generation) { it.copy(isActive = false) }
         return _state.value
     }
 
@@ -72,6 +86,7 @@ class UploadOrchestrator(
      * successful uploads.
      */
     suspend fun retryFailed() {
+        val generation = operationGeneration.incrementAndGet()
         val snapshot = _state.value
         val failedIndices = snapshot.items.mapIndexedNotNull { i, item ->
             if (item.phase is UploadPhase.Failed) i else null
@@ -86,10 +101,10 @@ class UploadOrchestrator(
             state.copy(items = items, isActive = true, cancelled = false)
         }
         for (idx in failedIndices) {
-            mutate { it.copy(currentIndex = idx) }
-            uploadOne(idx)
+            mutate(generation) { it.copy(currentIndex = idx) }
+            uploadOne(idx, generation)
         }
-        mutate { it.copy(isActive = false) }
+        mutate(generation) { it.copy(isActive = false) }
     }
 
     /**
@@ -98,6 +113,7 @@ class UploadOrchestrator(
      * doesn't keep displaying it as active forever after the job is killed.
      */
     fun markCancelled() {
+        operationGeneration.incrementAndGet()
         _state.update { state ->
             val items = state.items.map { item ->
                 when (item.phase) {
@@ -111,18 +127,31 @@ class UploadOrchestrator(
         }
     }
 
-    private suspend fun uploadOne(index: Int) {
+    @Suppress("CyclomaticComplexMethod", "ReturnCount")
+    private suspend fun uploadOne(index: Int, generation: Long) {
+        if (operationGeneration.get() != generation) return
         val item = _state.value.items.getOrNull(index) ?: return
+        if (item.bytesTotal > MAX_UPLOAD_SOURCE_BYTES) {
+            updateItem(index, generation) { it.copy(phase = UploadPhase.Failed(UPLOAD_TOO_LARGE_MESSAGE)) }
+            return
+        }
         var lastFailure: String? = null
         for (attempt in 1..maxAttempts) {
-            updateItem(index) { it.copy(phase = UploadPhase.Reading, attempts = attempt, bytesUploaded = 0L) }
+            if (operationGeneration.get() != generation) return
+            updateItem(index, generation) {
+                it.copy(
+                    phase = UploadPhase.Reading,
+                    attempts = attempt,
+                    bytesUploaded = 0L,
+                )
+            }
             val request = FileUploadRequest(
                 path = item.destinationPath,
                 contentLength = item.bytesTotal,
                 openStream = { source.openStream(item.sourceId) },
                 expectedHash = null,
                 onBytesUploaded = { uploaded ->
-                    updateItem(index) { current ->
+                    updateItem(index, generation) { current ->
                         val total = if (current.bytesTotal > 0L) current.bytesTotal else uploaded
                         current.copy(
                             bytesTotal = total,
@@ -133,35 +162,41 @@ class UploadOrchestrator(
             )
             when (val result = fileRepository.uploadFile(request)) {
                 is FileOperationResult.Ok -> {
-                    updateItem(index) { it.copy(phase = UploadPhase.Done, bytesUploaded = it.bytesTotal) }
+                    if (operationGeneration.get() != generation) return
+                    updateItem(index, generation) { it.copy(phase = UploadPhase.Done, bytesUploaded = it.bytesTotal) }
                     return
                 }
                 is FileOperationResult.Conflict -> {
-                    updateItem(index) {
+                    if (operationGeneration.get() != generation) return
+                    updateItem(index, generation) {
                         it.copy(phase = UploadPhase.Failed(result.message))
                     }
                     return
                 }
                 is FileOperationResult.Failed -> {
+                    if (operationGeneration.get() != generation) return
                     lastFailure = result.message
                     if (attempt < maxAttempts) delay(retryDelayMillis(attempt))
                 }
             }
         }
-        updateItem(index) {
+        updateItem(index, generation) {
             it.copy(phase = UploadPhase.Failed(lastFailure ?: "Upload failed"))
         }
     }
 
-    private fun updateItem(index: Int, transform: (UploadItem) -> UploadItem) {
+    private fun updateItem(index: Int, generation: Long, transform: (UploadItem) -> UploadItem) {
         _state.update { state ->
+            if (operationGeneration.get() != generation) return@update state
             val current = state.items.getOrNull(index) ?: return@update state
             state.copy(items = state.items.toMutableList().also { it[index] = transform(current) })
         }
     }
 
-    private inline fun mutate(crossinline transform: (UploadQueueState) -> UploadQueueState) {
-        _state.update(transform)
+    private inline fun mutate(generation: Long, crossinline transform: (UploadQueueState) -> UploadQueueState) {
+        _state.update { state ->
+            if (operationGeneration.get() != generation) state else transform(state)
+        }
     }
 
     companion object {

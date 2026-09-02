@@ -55,24 +55,43 @@ fun DiffViewerScreen(
                 title = "",
                 onNavigateBack = onNavigateBack,
                 titleContent = {
-                    Column {
-                        Text(
-                            text = "[ ${stringResource(R.string.diff_viewer_title)} ]",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontFamily = FontFamily.Monospace,
-                            color = theme.text
-                        )
-                        if (displayFileName.isNotEmpty()) {
-                            Text(
-                                text = displayFileName,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = theme.textMuted
-                            )
-                        }
-                    }
+                    Text(
+                        text = displayFileName.ifEmpty { stringResource(R.string.diff_viewer_title) },
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                        ),
+                        fontFamily = FontFamily.Monospace,
+                        color = theme.text,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
                 },
                 actions = {
+                    // +N −N diff stats (design 09)
+                    val additions = files.sumOf { f ->
+                        f.hunks.sumOf { h -> h.lines.count { it.type == ParsedDiffLineType.ADDED } }
+                    }
+                    val deletions = files.sumOf { f ->
+                        f.hunks.sumOf { h -> h.lines.count { it.type == ParsedDiffLineType.REMOVED } }
+                    }
+                    if (additions > 0) {
+                        Text(
+                            text = "+$additions",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace,
+                            color = theme.success,
+                        )
+                        Spacer(Modifier.width(Spacing.xs))
+                    }
+                    if (deletions > 0) {
+                        Text(
+                            text = "−$deletions",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace,
+                            color = theme.error,
+                        )
+                        Spacer(Modifier.width(Spacing.xs))
+                    }
                     IconButton(
                         onClick = {
                             viewMode = if (viewMode == DiffViewMode.UNIFIED) {

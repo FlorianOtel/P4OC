@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -18,11 +19,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
+import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
@@ -109,7 +115,7 @@ fun TuiOutlinedCard(
 // =============================================================================
 
 /**
- * TUI-style filled button with compact height.
+ * TUI-style filled button with compact chrome and an accessible touch target.
  */
 @Composable
 fun TuiButton(
@@ -122,7 +128,9 @@ fun TuiButton(
 ) {
     Button(
         onClick = onClick,
-        modifier = modifier.height(Sizing.buttonHeightMd),
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .heightIn(min = Sizing.minTouchTarget),
         enabled = enabled,
         colors = colors,
         shape = RectangleShape,
@@ -145,7 +153,9 @@ fun TuiOutlinedButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.height(Sizing.buttonHeightMd),
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .heightIn(min = Sizing.minTouchTarget),
         enabled = enabled,
         colors = colors,
         shape = RectangleShape,
@@ -168,7 +178,9 @@ fun TuiTextButton(
 ) {
     TextButton(
         onClick = onClick,
-        modifier = modifier.height(Sizing.buttonHeightMd),
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .heightIn(min = Sizing.minTouchTarget),
         enabled = enabled,
         colors = colors,
         shape = RectangleShape,
@@ -190,7 +202,12 @@ fun TuiIconButton(
 ) {
     IconButton(
         onClick = onClick,
-        modifier = modifier.size(Sizing.iconButtonMd),
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .sizeIn(
+                minWidth = Sizing.minTouchTarget,
+                minHeight = Sizing.minTouchTarget,
+            ),
         enabled = enabled,
         colors = colors,
         content = content
@@ -508,6 +525,123 @@ fun TuiSection(
 }
 
 /**
+ * Design back affordance: a plain "←" glyph rather than an Icon/IconButton, matching
+ * the terminal aesthetic. This is the single canonical back button — every screen-level
+ * back control (TuiTopBar, dialogs, sub-views) routes through this.
+ */
+@Composable
+@Suppress("FunctionNaming")
+fun TuiBackButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    description: String = stringResource(R.string.cd_back),
+) {
+    val theme = LocalOpenCodeTheme.current
+    Box(
+        modifier = modifier
+            .sizeIn(
+                minWidth = Sizing.minTouchTarget,
+                minHeight = Sizing.minTouchTarget,
+            )
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "←",
+            style = MaterialTheme.typography.titleMedium,
+            color = theme.text,
+        )
+    }
+}
+
+/**
+ * Design section header: monospace, letter-spaced, uppercase, on a full-width
+ * panel-background bar (matches SERVERS·PROJECTS / RECENT / EVENT TYPES labels).
+ */
+@Composable
+@Suppress("FunctionNaming")
+fun TuiSectionHeader(
+    text: String,
+    modifier: Modifier = Modifier,
+    trailing: @Composable (RowScope.() -> Unit)? = null,
+) {
+    val theme = LocalOpenCodeTheme.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(theme.backgroundPanel)
+            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text.uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.sp,
+            ),
+            color = theme.textMuted,
+            modifier = Modifier.weight(1f),
+        )
+        trailing?.invoke(this)
+    }
+}
+
+/**
+ * Design segmented control: a bordered row of connected cells. The active cell
+ * is filled (#1e1e1e element) with semibold primary text; others are muted.
+ * Matches the mode / tool-display / effort selectors.
+ */
+@Composable
+@Suppress("FunctionNaming")
+fun TuiSegmentedControl(
+    options: List<Pair<String, String>>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val theme = LocalOpenCodeTheme.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(Sizing.buttonHeightMd)
+            .border(Sizing.strokeMd, theme.border, RectangleShape),
+    ) {
+        options.forEachIndexed { index, (id, label) ->
+            if (index > 0) {
+                Box(
+                    modifier = Modifier
+                        .width(Sizing.strokeThin)
+                        .fillMaxHeight()
+                        .background(theme.border)
+                )
+            }
+            val active = id == selectedId
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(if (active) theme.backgroundElement else Color.Transparent)
+                    // The whole highlighted cell is the target — no inset hit box to miss.
+                    .selectable(
+                        selected = active,
+                        role = Role.RadioButton,
+                        onClick = { onSelect(id) },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (active) theme.primary else theme.textMuted,
+                )
+            }
+        }
+    }
+}
+
+/**
  * TUI-style bottom sheet content wrapper.
  */
 @Composable
@@ -791,7 +925,7 @@ fun TuiStatusDot(
     Surface(
         modifier = modifier.size(size),
         color = color,
-        shape = androidx.compose.foundation.shape.CircleShape
+        shape = RectangleShape
     ) {}
 }
 
@@ -851,15 +985,8 @@ fun TuiSnackbar(
 // =============================================================================
 
 /**
- * TUI-style two-cell segmented toggle switch.
- *
- * Renders as two adjacent rectangular cells — OFF (left) and ON (right).
- * The active cell is filled with accent color and inverted text;
- * the inactive cell is hollow with muted text. Fixed width in both states.
- *
- * ┌──────┬──────┐      ┌──────┬──────┐
- * │▓ OFF ▓│  ON  │  vs  │  OFF │▓ ON ▓│
- * └──────┴──────┘      └──────┴──────┘
+ * Compact TUI knob switch. The 36x20dp visual track is centered inside the
+ * platform-minimum 48x48dp toggleable target.
  */
 @Composable
 fun TuiSwitch(
@@ -871,86 +998,45 @@ fun TuiSwitch(
     val theme = LocalOpenCodeTheme.current
     val contentAlpha = if (enabled) 1f else 0.38f
 
-    // Active cell: solid accent background with inverted text
-    val activeBg = theme.accent.copy(alpha = contentAlpha)
-    val activeText = theme.background.copy(alpha = contentAlpha)
+    // Knob-slider (design): 36x20 track, square knob slides right (on, success) / left (off, muted).
+    val knobColor = (if (checked) theme.success else theme.textMuted).copy(alpha = contentAlpha)
+    val trackBg = theme.backgroundPanel.copy(alpha = contentAlpha)
+    val trackBorder = theme.border.copy(alpha = contentAlpha)
 
-    // Inactive cell: panel background with muted text
-    val inactiveBg = theme.backgroundPanel.copy(alpha = contentAlpha)
-    val inactiveText = theme.textMuted.copy(alpha = contentAlpha)
-
-    val outerBorder = theme.border.copy(alpha = contentAlpha)
-    val dividerColor = theme.borderSubtle.copy(alpha = contentAlpha)
-
-    val monoLabel = MaterialTheme.typography.labelSmall.copy(
-        fontFamily = FontFamily.Monospace,
-        letterSpacing = 0.5.sp
-    )
-
-    Row(
+    Box(
         modifier = modifier
-            .height(Sizing.buttonHeightSm)
-            .border(
-                width = Sizing.strokeMd,
-                color = outerBorder,
-                shape = RectangleShape
+            .sizeIn(
+                minWidth = Sizing.minTouchTarget,
+                minHeight = Sizing.minTouchTarget,
             )
             .then(
-                if (onCheckedChange != null && enabled) {
+                if (onCheckedChange != null) {
                     Modifier.toggleable(
                         value = checked,
+                        enabled = enabled,
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = ripple(),
+                        indication = null,
                         role = Role.Switch,
-                        onValueChange = onCheckedChange
+                        onValueChange = onCheckedChange,
                     )
                 } else {
                     Modifier
                 }
             ),
-        verticalAlignment = Alignment.CenterVertically
+        contentAlignment = Alignment.Center,
     ) {
-        // OFF cell (left)
         Box(
             modifier = Modifier
-                .width(Sizing.switchCellWidth)
-                .fillMaxHeight()
-                .background(
-                    color = if (!checked) activeBg else inactiveBg,
-                    shape = RectangleShape
-                ),
-            contentAlignment = Alignment.Center
+                .size(Sizing.switchTrackWidth, Sizing.switchTrackHeight)
+                .background(trackBg, RectangleShape)
+                .border(Sizing.strokeMd, trackBorder, RectangleShape)
+                .padding(Sizing.switchKnobInset),
+            contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
         ) {
-            Text(
-                text = "OFF",
-                style = monoLabel,
-                color = if (!checked) activeText else inactiveText
-            )
-        }
-
-        // Vertical divider
-        Box(
-            modifier = Modifier
-                .width(Sizing.strokeMd)
-                .fillMaxHeight()
-                .background(dividerColor)
-        )
-
-        // ON cell (right)
-        Box(
-            modifier = Modifier
-                .width(Sizing.switchCellWidth)
-                .fillMaxHeight()
-                .background(
-                    color = if (checked) activeBg else inactiveBg,
-                    shape = RectangleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "ON",
-                style = monoLabel,
-                color = if (checked) activeText else inactiveText
+            Box(
+                modifier = Modifier
+                    .size(Sizing.switchKnobSize)
+                    .background(knobColor, RectangleShape),
             )
         }
     }

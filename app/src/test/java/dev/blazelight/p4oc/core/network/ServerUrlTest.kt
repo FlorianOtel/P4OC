@@ -1,15 +1,31 @@
 package dev.blazelight.p4oc.core.network
 
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Request
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ServerUrlTest {
 
     @Test
-    fun `bare host defaults to http and 4096`() {
-        assertEquals("http://example.com:4096", ServerUrl.normalizeConnectUrl("example.com"))
+    fun `authenticated origin requires exact scheme host and port`() {
+        val configured = "https://server.example:8443".toHttpUrl()
+
+        assertTrue("https://server.example:8443/session".toHttpUrl().hasSameOrigin(configured))
+        val webSocketUrl = Request.Builder().url("wss://server.example:8443/pty/id/connect").build().url
+        assertTrue(webSocketUrl.hasSameOrigin(configured))
+        assertFalse("https://other.example:8443/session".toHttpUrl().hasSameOrigin(configured))
+        assertFalse("http://server.example:8443/session".toHttpUrl().hasSameOrigin(configured))
+        assertFalse("https://server.example/session".toHttpUrl().hasSameOrigin(configured))
+    }
+
+    @Test
+    fun `bare host defaults to http without persisted port`() {
+        assertEquals("http://example.com", ServerUrl.normalizeConnectUrl("example.com"))
     }
 
     @Test
@@ -18,19 +34,19 @@ class ServerUrlTest {
     }
 
     @Test
-    fun `explicit http without port uses opencode default port`() {
-        assertEquals("http://example.com:4096", ServerUrl.normalizeConnectUrl("http://example.com"))
+    fun `explicit http without port preserves absent port`() {
+        assertEquals("http://example.com", ServerUrl.normalizeConnectUrl("http://example.com"))
     }
 
     @Test
-    fun `explicit https without port uses opencode default port`() {
-        assertEquals("https://example.com:4096", ServerUrl.normalizeConnectUrl("https://example.com"))
+    fun `explicit https without port preserves absent port`() {
+        assertEquals("https://example.com", ServerUrl.normalizeConnectUrl("https://example.com"))
     }
 
     @Test
     fun `path is preserved for connect url`() {
         assertEquals(
-            "http://example.com:4096/foo/bar",
+            "http://example.com/foo/bar",
             ServerUrl.normalizeConnectUrl("example.com/foo/bar"),
         )
     }
@@ -38,14 +54,14 @@ class ServerUrlTest {
     @Test
     fun `query and fragment are stripped but path is preserved`() {
         assertEquals(
-            "http://example.com:4096/foo/bar",
+            "http://example.com/foo/bar",
             ServerUrl.normalizeConnectUrl("example.com/foo/bar?x=1#frag"),
         )
     }
 
     @Test
     fun `host is lowercased`() {
-        assertEquals("https://example.com:4096", ServerUrl.normalizeConnectUrl("https://EXAMPLE.COM"))
+        assertEquals("https://example.com", ServerUrl.normalizeConnectUrl("https://EXAMPLE.COM"))
     }
 
     @Test
@@ -61,7 +77,7 @@ class ServerUrlTest {
     @Test
     fun `ipv6 is bracketed and zone id is stripped with path preserved`() {
         assertEquals(
-            "http://[2001:db8::1]:4096/foo",
+            "http://[2001:db8::1]/foo",
             ServerUrl.normalizeConnectUrl("http://[2001:db8::1%wlan0]/foo"),
         )
     }
@@ -88,5 +104,34 @@ class ServerUrlTest {
             ServerUrl.endpointKey("http://example.com:4096/a?x=1#frag"),
             ServerUrl.endpointKey("http://example.com:4096/a"),
         )
+    }
+
+    @Test
+    fun `cleartext credentials allow exact loopback and private literals`() {
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://127.0.0.1:4096"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://localhost:4096"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://10.20.30.40"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://172.16.0.1"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://172.31.255.254"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://192.168.1.2"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://[::1]:4096"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://[fd00::1]"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("http://[fe80::1%wlan0]"))
+    }
+
+    @Test
+    fun `cleartext credentials reject public addresses and hostname lookalikes`() {
+        assertFalse(ServerUrl.allowsCleartextCredentials("http://8.8.8.8"))
+        assertFalse(ServerUrl.allowsCleartextCredentials("http://172.15.0.1"))
+        assertFalse(ServerUrl.allowsCleartextCredentials("http://172.32.0.1"))
+        assertFalse(ServerUrl.allowsCleartextCredentials("http://localhost.example.com"))
+        assertFalse(ServerUrl.allowsCleartextCredentials("http://127.0.0.1.example.com"))
+        assertFalse(ServerUrl.allowsCleartextCredentials("http://192.168.1.2.example.com"))
+    }
+
+    @Test
+    fun `https credentials are allowed for public endpoints`() {
+        assertTrue(ServerUrl.allowsCleartextCredentials("https://example.com"))
+        assertTrue(ServerUrl.allowsCleartextCredentials("https://8.8.8.8"))
     }
 }

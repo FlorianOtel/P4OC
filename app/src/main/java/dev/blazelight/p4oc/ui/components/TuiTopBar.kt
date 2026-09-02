@@ -1,16 +1,13 @@
 package dev.blazelight.p4oc.ui.components
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
@@ -37,7 +34,7 @@ fun TuiTopBar(
     val theme = LocalOpenCodeTheme.current
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = theme.backgroundElement,
+        color = theme.background,
         tonalElevation = 0.dp
     ) {
         Column {
@@ -50,16 +47,9 @@ fun TuiTopBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (onNavigateBack != null) {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.size(Sizing.iconButtonMd)
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.cd_back),
-                            modifier = Modifier.size(Sizing.iconLg)
-                        )
-                    }
+                    TuiBackButton(onClick = onNavigateBack)
+                    // Breathing room so the back button isn't crowded by the title.
+                    Spacer(Modifier.width(Spacing.sm))
                 }
 
                 if (titleContent != null) {
@@ -72,12 +62,15 @@ fun TuiTopBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold
+                        )
                     )
                 }
 
                 actions()
             }
+            HorizontalDivider(color = theme.border, thickness = Sizing.strokeThin)
         }
     }
 }

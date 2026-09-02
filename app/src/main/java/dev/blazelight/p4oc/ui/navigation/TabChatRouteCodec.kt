@@ -28,8 +28,8 @@ object TabChatRouteCodec {
         if (segments.size != 4) return null
         if (segments[0] != "tab" || segments[2] != "chat") return null
 
-        val tabId = segments[1].routeDecode()
-        val sessionId = segments[3].routeDecode()
+        val tabId = segments[1].routeDecode() ?: return null
+        val sessionId = segments[3].routeDecode() ?: return null
         if (tabId.isBlank() || sessionId.isBlank()) return null
 
         return TabChatRoute(tabId, sessionId)
@@ -40,4 +40,6 @@ private fun String.routeEncode(): String = URLEncoder
     .encode(this, StandardCharsets.UTF_8.name())
     .replace("+", "%20")
 
-private fun String.routeDecode(): String = URLDecoder.decode(this, StandardCharsets.UTF_8.name())
+private fun String.routeDecode(): String? = runCatching {
+    URLDecoder.decode(replace("+", "%2B"), StandardCharsets.UTF_8.name())
+}.getOrNull()

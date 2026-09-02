@@ -1,10 +1,12 @@
 package dev.blazelight.p4oc.di
 
+import androidx.lifecycle.SavedStateHandle
 import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.haptic.HapticFeedback
 import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.MdnsDiscoveryManager
 import dev.blazelight.p4oc.core.network.PtyWebSocketClient
+import dev.blazelight.p4oc.core.network.ServerConnectionRegistry
 import dev.blazelight.p4oc.core.notification.NotificationEventObserver
 import dev.blazelight.p4oc.core.notification.NotificationHelper
 import dev.blazelight.p4oc.core.security.CredentialStore
@@ -15,8 +17,9 @@ import dev.blazelight.p4oc.data.server.ActiveServerApiProvider
 import dev.blazelight.p4oc.data.server.StaleWorkspaceClientException
 import dev.blazelight.p4oc.data.session.SessionRepositoryImpl
 import dev.blazelight.p4oc.data.session.SessionRepositoryProvider
-import dev.blazelight.p4oc.domain.server.ServerRef
+import dev.blazelight.p4oc.data.vcs.WorkspaceChangesRepository
 import dev.blazelight.p4oc.ui.screens.chat.ChatViewModel
+import dev.blazelight.p4oc.ui.screens.chat.ModelSelectionCoordinator
 import dev.blazelight.p4oc.ui.screens.files.FilesViewModel
 import dev.blazelight.p4oc.ui.screens.licenses.LicensesViewModel
 import dev.blazelight.p4oc.ui.screens.projects.ProjectsViewModel
@@ -27,6 +30,7 @@ import dev.blazelight.p4oc.ui.screens.settings.ChatSettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.ModelControlsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.NotificationSettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.ProviderConfigViewModel
+import dev.blazelight.p4oc.ui.screens.settings.SettingsConnectionContext
 import dev.blazelight.p4oc.ui.screens.settings.SettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.SkillsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.VisualSettingsViewModel
@@ -38,6 +42,7 @@ import kotlinx.serialization.json.Json
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.module.dsl.viewModelOf
+import org.koin.core.parameter.parametersOf
 import org.koin.dsl.module
 
 val appModule = module {
@@ -63,69 +68,103 @@ val appModule = module {
 
     // Tab management (singleton for app lifetime)
     single { TabManager() }
+    single { ModelSelectionCoordinator() }
 }
 
 val networkModule = module {
-    // Mappers (stateless mappers are objects — only DI-dependent ones registered here)
-    single { MessageMapper(get()) }
+    // Mappers
+    single { MessageMapper() }
     single { EventMapper(get(), get()) }
 
     // Network
     single { MdnsDiscoveryManager(androidContext()) }
-    factory { PtyWebSocketClient(get()) }
-    single { ConnectionManager(get(), get(), get()) }
-    single<ActiveServerApiProvider> {
-        val connectionManager: ConnectionManager = get()
-        ActiveServerApiProvider { serverRef, generation ->
-            val activeBaseUrl = connectionManager.currentBaseUrl
-                ?: throw StaleWorkspaceClientException("No active server for workspace ${serverRef.endpointKey} generation=${generation.value}")
-            val activeServerRef = ServerRef.fromEndpoint(activeBaseUrl)
-            if (activeServerRef != serverRef) {
-                throw StaleWorkspaceClientException(
-                    "Workspace server ${serverRef.endpointKey} does not match active server ${activeServerRef.endpointKey}",
+    factory { params -> PtyWebSocketClient(get(), params.get(), params.get()) }
+    single {
+        ServerConnectionRegistry(
+            settingsDataStore = get(),
+            connectionManagerFactory = { _, generationIssuer ->
+                ConnectionManager(
+                    json = get(),
+                    eventMapper = get(),
+                    settingsDataStore = get(),
+                    generationIssuer = generationIssuer,
                 )
-            }
-            val activeGeneration = connectionManager.currentGeneration
-            if (activeGeneration != generation) {
-                throw StaleWorkspaceClientException(
-                    "Workspace generation ${generation.value} does not match active generation ${activeGeneration?.value ?: "<none>"}",
-                )
-            }
-            connectionManager.requireApi()
-        }
+            },
+        )
     }
-    single { SessionRepositoryProvider(get(), get(), get()) }
+    single<ActiveServerApiProvider> {
+        activeServerApiProvider(get())
+    }
+    single { SessionRepositoryProvider(get(), get(), get(), json = get()) }
 }
 
 val viewModelModule = module {
     viewModelOf(::ServerViewModel)
-    viewModelOf(::ModelControlsViewModel)
-    viewModelOf(::AgentsConfigViewModel)
+    viewModel { (client: dev.blazelight.p4oc.data.workspace.WorkspaceClient) ->
+        ModelControlsViewModel(
+            client,
+            get(),
+            get(),
+        )
+    }
+    viewModel { (client: dev.blazelight.p4oc.data.workspace.WorkspaceClient) -> AgentsConfigViewModel(client, get()) }
     viewModelOf(::VisualSettingsViewModel)
     viewModelOf(::ChatSettingsViewModel)
-    viewModelOf(::SkillsViewModel)
-    viewModelOf(::SettingsViewModel)
+    viewModel { (client: dev.blazelight.p4oc.data.workspace.WorkspaceClient) -> SkillsViewModel(client, get()) }
+    viewModel { params ->
+        SettingsViewModel(
+            settingsDataStore = get(),
+            serverConnectionRegistry = get(),
+            connectionContext = params.get<SettingsConnectionContext>(),
+        )
+    }
     viewModelOf(::NotificationSettingsViewModel)
     viewModelOf(::LicensesViewModel)
-    viewModelOf(::ProviderConfigViewModel)
-    viewModelOf(::ProjectsViewModel)
+    viewModel { params ->
+        ProviderConfigViewModel(
+            params.get<WorkspaceRepositoryOwner>().workspaceClient,
+            get(),
+            get(),
+        )
+    }
+    viewModel { params -> ProjectsViewModel(params.get(), get()) }
     viewModel { params ->
         WorkspaceViewModel(params.get<WorkspaceRepositoryOwner>())
     }
     viewModel { params ->
+        val owner = params.get<WorkspaceRepositoryOwner>()
         ChatViewModel(
-            params.get(),
-            params.get(),
-            params.get(),
-            params.get(),
+            get(),
+            owner.workspaceClient,
+            owner.sessionRepository,
+            owner.uploadCoordinator,
             get(),
             get(),
-            get()
+            get<ModelSelectionCoordinator>(),
+            get(),
         )
     }
-    viewModel { params -> SessionListViewModel(params.get<SessionRepositoryImpl>()) }
-    viewModel { params -> FilesViewModel(params.get<FileRepository>(), params.get()) }
-    viewModel { params -> TerminalViewModel(params.get(), androidContext(), get(), get()) }
+    viewModel { params ->
+        SessionListViewModel(params.get<SessionRepositoryImpl>(), get<SavedStateHandle>())
+    }
+    viewModel { params ->
+        FilesViewModel(
+            fileRepository = params.get<FileRepository>(),
+            workspaceChangesRepository = params.get<WorkspaceChangesRepository>(),
+            uploadCoordinator = params.get(),
+            savedStateHandle = get<SavedStateHandle>(),
+        )
+    }
+    viewModel { params ->
+        val owner = params.get<WorkspaceRepositoryOwner>()
+        TerminalViewModel(
+            savedStateHandle = get(),
+            context = androidContext(),
+            ptyWebSocket = get { parametersOf(owner.workspace.server, owner.generation) },
+            workspaceOwner = owner,
+            serverConnectionRegistry = get(),
+        )
+    }
 }
 
 val allModules = listOf(
@@ -133,3 +172,10 @@ val allModules = listOf(
     networkModule,
     viewModelModule
 )
+
+internal fun activeServerApiProvider(registry: ServerConnectionRegistry): ActiveServerApiProvider =
+    ActiveServerApiProvider { serverRef, generation ->
+        registry.api(serverRef, generation) ?: throw StaleWorkspaceClientException(
+            "No connected API for workspace server ${serverRef.endpointKey} generation=${generation.value}",
+        )
+    }

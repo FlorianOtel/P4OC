@@ -38,6 +38,7 @@ fun BashWidgetExpanded(
     tool: Part.Tool,
     onClick: (() -> Unit)?,
     showApprovalActions: Boolean,
+    approvalRequestId: String = tool.callID,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -116,10 +117,10 @@ fun BashWidgetExpanded(
         }
 
         // Pending approval buttons
-        if (state is ToolState.Pending && showApprovalActions) {
+        if (showApprovalActions) {
             PendingApprovalButtons(
-                onApprove = { onToolApprove(tool.callID) },
-                onDeny = { onToolDeny(tool.callID) }
+                onApprove = { onToolApprove(approvalRequestId) },
+                onDeny = { onToolDeny(approvalRequestId) }
             )
         }
     }
@@ -342,6 +343,7 @@ fun DefaultWidgetExpanded(
     tool: Part.Tool,
     onClick: (() -> Unit)?,
     showApprovalActions: Boolean,
+    approvalRequestId: String = tool.callID,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -429,10 +431,10 @@ fun DefaultWidgetExpanded(
         }
 
         // Pending approval buttons
-        if (state is ToolState.Pending && showApprovalActions) {
+        if (showApprovalActions) {
             PendingApprovalButtons(
-                onApprove = { onToolApprove(tool.callID) },
-                onDeny = { onToolDeny(tool.callID) }
+                onApprove = { onToolApprove(approvalRequestId) },
+                onDeny = { onToolDeny(approvalRequestId) }
             )
         }
     }
@@ -447,6 +449,7 @@ fun TaskWidgetExpanded(
     tool: Part.Tool,
     onClick: (() -> Unit)?,
     showApprovalActions: Boolean,
+    approvalRequestId: String = tool.callID,
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
     onOpenSubSession: ((String) -> Unit)?,
@@ -487,7 +490,7 @@ fun TaskWidgetExpanded(
                 color = color
             )
             Text(
-                text = "Task",
+                text = stringResource(R.string.task),
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontFamily = FontFamily.Monospace,
                     fontSize = TuiCodeFontSize.lg
@@ -565,10 +568,10 @@ fun TaskWidgetExpanded(
         }
 
         // Pending approval buttons
-        if (state is ToolState.Pending && showApprovalActions) {
+        if (showApprovalActions) {
             PendingApprovalButtons(
-                onApprove = { onToolApprove(tool.callID) },
-                onDeny = { onToolDeny(tool.callID) }
+                onApprove = { onToolApprove(approvalRequestId) },
+                onDeny = { onToolDeny(approvalRequestId) }
             )
         }
     }
@@ -577,7 +580,8 @@ fun TaskWidgetExpanded(
 // ============== Shared Components ==============
 
 @Composable
-private fun PendingApprovalButtons(
+@Suppress("FunctionNaming")
+internal fun PendingApprovalButtons(
     onApprove: () -> Unit,
     onDeny: () -> Unit
 ) {
@@ -611,7 +615,7 @@ private fun PendingApprovalButtons(
 // ============== Helper Functions ==============
 
 @Composable
-private fun getStateIconColor(
+internal fun getStateIconColor(
     state: ToolState,
     theme: dev.blazelight.p4oc.ui.theme.opencode.OpenCodeTheme
 ): Pair<String, androidx.compose.ui.graphics.Color> {

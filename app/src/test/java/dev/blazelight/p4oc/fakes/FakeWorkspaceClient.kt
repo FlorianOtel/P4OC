@@ -1,6 +1,12 @@
 package dev.blazelight.p4oc.fakes
 
 import dev.blazelight.p4oc.data.remote.dto.CreateSessionRequest
+import dev.blazelight.p4oc.data.remote.dto.ForkSessionRequest
+import dev.blazelight.p4oc.data.remote.dto.InitSessionRequest
+import dev.blazelight.p4oc.data.remote.dto.PermissionDto
+import dev.blazelight.p4oc.data.remote.dto.PermissionToolDto
+import dev.blazelight.p4oc.data.remote.dto.PermissionV2RequestDto
+import dev.blazelight.p4oc.data.remote.dto.PermissionV2SourceDto
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
 import dev.blazelight.p4oc.data.remote.dto.ProjectTimeDto
 import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
@@ -35,23 +41,58 @@ class FakeWorkspaceClient(
         private set
     var abortSessionCalls: Int = 0
         private set
+    var listSessionPermissionsV2Calls: Int = 0
+        private set
+    var listPermissionsCalls: Int = 0
+        private set
+
+    data class ListSessionsCall(
+        val directory: String?,
+        val scope: String?,
+        val roots: Boolean?,
+        val start: Long?,
+        val search: String?,
+        val limit: Int?,
+    )
+
+    data class ForkSessionCall(
+        val sourceSessionId: String,
+        val request: ForkSessionRequest,
+    )
+
+    data class InitSessionCall(
+        val sessionId: String,
+        val request: InitSessionRequest,
+    )
 
     val listSessionsDirectories = mutableListOf<String?>()
     val listSessionsScopes = mutableListOf<String?>()
+    val listSessionsCallsLog = mutableListOf<ListSessionsCall>()
     val getSessionStatusesDirectories = mutableListOf<String?>()
+    val forkSessionCallsLog = mutableListOf<ForkSessionCall>()
+    val initSessionCallsLog = mutableListOf<InitSessionCall>()
 
     var projects: List<ProjectDto> = emptyList()
     var listSessionsResult: List<SessionDto> = emptyList()
     var sessionsByDirectory: Map<String?, List<SessionDto>>? = null
+    var sessionsByDirectoryAndSearch: Map<Pair<String?, String?>, List<SessionDto>> = emptyMap()
     var statusesByDirectory: Map<String?, Map<String, SessionStatusDto>> = emptyMap()
+    var permissionsBySession: Map<String, List<PermissionV2RequestDto>> = emptyMap()
+    var legacyPermissions: List<PermissionDto> = emptyList()
+    var listSessionPermissionsV2Failure: Throwable? = null
     var listSessionsFailure: Throwable? = null
     var getSessionResults: MutableMap<String, SessionDto> = mutableMapOf()
     var getSessionFailure: Throwable? = null
     var createSessionFailure: Throwable? = null
+    var forkSessionResult: SessionDto? = null
+    var forkSessionFailure: Throwable? = null
+    var initSessionResult: Boolean = true
+    var initSessionFailure: Throwable? = null
     var deleteSessionFailure: Throwable? = null
     var sendMessageBlocker: CompletableDeferred<Unit>? = null
     var abortSessionBlocker: CompletableDeferred<Unit>? = null
     var statusBlocker: CompletableDeferred<Unit>? = null
+    var listPermissionsBlocker: CompletableDeferred<Unit>? = null
     var trackStatusConcurrency: Boolean = false
     private val activeStatusCalls = AtomicInteger(0)
     var maxObservedStatusConcurrency: Int = 0
@@ -72,8 +113,11 @@ class FakeWorkspaceClient(
         listSessionsCalls += 1
         listSessionsDirectories += directory
         listSessionsScopes += scope
+        listSessionsCallsLog += ListSessionsCall(directory, scope, roots, start, search, limit)
         listSessionsFailure?.let { throw it }
-        return sessionsByDirectory?.get(directory) ?: listSessionsResult
+        return sessionsByDirectoryAndSearch[Pair(directory, search)]
+            ?: sessionsByDirectory?.get(directory)
+            ?: listSessionsResult
     }
 
     override suspend fun getSession(id: String): SessionDto {
@@ -104,6 +148,18 @@ class FakeWorkspaceClient(
             sessionDto(id = "created", title = request.title ?: "created", directory = workspace.directory.orEmpty())
         setSessions(session, *listSessionsResult.toTypedArray())
         return session
+    }
+
+    override suspend fun forkSession(id: String, request: ForkSessionRequest): SessionDto {
+        forkSessionCallsLog += ForkSessionCall(sourceSessionId = id, request = request)
+        forkSessionFailure?.let { throw it }
+        return forkSessionResult ?: error("No fake fork session result configured")
+    }
+
+    override suspend fun initSession(id: String, request: InitSessionRequest): Boolean {
+        initSessionCallsLog += InitSessionCall(sessionId = id, request = request)
+        initSessionFailure?.let { throw it }
+        return initSessionResult
     }
 
     override suspend fun deleteSession(id: String): Boolean {
@@ -141,6 +197,18 @@ class FakeWorkspaceClient(
         sendMessageBlocker?.await()
     }
 
+    override suspend fun listSessionPermissionsV2(sessionId: String): List<PermissionV2RequestDto> {
+        listSessionPermissionsV2Calls += 1
+        listSessionPermissionsV2Failure?.let { throw it }
+        return permissionsBySession[sessionId].orEmpty()
+    }
+
+    override suspend fun listPermissions(): List<PermissionDto> {
+        listPermissionsCalls += 1
+        listPermissionsBlocker?.await()
+        return legacyPermissions
+    }
+
     override suspend fun abortSession(id: String): Boolean {
         abortSessionCalls += 1
         abortSessionBlocker?.await()
@@ -159,15 +227,48 @@ class FakeWorkspaceClient(
             time = ProjectTimeDto(created = 1L, initialized = 2L),
         )
 
+        fun permissionV2Dto(
+            id: String,
+            sessionId: String,
+            callId: String,
+            action: String = "bash",
+            resource: String = "npm test",
+        ): PermissionV2RequestDto = PermissionV2RequestDto(
+            id = id,
+            sessionID = sessionId,
+            action = action,
+            resources = listOf(resource),
+            save = listOf(resource),
+            source = PermissionV2SourceDto(type = "tool", messageID = "msg-$callId", callID = callId),
+        )
+
+        fun permissionDto(
+            id: String,
+            sessionId: String,
+            callId: String,
+            permission: String = "bash",
+            pattern: String = "npm test",
+        ): PermissionDto = PermissionDto(
+            id = id,
+            permission = permission,
+            patterns = listOf(pattern),
+            sessionID = sessionId,
+            metadata = kotlinx.serialization.json.JsonObject(emptyMap()),
+            always = listOf(pattern),
+            tool = PermissionToolDto(messageID = "msg-$callId", callID = callId),
+        )
+
         fun sessionDto(
             id: String,
             title: String = id,
             directory: String = "/workspace",
             updatedAt: Long = 1L,
+            parentID: String? = null,
         ): SessionDto = SessionDto(
             id = id,
             projectID = "project-$id",
             directory = directory,
+            parentID = parentID,
             title = title,
             version = "1",
             time = TimeDto(created = 1L, updated = updatedAt),

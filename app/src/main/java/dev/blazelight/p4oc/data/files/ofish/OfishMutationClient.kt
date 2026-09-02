@@ -8,11 +8,16 @@ import dev.blazelight.p4oc.data.files.FileUploadResult
 import dev.blazelight.p4oc.data.files.FileWriteRequest
 import dev.blazelight.p4oc.data.files.FileWriteResult
 import dev.blazelight.p4oc.data.remote.dto.ShellCommandRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.InputStream
+
+internal const val MAX_UPLOAD_SOURCE_BYTES = 1L * 1024 * 1024 * 1024
+internal const val UPLOAD_TOO_LARGE_MESSAGE = "File is too large to upload (maximum 1 GiB)"
 
 internal fun interface UploadChunkBytesProvider {
     suspend fun get(capabilities: OfishCapabilities): Int
@@ -28,6 +33,7 @@ internal class FixedUploadChunkBytesProvider(
     override suspend fun get(capabilities: OfishCapabilities): Int = bytes
 }
 
+@Suppress("LongParameterList")
 internal class OfishMutationClient(
     private val client: OfishWorkspaceClient,
     private val sessionFactory: OfishSessionFactory,
@@ -35,7 +41,12 @@ internal class OfishMutationClient(
     private val commandBuilder: OfishCommandBuilder = OfishCommandBuilder(),
     private val shellAgent: String = DEFAULT_SHELL_AGENT,
     private val uploadChunkBytes: UploadChunkBytesProvider = FixedUploadChunkBytesProvider(OFISH_DEFAULT_CHUNK_BYTES),
+    private val maxUploadSourceBytes: Long = MAX_UPLOAD_SOURCE_BYTES,
 ) {
+
+    init {
+        require(maxUploadSourceBytes >= 0) { "max upload source bytes must not be negative" }
+    }
 
     suspend fun mutationCapabilities(): OfishProbeResult = capabilityCache.get()
 
@@ -52,11 +63,11 @@ internal class OfishMutationClient(
         val capabilities = availableCapabilities().getOrNull() ?: return null
         return runCatching {
             sessionFactory.withSession(OPERATION_HASH) { session ->
-                val status = execute(session.id, commandBuilder.hash(normalizedPath, capabilities))
+                val status = execute(session.id, commandBuilder.hash(normalizedPath, capabilities), MARKER_HASH)
                 if (status is OfishMutationStatus.Ok) status.hash else null
             }
         }.getOrElse { error ->
-            AppLog.w(TAG, "OFISH baseline hash failed for $path: ${error.message}")
+            AppLog.w(TAG, "OFISH baseline hash failed: ${error.javaClass.simpleName}")
             null
         }
     }
@@ -65,16 +76,37 @@ internal class OfishMutationClient(
         val path = normalizeMutationPath(request.path).getOrElse { error ->
             return FileOperationResult.Failed(error.message ?: INVALID_PATH_MESSAGE, error)
         }
+        val contentBytes = request.content.toByteArray(Charsets.UTF_8)
+        if (contentBytes.size >= OFISH_CHUNKED_WRITE_THRESHOLD_BYTES) {
+            return uploadFile(
+                FileUploadRequest(
+                    path = path,
+                    contentLength = contentBytes.size.toLong(),
+                    openStream = { ByteArrayInputStream(contentBytes) },
+                    expectedHash = request.expectedHash,
+                ),
+            ).toWriteResult()
+        }
         val capabilities = availableCapabilities().getOrElse { error ->
             return FileOperationResult.Failed(error.message ?: UNAVAILABLE_MESSAGE, error)
         }
 
         return runCatching {
             sessionFactory.withSession(OPERATION_WRITE) { session ->
-                execute(session.id, commandBuilder.write(path, request.content, request.expectedHash, capabilities))
+                execute(
+                    session.id,
+                    commandBuilder.write(path, request.content, request.expectedHash, capabilities),
+                    MARKER_WRITE,
+                )
                     .toWriteResult(path)
             }
-        }.getOrElse { error -> FileOperationResult.Failed("OFISH write failed", error) }
+        }.fold(
+            onSuccess = { it },
+            onFailure = { error ->
+                if (error is CancellationException) throw error
+                FileOperationResult.Failed("OFISH write failed", error)
+            },
+        )
     }
 
     suspend fun deleteFile(path: String): FileOperationResult<Unit> {
@@ -87,7 +119,7 @@ internal class OfishMutationClient(
 
         return runCatching {
             sessionFactory.withSession(OPERATION_DELETE) { session ->
-                execute(session.id, commandBuilder.delete(normalizedPath)).toDeleteResult()
+                execute(session.id, commandBuilder.delete(normalizedPath), MARKER_DELETE).toDeleteResult()
             }
         }.getOrElse { error -> FileOperationResult.Failed("OFISH delete failed", error) }
     }
@@ -99,7 +131,7 @@ internal class OfishMutationClient(
 
         return runCatching {
             sessionFactory.withSession(OPERATION_MKDIR) { session ->
-                execute(session.id, commandBuilder.mkdir(normalizedPath)).toCreateDirectoryResult()
+                execute(session.id, commandBuilder.mkdir(normalizedPath), MARKER_MKDIR).toCreateDirectoryResult()
             }
         }.getOrElse { error -> FileOperationResult.Failed("OFISH folder creation failed", error) }
     }
@@ -112,12 +144,19 @@ internal class OfishMutationClient(
 
         return runCatching {
             sessionFactory.withSession(OPERATION_RENAME) { session ->
-                execute(session.id, commandBuilder.rename(normalizedFromPath, normalizedToPath)).toRenameResult()
+                execute(
+                    session.id,
+                    commandBuilder.rename(normalizedFromPath, normalizedToPath),
+                    MARKER_RENAME,
+                ).toRenameResult()
             }
         }.getOrElse { error -> FileOperationResult.Failed("OFISH rename failed", error) }
     }
 
     suspend fun uploadFile(request: FileUploadRequest): FileOperationResult<FileUploadResult> {
+        if (request.contentLength > maxUploadSourceBytes) {
+            return FileOperationResult.Failed(UPLOAD_TOO_LARGE_MESSAGE)
+        }
         val path = normalizeMutationPath(request.path).getOrElse { error ->
             return FileOperationResult.Failed(error.message ?: INVALID_PATH_MESSAGE, error)
         }
@@ -129,38 +168,54 @@ internal class OfishMutationClient(
             sessionFactory.withSession(OPERATION_UPLOAD) { session ->
                 uploadInSession(session.id, path, request, capabilities)
             }
-        }.getOrElse { error -> FileOperationResult.Failed("OFISH upload failed", error) }
+        }.fold(
+            onSuccess = { it },
+            onFailure = { error ->
+                if (error is CancellationException) throw error
+                FileOperationResult.Failed("OFISH upload failed", error)
+            },
+        )
     }
 
+    @Suppress("CyclomaticComplexMethod", "LongMethod", "NestedBlockDepth", "ReturnCount")
     private suspend fun uploadInSession(
         sessionId: String,
         path: String,
         request: FileUploadRequest,
         capabilities: OfishCapabilities,
     ): FileOperationResult<FileUploadResult> {
-        val initStatus = execute(sessionId, commandBuilder.uploadInit(path, request.expectedHash, capabilities))
+        val initStatus = execute(
+            sessionId,
+            commandBuilder.uploadInit(path, request.expectedHash, capabilities),
+            MARKER_UPLOAD_INIT,
+        )
         val uploadToken = when (initStatus) {
             is OfishMutationStatus.Ok -> initStatus.uploadToken
             else -> return initStatus.toUploadResult(path)
         } ?: return FileOperationResult.Failed("Malformed OFISH upload init response: missing upload token")
-        validateUploadToken(uploadToken, path).getOrElse { error ->
-            return FileOperationResult.Failed(error.message ?: "Unsafe OFISH upload token", error)
-        }
-
         var finished = false
         try {
+            validateUploadToken(uploadToken, path).getOrElse { error ->
+                return FileOperationResult.Failed(error.message ?: "Unsafe OFISH upload token", error)
+            }
             val chunkBytes = uploadChunkBytes.get(capabilities)
             require(chunkBytes > 0) { "upload chunk size must be greater than zero" }
+            var uploaded = 0L
             request.openStream().use { stream ->
-                var uploaded = 0L
                 while (true) {
-                    val chunk = stream.readChunk(chunkBytes)
+                    val remaining = maxUploadSourceBytes - uploaded
+                    val readLimit = minOf(chunkBytes.toLong(), remaining + 1L).toInt()
+                    val chunk = stream.readChunk(readLimit)
                     if (chunk.isEmpty()) break
+                    if (chunk.size.toLong() > remaining) {
+                        return FileOperationResult.Failed(UPLOAD_TOO_LARGE_MESSAGE)
+                    }
                     uploaded += chunk.size
                     when (
                         val chunkStatus = execute(
                             sessionId,
-                            commandBuilder.uploadChunk(uploadToken, chunk, capabilities)
+                            commandBuilder.uploadChunk(uploadToken, chunk, capabilities),
+                            MARKER_UPLOAD_CHUNK,
                         )
                     ) {
                         is OfishMutationStatus.Ok -> Unit
@@ -169,20 +224,31 @@ internal class OfishMutationClient(
                     request.onBytesUploaded?.invoke(uploaded)
                 }
             }
+            if (request.contentLength >= 0 && uploaded != request.contentLength) {
+                val mismatchMessage = "OFISH upload length mismatch: " +
+                    "expected ${request.contentLength} bytes, streamed $uploaded bytes"
+                return FileOperationResult.Failed(
+                    mismatchMessage
+                )
+            }
 
             val finishStatus =
-                execute(sessionId, commandBuilder.uploadFinish(path, uploadToken, request.expectedHash, capabilities))
+                execute(
+                    sessionId,
+                    commandBuilder.uploadFinish(path, uploadToken, request.expectedHash, capabilities),
+                    MARKER_UPLOAD_FINISH,
+                )
             val result = finishStatus.toUploadResult(path)
             if (result is FileOperationResult.Ok) finished = true
             return result
         } finally {
             if (!finished) {
                 withContext(NonCancellable) {
-                    runCatching { execute(sessionId, commandBuilder.uploadAbort(uploadToken)) }
+                    runCatching { execute(sessionId, commandBuilder.uploadAbort(uploadToken), MARKER_UPLOAD_ABORT) }
                         .onFailure { error ->
                             AppLog.w(
                                 TAG,
-                                "Failed to abort OFISH upload temp file: ${error.message}"
+                                "Failed to abort OFISH upload temp file: ${error.javaClass.simpleName}"
                             )
                         }
                 }
@@ -229,7 +295,11 @@ internal class OfishMutationClient(
         return Result.success(normalized)
     }
 
-    private suspend fun execute(sessionId: String, command: String): OfishMutationStatus {
+    private suspend fun execute(
+        sessionId: String,
+        command: String,
+        expectedMarker: String,
+    ): OfishMutationStatus {
         val response = client.executeShellCommand(
             sessionId = sessionId,
             request = ShellCommandRequest(
@@ -238,7 +308,11 @@ internal class OfishMutationClient(
                 command = command,
             ),
         )
-        return OfishMutationParser.parse(OfishShellOutputExtractor.extract(response))
+        val output = OfishShellOutputExtractor.extractMutationSegment(response, expectedMarker)
+            ?: return OfishMutationStatus.Malformed(
+                "Malformed OFISH mutation output: missing $expectedMarker output segment"
+            )
+        return OfishMutationParser.parse(output, expectedMarker)
     }
 
     private suspend fun availableCapabilities(): Result<OfishCapabilities> = when (val result = capabilityCache.get()) {
@@ -257,8 +331,13 @@ internal class OfishMutationClient(
         while (offset < maxBytes) {
             val read = read(buffer, offset, maxBytes - offset)
             if (read < 0) break
-            if (read == 0) continue
-            offset += read
+            if (read == 0) {
+                val nextByte = read()
+                if (nextByte < 0) break
+                buffer[offset++] = nextByte.toByte()
+            } else {
+                offset += read
+            }
         }
         return if (offset == buffer.size) buffer else buffer.copyOf(offset)
     }
@@ -277,6 +356,13 @@ internal class OfishMutationClient(
         is OfishMutationStatus.Malformed -> FileOperationResult.Failed(message)
         OfishMutationStatus.Deleted -> FileOperationResult.Failed("Unexpected OFISH write delete status")
     }
+
+    private fun FileOperationResult<FileUploadResult>.toWriteResult(): FileOperationResult<FileWriteResult> =
+        when (this) {
+            is FileOperationResult.Ok -> FileOperationResult.Ok(FileWriteResult(path = data.path, hash = data.hash))
+            is FileOperationResult.Conflict -> this
+            is FileOperationResult.Failed -> this
+        }
 
     private fun OfishMutationStatus.toDeleteResult(): FileOperationResult<Unit> = when (this) {
         OfishMutationStatus.Deleted -> FileOperationResult.Ok(Unit)
@@ -359,7 +445,17 @@ internal class OfishMutationClient(
         const val OPERATION_RENAME = "rename"
         const val OPERATION_UPLOAD = "upload"
         const val OPERATION_HASH = "hash"
+        const val MARKER_HASH = "#OFISH_HASH"
+        const val MARKER_WRITE = "#OFISH_WRITE"
+        const val MARKER_DELETE = "#OFISH_DELETE"
+        const val MARKER_MKDIR = "#OFISH_MKDIR"
+        const val MARKER_RENAME = "#OFISH_RENAME"
+        const val MARKER_UPLOAD_INIT = "#OFISH_UPLOAD_INIT"
+        const val MARKER_UPLOAD_CHUNK = "#OFISH_UPLOAD_CHUNK"
+        const val MARKER_UPLOAD_FINISH = "#OFISH_UPLOAD_FINISH"
+        const val MARKER_UPLOAD_ABORT = "#OFISH_UPLOAD_ABORT"
         const val UPLOAD_TOKEN_PREFIX = ".ofish.upload."
+        const val OFISH_CHUNKED_WRITE_THRESHOLD_BYTES = 32 * 1024
     }
 }
 
@@ -367,6 +463,8 @@ internal open class CachedOfishCapabilities(
     private val probe: OfishCapabilityProbe,
 ) {
     private val mutex = Mutex()
+
+    @Volatile
     private var cached: OfishProbeResult? = null
 
     open suspend fun get(): OfishProbeResult {

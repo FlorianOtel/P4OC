@@ -1,17 +1,28 @@
 package dev.blazelight.p4oc.ui.navigation
 
-import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import dev.blazelight.p4oc.ui.screens.server.ServerScreen
-import dev.blazelight.p4oc.ui.screens.settings.ProviderConfigScreen
+import dev.blazelight.p4oc.core.network.ServerConnectionRegistry
+import dev.blazelight.p4oc.core.notification.NotificationRoute
+import dev.blazelight.p4oc.ui.screens.server.ServerScreenConfig
+import dev.blazelight.p4oc.ui.screens.server.serverScreen
+import dev.blazelight.p4oc.ui.screens.settings.SettingsConnectionContext
 import dev.blazelight.p4oc.ui.screens.settings.SettingsScreen
+import dev.blazelight.p4oc.ui.screens.settings.SettingsViewModel
 import dev.blazelight.p4oc.ui.screens.settings.VisualSettingsScreen
 import dev.blazelight.p4oc.ui.screens.setup.SetupScreen
 import dev.blazelight.p4oc.ui.tabs.MainTabScreen
+import kotlinx.coroutines.flow.StateFlow
+import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
+import org.koin.core.parameter.parametersOf
 
 private const val ANIMATION_DURATION = 300
 
@@ -21,9 +32,12 @@ private const val ANIMATION_DURATION = 300
  * which manages its own per-tab navigation.
  */
 @Composable
+@Suppress("FunctionNaming", "LongMethod")
 fun NavGraph(
     navController: NavHostController,
-    startDestination: String
+    startDestination: String,
+    pendingNotificationRoute: StateFlow<NotificationRoute?>,
+    onNotificationRouteConsumed: (NotificationRoute) -> Unit,
 ) {
     NavHost(
         navController = navController,
@@ -55,8 +69,8 @@ fun NavGraph(
     ) {
         composable(Screen.Setup.route) {
             SetupScreen(
-                onSetupComplete = {
-                    navController.navigate(Screen.Server.route) {
+                onConnected = {
+                    navController.navigate(Screen.Sessions.route) {
                         popUpTo(Screen.Setup.route) { inclusive = true }
                     }
                 }
@@ -64,13 +78,8 @@ fun NavGraph(
         }
 
         composable(Screen.Server.route) {
-            ServerScreen(
+            serverScreen(
                 onNavigateToSessions = {
-                    navController.navigate(Screen.Sessions.route) {
-                        popUpTo(Screen.Server.route) { inclusive = true }
-                    }
-                },
-                onNavigateToProjects = {
                     navController.navigate(Screen.Sessions.route) {
                         popUpTo(Screen.Server.route) { inclusive = true }
                     }
@@ -81,13 +90,33 @@ fun NavGraph(
             )
         }
 
+        composable(Screen.ServerManagement.route) {
+            val serverConnectionRegistry: ServerConnectionRegistry = koinInject()
+            serverScreen(
+                onNavigateToSessions = { navController.popBackStack() },
+                onSettings = { navController.navigate(Screen.Settings.route) },
+                config = ServerScreenConfig(
+                    autoReconnect = false,
+                    showManualFormInitially = true,
+                    onConnectSavedServer = { saved ->
+                        serverConnectionRegistry.connect(saved)
+                        navController.popBackStack()
+                    },
+                    onNavigateBack = { navController.popBackStack() },
+                ),
+            )
+        }
+
         // Main tab container - this is where the tab-based UI lives
         composable(Screen.Sessions.route) {
             MainTabScreen(
+                pendingNotificationRoute = pendingNotificationRoute,
+                onNotificationRouteConsumed = onNotificationRouteConsumed,
                 onDisconnect = {
-                    navController.navigate(Screen.Server.route) {
-                        popUpTo(0) { inclusive = true }
-                    }
+                    navController.navigate(Screen.ServerManagement.route)
+                },
+                onSettings = {
+                    navController.navigate(Screen.Settings.route)
                 }
             )
         }
@@ -95,17 +124,20 @@ fun NavGraph(
         // Settings accessible from Server screen (before connecting)
         composable(Screen.Settings.route) {
             SettingsScreen(
+                viewModel = koinViewModel<SettingsViewModel> {
+                    parametersOf(SettingsConnectionContext.Global)
+                },
                 onNavigateBack = { navController.popBackStack() },
                 onDisconnect = {
                     navController.navigate(Screen.Server.route) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                onProviderConfig = {
-                    navController.navigate(Screen.ProviderConfig.route)
-                },
                 onVisualSettings = {
                     navController.navigate(Screen.VisualSettings.route)
+                },
+                onChatSettings = {
+                    navController.navigate(Screen.ChatSettings.route)
                 },
                 onAgentsConfig = {},
                 onSkills = {},
@@ -127,14 +159,14 @@ fun NavGraph(
             )
         }
 
-        composable(Screen.ProviderConfig.route) {
-            ProviderConfigScreen(
+        composable(Screen.VisualSettings.route) {
+            VisualSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
 
-        composable(Screen.VisualSettings.route) {
-            VisualSettingsScreen(
+        composable(Screen.ChatSettings.route) {
+            dev.blazelight.p4oc.ui.screens.settings.ChatSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
@@ -147,6 +179,9 @@ fun NavGraph(
 
         composable(Screen.ConnectionSettings.route) {
             dev.blazelight.p4oc.ui.screens.settings.ConnectionSettingsScreen(
+                viewModel = koinViewModel<SettingsViewModel> {
+                    parametersOf(SettingsConnectionContext.Global)
+                },
                 onNavigateBack = { navController.popBackStack() }
             )
         }

@@ -11,17 +11,6 @@
 
     <!-- Vibration for completion haptic feedback -->
     <uses-permission android:name="android.permission.VIBRATE" />
-
-
-
-    <!-- Termux integration permission -->
-    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
-
-    <!-- For Android 11+ package visibility -->
-    <queries>
-        <package android:name="com.termux" />
-    </queries>
-
     <application
         android:name=".PocketCodeApp"
         android:allowBackup="true"
@@ -39,6 +28,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.PocketCode.Splash">

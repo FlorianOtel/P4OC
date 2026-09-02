@@ -1,6 +1,7 @@
 package dev.blazelight.p4oc.data.remote.dto
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 // ============================================================================
 // Auth Types
@@ -12,13 +13,15 @@ data class OAuthDto(
     val refresh: String,
     val access: String,
     val expires: Long,
+    val accountId: String? = null,
     val enterpriseUrl: String? = null
 )
 
 @Serializable
 data class ApiAuthDto(
     val type: String = "api",
-    val key: String
+    val key: String,
+    val metadata: Map<String, String>? = null,
 )
 
 @Serializable
@@ -34,13 +37,15 @@ data class AuthDto(
     val refresh: String? = null,
     val access: String? = null,
     val expires: Long? = null,
+    val accountId: String? = null,
     val enterpriseUrl: String? = null,
     val key: String? = null,
-    val token: String? = null
+    val token: String? = null,
+    val metadata: JsonObject? = null,
 )
 
 @Serializable
 data class OAuthCallbackRequest(
-    val code: String? = null,
-    val state: String? = null
+    val method: Int,
+    val code: String? = null
 )

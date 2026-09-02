@@ -1,0 +1,9 @@
+shipment_id,carrier,origin,destination,shipped_date,promised_date,delivered_date,revenue_usd,delay_hours
+SHP-1001,Northstar Freight,sea,pdx,2026-01-03,2026-01-04,2026-01-04,1840.50,2.5
+SHP-1002,Blue Heron Logistics,pdx,sfo,2026-01-03,2026-01-05,2026-01-06,925.00,18
+SHP-1003,Northstar Freight,sea,den,2026-01-04,2026-01-07,2026-01-07,2475.25,0
+SHP-1004,Cascade Cargo,sfo,sea,2026-01-05,2026-01-08,,1310.00,0
+SHP-1005,Blue Heron Logistics,pdx,sfo,2026-01-06,2026-01-08,2026-01-09,780.75,11.5
+SHP-1006,Cascade Cargo,den,sea,2026-01-06,2026-01-09,2026-01-08,3020.00,-3
+SHP-1007,Northstar Freight,sea,pdx,2026-01-07,2026-01-09,2026-01-09,1685.40,1
+SHP-1008,Cascade Cargo,sfo,den,2026-01-08,2026-01-10,2026-01-12,2149.99,27

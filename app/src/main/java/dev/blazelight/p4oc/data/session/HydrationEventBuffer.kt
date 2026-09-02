@@ -22,14 +22,20 @@ class HydrationEventBuffer(
         RepoState.Hydrating(bufferedEvents = events.size)
     }
 
-    fun replayOver(snapshot: Snapshot, reducer: SessionReducer): Snapshot = snapshotEvents()
+    fun replayOver(snapshot: Snapshot, reducer: SessionReducer): Snapshot = drain()
         .fold(snapshot) { current, event -> reducer.reduce(current, event) }
+
+    fun drain(): List<OpenCodeEvent> = synchronized(lock) {
+        if (events.isEmpty()) return emptyList()
+
+        val drained = events.toList()
+        events.clear()
+        drained
+    }
 
     fun clear() {
         synchronized(lock) { events.clear() }
     }
-
-    private fun snapshotEvents(): List<OpenCodeEvent> = synchronized(lock) { events.toList() }
 
     companion object {
         const val DEFAULT_CAPACITY: Int = 512

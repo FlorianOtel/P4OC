@@ -2,6 +2,8 @@ package dev.blazelight.p4oc.data.remote.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 // ============================================================================
 // Session Types
@@ -17,16 +19,31 @@ data class TimeDto(
 @Serializable
 data class SessionDto(
     val id: String,
+    val slug: String? = null,
     @SerialName("projectID") val projectID: String,
+    @SerialName("workspaceID") val workspaceID: String? = null,
     val directory: String,
+    val path: String? = null,
     @SerialName("parentID") val parentID: String? = null,
     val title: String,
     val version: String,
     val time: TimeDto,
     val summary: SessionSummaryDto? = null,
+    val cost: Double? = null,
+    val tokens: TokenUsageDto? = null,
     val share: SessionShareDto? = null,
-    val revert: SessionRevertDto? = null,
-    val model: SessionModelDto? = null
+    val agent: String? = null,
+    val model: SessionModelDto? = null,
+    val metadata: JsonObject? = null,
+    val permission: JsonElement? = null,
+    val revert: SessionRevertDto? = null
+)
+
+@Serializable
+data class SessionModelDto(
+    val id: String,
+    @SerialName("providerID") val providerID: String,
+    val variant: String? = null,
 )
 
 @Serializable
@@ -44,6 +61,16 @@ data class FileDiffDto(
     val after: String,
     val additions: Int,
     val deletions: Int
+)
+
+/** Current response shape for `GET /session/{sessionID}/diff`. */
+@Serializable
+data class SnapshotFileDiffDto(
+    val file: String? = null,
+    val patch: String? = null,
+    val additions: Double,
+    val deletions: Double,
+    val status: String? = null,
 )
 
 @Serializable
@@ -90,9 +117,6 @@ data class RevertSessionRequest(
     @SerialName("partID") val partID: String? = null
 )
 
-// SummarizeSessionRequest removed — the /summarize endpoint body is optional
-// and the server uses its own default provider/model when omitted.
-
 @Serializable
 data class InitSessionRequest(
     @SerialName("messageID") val messageID: String,
@@ -100,9 +124,5 @@ data class InitSessionRequest(
     @SerialName("modelID") val modelID: String
 )
 
-@Serializable
-data class SessionModelDto(
-    val id: String,
-    @SerialName("providerID") val providerID: String,
-    val variant: String? = null
-)
+// SummarizeSessionRequest removed — the /summarize endpoint body is optional
+// and the server uses its own default provider/model when omitted.

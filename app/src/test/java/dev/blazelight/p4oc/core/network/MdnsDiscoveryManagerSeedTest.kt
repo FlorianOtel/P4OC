@@ -1,13 +1,41 @@
 package dev.blazelight.p4oc.core.network
 
+import okhttp3.Authenticator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MdnsDiscoveryManagerSeedTest {
+    @Test
+    fun `seed probe client disables redirect and credential challenges`() {
+        val client = buildSeedProbeClient(allowInsecure = false)
+
+        assertFalse(client.followRedirects)
+        assertFalse(client.followSslRedirects)
+        assertSame(Authenticator.NONE, client.authenticator)
+        assertSame(Authenticator.NONE, client.proxyAuthenticator)
+    }
+
+    @Test
+    fun `seed probe does not trust redirect responses`() {
+        assertFalse(300.isOpenCodeSeedResponse())
+        assertFalse(301.isOpenCodeSeedResponse())
+        assertFalse(302.isOpenCodeSeedResponse())
+        assertFalse(307.isOpenCodeSeedResponse())
+        assertFalse(308.isOpenCodeSeedResponse())
+    }
+
+    @Test
+    fun `seed probe recognizes authenticated OpenCode server`() {
+        assertTrue(200.isOpenCodeSeedResponse())
+        assertTrue(401.isOpenCodeSeedResponse())
+        assertFalse(403.isOpenCodeSeedResponse())
+        assertFalse(404.isOpenCodeSeedResponse())
+    }
 
     @Test
     fun `normalizeSeed http host defaults 4096`() {
@@ -46,6 +74,11 @@ class MdnsDiscoveryManagerSeedTest {
     }
 
     @Test
+    fun `normalizeSeed rejects user info credentials`() {
+        assertNull(normalizeSeed(DiscoverySeed("http://user:secret@example.com")))
+    }
+
+    @Test
     fun `normalizeSeed preserves ipv6 brackets and path`() {
         val normalized = normalizeSeed(DiscoverySeed("http://[2001:db8::1]/foo"))
 
@@ -78,7 +111,7 @@ class MdnsDiscoveryManagerSeedTest {
     }
 
     @Test
-    fun `mergeDiscoveredServer keeps mdns over seed for same url`() {
+    fun `mergeDiscoveredServer does not let insecure seed downgrade strict mdns identity`() {
         val existing = listOf(
             DiscoveredServer(
                 serviceName = "opencode-local",
@@ -99,11 +132,11 @@ class MdnsDiscoveryManagerSeedTest {
 
         val merged = mergeDiscoveredServer(existing, incoming)
 
-        assertEquals(existing.first().copy(allowInsecure = true), merged.single())
+        assertEquals(existing.single(), merged.single())
     }
 
     @Test
-    fun `mergeDiscoveredServer replaces seed with mdns for same url and preserves allowInsecure`() {
+    fun `mergeDiscoveredServer replaces seed with mdns and preserves explicit insecure choice`() {
         val existing = listOf(
             DiscoveredServer(
                 serviceName = "seed:example.com:4096",
@@ -126,6 +159,28 @@ class MdnsDiscoveryManagerSeedTest {
         val merged = mergeDiscoveredServer(existing, incoming)
 
         assertEquals(listOf(incoming.copy(allowInsecure = true)), merged)
+    }
+
+    @Test
+    fun `mergeDiscoveredServer same-source duplicate preserves strict TLS choice`() {
+        val existing = listOf(
+            DiscoveredServer(
+                serviceName = "seed:example.com:4096",
+                host = "example.com",
+                port = 4096,
+                url = "https://example.com:4096",
+                source = DiscoverySource.SEED,
+                allowInsecure = false,
+            )
+        )
+        val incoming = existing.single().copy(
+            serviceName = "seed:example.com:4096-duplicate",
+            allowInsecure = true,
+        )
+
+        val merged = mergeDiscoveredServer(existing, incoming)
+
+        assertEquals(incoming.copy(allowInsecure = false), merged.single())
     }
 
     @Test

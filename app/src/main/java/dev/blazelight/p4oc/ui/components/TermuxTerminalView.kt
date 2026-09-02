@@ -16,11 +16,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.viewinterop.AndroidView
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.log.AppLog
 
 class KeyInterceptingContainer(context: Context) : FrameLayout(context) {
@@ -170,14 +178,20 @@ class TerminalInputView(context: Context) : View(context) {
 }
 
 @Composable
+@Suppress("FunctionNaming", "LongMethod", "LongParameterList")
 fun TermuxTerminalView(
     emulator: TerminalEmulator?,
     onKeyInput: (String) -> Unit,
+    accessibleScreenText: String,
     modifier: Modifier = Modifier,
     onTerminalViewReady: ((TerminalView) -> Unit)? = null,
     onTerminalSizeChanged: ((rows: Int, cols: Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val accessibilityLabel = stringResource(R.string.terminal_accessibility_label)
+    val connectedState = stringResource(R.string.terminal_accessibility_connected)
+    val focusInputLabel = stringResource(R.string.terminal_accessibility_focus_input)
+    val inputViewHolder = remember { arrayOfNulls<TerminalInputView>(1) }
 
     val terminalViewClient = remember(onKeyInput) {
         createTerminalViewClient(context, onKeyInput)
@@ -185,19 +199,27 @@ fun TermuxTerminalView(
 
     AndroidView(
         factory = { ctx ->
-            val container = FrameLayout(ctx)
+            val container = KeyInterceptingContainer(ctx).apply {
+                this.onKeyInput = onKeyInput
+            }
 
             val terminalView = TerminalView(ctx, null).apply {
                 setTextSize(14)
                 setTypeface(Typeface.MONOSPACE)
                 setTerminalViewClient(terminalViewClient)
                 keepScreenOn = true
+                // Compose exposes the bounded terminal identity and state. Do not let the native
+                // view publish its potentially unbounded scrollback as a second semantics tree.
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
 
             val inputView = TerminalInputView(ctx).apply {
                 this.onKeyInput = onKeyInput
                 layoutParams = FrameLayout.LayoutParams(1, 1)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
+            inputViewHolder[0] = inputView
+            container.terminalView = terminalView
 
             container.addView(
                 terminalView,
@@ -210,9 +232,7 @@ fun TermuxTerminalView(
 
             terminalView.setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_UP) {
-                    inputView.requestFocus()
-                    val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                    imm.showSoftInput(inputView, InputMethodManager.SHOW_IMPLICIT)
+                    focusTerminalInput(inputView)
                 }
                 false
             }
@@ -227,6 +247,7 @@ fun TermuxTerminalView(
 
             // Update the input callback on recomposition to avoid stale callbacks
             views?.second?.onKeyInput = onKeyInput
+            container.onKeyInput = onKeyInput
 
             emulator?.let { emu ->
                 views?.first?.let { view ->
@@ -244,8 +265,25 @@ fun TermuxTerminalView(
                 }
             }
         },
-        modifier = modifier
+        modifier = modifier.clearAndSetSemantics {
+            contentDescription = if (accessibleScreenText.isBlank()) {
+                accessibilityLabel
+            } else {
+                "$accessibilityLabel\n$accessibleScreenText"
+            }
+            stateDescription = connectedState
+            liveRegion = LiveRegionMode.Polite
+            onClick(focusInputLabel) {
+                inputViewHolder[0]?.let(::focusTerminalInput) != null
+            }
+        }
     )
+}
+
+private fun focusTerminalInput(inputView: TerminalInputView) {
+    inputView.requestFocus()
+    val imm = inputView.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    imm.showSoftInput(inputView, InputMethodManager.SHOW_IMPLICIT)
 }
 
 private fun notifyTerminalSizeChanged(
@@ -352,11 +390,11 @@ private fun createTerminalViewClient(
         }
 
         override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {
-            AppLog.e(tag ?: "TerminalView", message ?: "Unknown error", e)
+            AppLog.e(tag ?: "TerminalView", "Terminal error")
         }
 
         override fun logStackTrace(tag: String?, e: Exception?) {
-            AppLog.e(tag ?: "TerminalView", "Stack trace", e)
+            AppLog.e(tag ?: "TerminalView", "Terminal error")
         }
     }
 }

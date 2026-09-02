@@ -49,7 +49,7 @@ class HapticFeedback(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            AppLog.w(TAG, "vibrate failed: ${e.message}", e)
+            AppLog.w(TAG, "Vibration failed (${e::class.simpleName})")
         }
     }
 

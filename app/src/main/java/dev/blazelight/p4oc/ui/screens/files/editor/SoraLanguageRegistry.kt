@@ -1,5 +1,6 @@
 package dev.blazelight.p4oc.ui.screens.files.editor
 
+import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.filetype.FileTypeClassifier
 
 /**
@@ -29,20 +30,19 @@ internal object SoraLanguageRegistry {
 }
 
 /**
- * Human-readable label for [scope], used as the file-viewer subtitle. Returns
- * `"plain text"` for null/unknown scopes; only scopes we actually ship are
- * mapped here.
+ * String resource for [scope], used as the file-viewer subtitle. Unknown scopes
+ * fall back to plain text; only scopes we actually ship are mapped here.
  */
-internal fun displayLabelForScope(scope: String?): String = when (scope) {
-    "source.kotlin" -> "kotlin"
-    "source.json" -> "json"
-    "source.python" -> "python"
-    "source.ts" -> "typescript"
-    "source.yaml" -> "yaml"
-    "source.toml" -> "toml"
-    "source.shell" -> "shell"
-    "source.env" -> "env"
-    "text.xml" -> "xml"
-    "text.html.markdown" -> "markdown"
-    else -> "plain text"
+internal fun displayLabelResForScope(scope: String?): Int = when (scope) {
+    "source.kotlin" -> R.string.file_language_kotlin
+    "source.json" -> R.string.file_language_json
+    "source.python" -> R.string.file_language_python
+    "source.ts" -> R.string.file_language_typescript
+    "source.yaml" -> R.string.file_language_yaml
+    "source.toml" -> R.string.file_language_toml
+    "source.shell" -> R.string.file_language_shell
+    "source.env" -> R.string.file_language_env
+    "text.xml" -> R.string.file_language_xml
+    "text.html.markdown" -> R.string.file_language_markdown
+    else -> R.string.file_language_plain_text
 }

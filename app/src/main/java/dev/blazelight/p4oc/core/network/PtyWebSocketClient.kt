@@ -1,6 +1,7 @@
 package dev.blazelight.p4oc.core.network
 
 import dev.blazelight.p4oc.core.log.AppLog
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,24 +13,26 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * WebSocket client for PTY terminal I/O.
  * Connects to /pty/{id}/connect endpoint for real-time terminal communication.
  *
- * Auth is handled by the OkHttpClient provided by ConnectionManager,
+ * Auth is handled by the OkHttpClient resolved from the exact registry-owned server generation,
  * which has an auth interceptor baked in. This class never sees credentials.
  */
 
 class PtyWebSocketClient constructor(
-    private val connectionManager: ConnectionManager
+    private val serverConnectionRegistry: ServerConnectionRegistry,
+    private val serverRef: dev.blazelight.p4oc.domain.server.ServerRef,
+    private val serverGeneration: dev.blazelight.p4oc.domain.server.ServerGeneration,
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : java.io.Closeable {
     companion object {
         private const val TAG = "PtyWebSocketClient"
@@ -38,7 +41,7 @@ class PtyWebSocketClient constructor(
     }
 
     private val supervisorJob = SupervisorJob()
-    private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
+    private val scope = CoroutineScope(supervisorJob + dispatcher)
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -51,6 +54,8 @@ class PtyWebSocketClient constructor(
 
     // Track the last PTY ID for reconnection after background disconnect
     private var lastPtyId: String? = null
+    private var lastDirectory: String? = null
+    private var lastWorkspace: String? = null
     private val reconnectAttempts = AtomicInteger(0)
 
     @Volatile
@@ -65,16 +70,6 @@ class PtyWebSocketClient constructor(
     // Lock to prevent race conditions in connect/disconnect
     private val connectionLock = Any()
 
-    // Fallback OkHttpClient for unauthenticated connections
-    private val fallbackOkHttpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .pingInterval(30, TimeUnit.SECONDS)
-            .build()
-    }
-
     sealed class ConnectionState {
         object Disconnected : ConnectionState()
         object Connecting : ConnectionState()
@@ -82,7 +77,7 @@ class PtyWebSocketClient constructor(
         data class Error(val message: String) : ConnectionState()
     }
 
-    fun connect(ptyId: String) {
+    fun connect(ptyId: String, directory: String?, workspace: String?) {
         synchronized(connectionLock) {
             // Disconnect from previous session if any
             if (currentPtyId != null && currentPtyId != ptyId) {
@@ -90,37 +85,35 @@ class PtyWebSocketClient constructor(
             }
 
             if (currentWebSocket != null && currentPtyId == ptyId) {
-                AppLog.d(TAG, "Already connected to $ptyId")
+                AppLog.d(TAG, "Already connected to PTY")
                 return
             }
 
-            val connection = connectionManager.connection.value
-            if (connection == null) {
-                AppLog.e(TAG, "Cannot connect: No active connection")
-                _connectionState.value = ConnectionState.Error("Not connected to server")
+            val transport = serverConnectionRegistry.terminalTransport(serverRef, serverGeneration)
+            if (transport == null) {
+                AppLog.e(TAG, "Cannot connect: server connection generation is unavailable")
+                _connectionState.value = ConnectionState.Error("Server connection is no longer available")
                 return
             }
+            val connection = transport.connection
 
             _connectionState.value = ConnectionState.Connecting
             currentPtyId = ptyId
             lastPtyId = ptyId
+            lastDirectory = directory
+            lastWorkspace = workspace
             userDisconnected = false
             val gen = ++generation
 
-            val baseUrl = connection.config.url
-            // Convert http(s):// to ws(s)://
-            val wsUrl = baseUrl
-                .replace("http://", "ws://")
-                .replace("https://", "wss://")
-                .trimEnd('/') + "/pty/$ptyId/connect"
+            val wsUrl = buildPtyWebSocketUrl(connection.config.url, ptyId, directory, workspace)
 
-            AppLog.d(TAG, "Connecting to WebSocket: $wsUrl (gen=$gen)")
+            AppLog.d(TAG, "Connecting PTY WebSocket (gen=$gen)")
 
             val request = Request.Builder().url(wsUrl).build()
 
-            // Use the auth-aware OkHttpClient from ConnectionManager.
+            // Use the auth-aware OkHttpClient from the exact registry-owned connection.
             // The auth interceptor automatically adds Authorization headers.
-            val wsClient = connectionManager.authOkHttpClient.value ?: fallbackOkHttpClient
+            val wsClient = transport.authClient
 
             currentWebSocket = wsClient.newWebSocket(
                 request,
@@ -132,7 +125,7 @@ class PtyWebSocketClient constructor(
                                 webSocket.close(1000, "Stale connection")
                                 return
                             }
-                            AppLog.d(TAG, "WebSocket connected to $ptyId")
+                            AppLog.d(TAG, "PTY WebSocket connected")
                             reconnectAttempts.set(0)
                             _connectionState.value = ConnectionState.Connected(ptyId)
                         }
@@ -140,7 +133,7 @@ class PtyWebSocketClient constructor(
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         if (generation != gen) return
-                        AppLog.v(TAG, "Received: ${text.take(100)}${if (text.length > 100) "..." else ""}")
+                        AppLog.v(TAG, "Received terminal output (${text.length} chars)")
                         // This is a bounded handoff to the terminal collector, not upstream
                         // backpressure to OkHttp. If rendering falls behind far enough to
                         // fill the buffer, drop the frame rather than spawning unbounded work.
@@ -150,12 +143,12 @@ class PtyWebSocketClient constructor(
                     }
 
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                        AppLog.d(TAG, "WebSocket closing: $code $reason")
+                        AppLog.d(TAG, "PTY WebSocket closing (code=$code)")
                         webSocket.close(1000, null)
                     }
 
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                        AppLog.d(TAG, "WebSocket closed: $code $reason (gen=$gen)")
+                        AppLog.d(TAG, "PTY WebSocket closed (code=$code, gen=$gen)")
                         val ptyIdForReconnect: String?
                         synchronized(connectionLock) {
                             if (generation != gen) {
@@ -169,12 +162,12 @@ class PtyWebSocketClient constructor(
                         }
                         // Attempt reconnection if not user-initiated
                         if (!userDisconnected && ptyIdForReconnect != null) {
-                            scheduleReconnect(ptyIdForReconnect)
+                            scheduleReconnect(ptyIdForReconnect, directory, workspace)
                         }
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        AppLog.e(TAG, "WebSocket error: ${t.message} (gen=$gen)", t)
+                        AppLog.e(TAG, "PTY WebSocket failure (${t::class.simpleName}, gen=$gen)")
                         val ptyIdForReconnect: String?
                         synchronized(connectionLock) {
                             if (generation != gen) {
@@ -184,11 +177,11 @@ class PtyWebSocketClient constructor(
                             currentWebSocket = null
                             ptyIdForReconnect = currentPtyId
                             currentPtyId = null
-                            _connectionState.value = ConnectionState.Error(t.message ?: "Unknown error")
+                            _connectionState.value = ConnectionState.Error("Terminal connection failed")
                         }
                         // Attempt reconnection if not user-initiated
                         if (!userDisconnected && ptyIdForReconnect != null) {
-                            scheduleReconnect(ptyIdForReconnect)
+                            scheduleReconnect(ptyIdForReconnect, directory, workspace)
                         }
                     }
                 }
@@ -202,25 +195,25 @@ class PtyWebSocketClient constructor(
             AppLog.w(TAG, "Cannot send: WebSocket not connected")
             return false
         }
-        AppLog.v(TAG, "Sending: ${data.take(50)}${if (data.length > 50) "..." else ""}")
+        AppLog.v(TAG, "Sending terminal input (${data.length} chars)")
         return ws.send(data)
     }
 
-    private fun scheduleReconnect(ptyId: String) {
+    private fun scheduleReconnect(ptyId: String, directory: String?, workspace: String?) {
         val attempts = reconnectAttempts.get()
         if (attempts >= MAX_RECONNECT_ATTEMPTS) {
-            AppLog.w(TAG, "Max reconnect attempts reached for $ptyId, giving up")
+            AppLog.w(TAG, "Max PTY reconnect attempts reached; giving up")
             reconnectAttempts.set(0)
             return
         }
         val delayMs = RECONNECT_DELAYS_MS[attempts.coerceAtMost(RECONNECT_DELAYS_MS.lastIndex)]
         reconnectAttempts.incrementAndGet()
-        AppLog.d(TAG, "Scheduling reconnect attempt ${attempts + 1} for $ptyId in ${delayMs}ms")
+        AppLog.d(TAG, "Scheduling PTY reconnect attempt ${attempts + 1} in ${delayMs}ms")
         scope.launch {
             delay(delayMs)
             if (!userDisconnected && currentWebSocket == null) {
-                AppLog.d(TAG, "Attempting reconnect to $ptyId (attempt ${reconnectAttempts.get()})")
-                connect(ptyId)
+                AppLog.d(TAG, "Attempting PTY reconnect (attempt ${reconnectAttempts.get()})")
+                connect(ptyId, directory, workspace)
             }
         }
     }
@@ -236,13 +229,13 @@ class PtyWebSocketClient constructor(
             return
         }
         if (isConnected() && currentPtyId == ptyId) {
-            AppLog.d(TAG, "reconnect() called but already connected to $ptyId")
+            AppLog.d(TAG, "reconnect() called but PTY is already connected")
             return
         }
-        AppLog.d(TAG, "reconnect() to last PTY: $ptyId")
+        AppLog.d(TAG, "reconnect() to last PTY")
         userDisconnected = false
         reconnectAttempts.set(0)
-        connect(ptyId)
+        connect(ptyId, lastDirectory, lastWorkspace)
     }
 
     fun disconnect() {
@@ -270,4 +263,29 @@ class PtyWebSocketClient constructor(
         disconnect()
         supervisorJob.cancel()
     }
+}
+
+internal fun buildPtyWebSocketUrl(
+    baseUrl: String,
+    ptyId: String,
+    directory: String?,
+    workspace: String?,
+): String {
+    val httpUrl = baseUrl.trimEnd('/').toHttpUrl()
+    val webSocketScheme = when (httpUrl.scheme) {
+        "http" -> "ws"
+        "https" -> "wss"
+        else -> error("Unsupported server URL scheme: ${httpUrl.scheme}")
+    }
+    val encodedHttpUrl = httpUrl.newBuilder()
+        .addPathSegment("pty")
+        .addPathSegment(ptyId)
+        .addPathSegment("connect")
+        .apply {
+            directory?.let { addQueryParameter("directory", it) }
+            workspace?.let { addQueryParameter("workspace", it) }
+        }
+        .build()
+    // HttpUrl deliberately models only HTTP(S); convert the already safely encoded URL afterward.
+    return encodedHttpUrl.toString().replaceFirst("${httpUrl.scheme}://", "$webSocketScheme://")
 }

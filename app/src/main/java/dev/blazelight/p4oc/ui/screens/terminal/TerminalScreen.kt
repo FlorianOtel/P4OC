@@ -6,12 +6,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.termux.view.TerminalView
+import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.ui.components.TermuxExtraKeysBar
 import dev.blazelight.p4oc.ui.components.TermuxTerminalView
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
+import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
+import dev.blazelight.p4oc.ui.theme.Spacing
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -20,7 +29,9 @@ fun TerminalScreen(
     onPtyLoaded: ((ptyId: String, ptyTitle: String) -> Unit)? = null,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val accessibleScreenText by viewModel.accessibleScreenText.collectAsStateWithLifecycle()
+    val terminalAccessibilityLabel = stringResource(R.string.terminal_accessibility_label)
+    val terminalReconnectingState = stringResource(R.string.terminal_accessibility_reconnecting)
     var terminalView by remember { mutableStateOf<TerminalView?>(null) }
     val currentTerminalView by rememberUpdatedState(terminalView)
 
@@ -63,17 +74,6 @@ fun TerminalScreen(
         }
     }
 
-    // Show error in snackbar
-    LaunchedEffect(uiState.error) {
-        uiState.error?.let { error ->
-            snackbarHostState.showSnackbar(
-                message = error,
-                duration = SnackbarDuration.Short
-            )
-            viewModel.clearError()
-        }
-    }
-
     LaunchedEffect(viewModel) {
         viewModel.terminalInvalidations.collect {
             currentTerminalView?.postInvalidate()
@@ -96,16 +96,25 @@ fun TerminalScreen(
             ) {
                 if (uiState.isConnecting && !uiState.isConnected) {
                     TuiLoadingIndicator(
-                        modifier = Modifier.align(Alignment.Center)
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .semantics {
+                                contentDescription = terminalAccessibilityLabel
+                                stateDescription = terminalReconnectingState
+                                liveRegion = LiveRegionMode.Polite
+                            }
                     )
-                } else {
+                } else if (uiState.isConnected) {
                     TermuxTerminalView(
                         emulator = viewModel.getTerminalEmulator(),
+                        accessibleScreenText = accessibleScreenText,
                         onKeyInput = wrappedKeyInput,
                         modifier = Modifier.fillMaxSize(),
                         onTerminalViewReady = { view -> terminalView = view },
                         onTerminalSizeChanged = viewModel::onTerminalSizeChanged,
                     )
+                } else {
+                    terminalDisconnectedState(uiState, viewModel::reconnect)
                 }
             }
 
@@ -117,14 +126,44 @@ fun TerminalScreen(
                 onCtrlToggle = { ctrlActive = !ctrlActive },
                 onAltToggle = { altActive = !altActive },
                 enabled = uiState.isConnected,
+                onPaste = { currentTerminalView?.mTermSession?.onPasteTextFromClipboard() },
                 modifier = Modifier.fillMaxWidth()
             )
         }
+    }
+}
 
-        // Snackbar host overlaid
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter)
+@Composable
+private fun BoxScope.terminalDisconnectedState(state: TerminalUiState, onRetry: () -> Unit) {
+    val theme = LocalOpenCodeTheme.current
+    val accessibilityState = when {
+        state.isExited -> stringResource(R.string.terminal_exited)
+        else -> stringResource(R.string.terminal_disconnected)
+    }
+    Column(
+        modifier = Modifier
+            .align(Alignment.Center)
+            .padding(Spacing.lg)
+            .semantics {
+                stateDescription = accessibilityState
+                liveRegion = LiveRegionMode.Polite
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+    ) {
+        Text(
+            text = when {
+                state.isExited -> stringResource(R.string.terminal_exited)
+                state.error != null -> state.error
+                else -> stringResource(R.string.terminal_disconnected)
+            },
+            color = theme.text,
+            style = MaterialTheme.typography.bodyMedium,
         )
+        if (!state.isExited) {
+            TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.retry))
+            }
+        }
     }
 }

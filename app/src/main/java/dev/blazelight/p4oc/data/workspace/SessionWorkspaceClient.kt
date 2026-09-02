@@ -1,7 +1,12 @@
 package dev.blazelight.p4oc.data.workspace
 
 import dev.blazelight.p4oc.data.remote.dto.CreateSessionRequest
+import dev.blazelight.p4oc.data.remote.dto.ForkSessionRequest
+import dev.blazelight.p4oc.data.remote.dto.InitSessionRequest
+import dev.blazelight.p4oc.data.remote.dto.PermissionDto
+import dev.blazelight.p4oc.data.remote.dto.PermissionV2RequestDto
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
+import dev.blazelight.p4oc.data.remote.dto.QuestionRequestDto
 import dev.blazelight.p4oc.data.remote.dto.SendMessageRequest
 import dev.blazelight.p4oc.data.remote.dto.SessionDto
 import dev.blazelight.p4oc.data.remote.dto.SessionStatusDto
@@ -28,6 +33,8 @@ interface SessionWorkspaceClient {
 
     suspend fun createSession(request: CreateSessionRequest): SessionDto
 
+    suspend fun forkSession(id: String, request: ForkSessionRequest): SessionDto
+
     suspend fun deleteSession(id: String): Boolean
 
     suspend fun updateSession(id: String, request: UpdateSessionRequest): SessionDto
@@ -38,7 +45,15 @@ interface SessionWorkspaceClient {
 
     suspend fun summarizeSession(id: String): Boolean
 
+    suspend fun initSession(id: String, request: InitSessionRequest): Boolean
+
     suspend fun sendMessageAsync(sessionId: String, request: SendMessageRequest)
+
+    suspend fun listSessionPermissionsV2(sessionId: String): List<PermissionV2RequestDto> = emptyList()
+
+    suspend fun listPermissions(): List<PermissionDto> = emptyList()
+
+    suspend fun listSessionQuestions(sessionId: String): List<QuestionRequestDto> = emptyList()
 
     suspend fun abortSession(id: String): Boolean
 }

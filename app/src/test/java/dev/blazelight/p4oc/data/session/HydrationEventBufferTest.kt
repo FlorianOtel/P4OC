@@ -8,8 +8,11 @@ import dev.blazelight.p4oc.domain.session.WorkspaceSession
 import dev.blazelight.p4oc.domain.workspace.Workspace
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 class HydrationEventBufferTest {
@@ -18,6 +21,12 @@ class HydrationEventBufferTest {
         directory = "/repo",
     )
     private val reducer = SessionReducer(workspace)
+
+    @Test
+    fun `non-positive capacity is rejected before buffering`() {
+        assertThrows(IllegalArgumentException::class.java) { HydrationEventBuffer(capacity = 0) }
+        assertThrows(IllegalArgumentException::class.java) { HydrationEventBuffer(capacity = -1) }
+    }
 
     @Test
     fun `events during hydrate are buffered and replayed after hydrated snapshot`() {
@@ -57,7 +66,7 @@ class HydrationEventBufferTest {
     }
 
     @Test
-    fun `replay uses snapshot while concurrent buffer can continue`() {
+    fun `event buffered during blocked replay remains queued for next replay`() {
         val replayStarted = CountDownLatch(1)
         val finishReplay = CountDownLatch(1)
         val reducer = object : SessionReducer(workspace) {
@@ -79,14 +88,16 @@ class HydrationEventBufferTest {
         }
 
         replayThread.start()
-        replayStarted.await()
+        assertTrue("Replay did not start", replayStarted.await(2, TimeUnit.SECONDS))
         buffer.buffer(OpenCodeEvent.SessionCreated(session("second")))
         finishReplay.countDown()
-        replayThread.join()
+        replayThread.join(2_000)
 
+        assertFalse("Replay thread did not finish", replayThread.isAlive)
         replayError.get()?.let { throw AssertionError("Replay failed", it) }
-        assertEquals(2, buffer.size)
-        assertEquals(setOf("first", "second"), buffer.replayOver(Snapshot(), this.reducer).sessions.keys)
+        assertEquals(1, buffer.size)
+        assertEquals(setOf("second"), buffer.replayOver(Snapshot(), this.reducer).sessions.keys)
+        assertEquals(0, buffer.size)
     }
 
     private fun workspaceSession(workspace: Workspace, session: Session): WorkspaceSession = WorkspaceSession(

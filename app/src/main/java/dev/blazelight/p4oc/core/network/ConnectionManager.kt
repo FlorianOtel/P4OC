@@ -5,33 +5,30 @@ import dev.blazelight.p4oc.core.datastore.SettingsDataStore
 import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.data.remote.dto.ProjectDto
 import dev.blazelight.p4oc.data.remote.mapper.EventMapper
-import dev.blazelight.p4oc.domain.server.ScopedEvent
 import dev.blazelight.p4oc.domain.server.ServerGeneration
-import dev.blazelight.p4oc.domain.server.ServerRef
-import dev.blazelight.p4oc.domain.server.WorkspaceKey
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
 import okhttp3.Credentials
 import okhttp3.Dispatcher
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -41,6 +38,7 @@ class ConnectionManager constructor(
     private val json: Json,
     private val eventMapper: EventMapper,
     private val settingsDataStore: SettingsDataStore,
+    private val generationIssuer: () -> ServerGeneration,
 ) {
     companion object {
         private const val TAG = "ConnectionManager"
@@ -48,9 +46,9 @@ class ConnectionManager constructor(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val connectionLifecycleLock = Any()
     private var sseForwardingJob: Job? = null
     private var sseEscalationJob: Job? = null
-    private var generationCounter: Long = 0L
     private val sharedConnectionPool = ConnectionPool(
         maxIdleConnections = 10,
         keepAliveDuration = 5,
@@ -96,45 +94,36 @@ class ConnectionManager constructor(
 
     fun getEventSource(): OpenCodeEventSource? = _connection.value?.eventSource
 
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val scopedEvents: Flow<ScopedEvent>
-        get() = connection.flatMapLatest { conn ->
-            if (conn == null) {
-                emptyFlow()
-            } else {
-                val serverRef = ServerRef.fromEndpoint(conn.config.url)
-                conn.eventSource.directoryEvents.map { directoryEvent ->
-                    ScopedEvent(
-                        serverRef = serverRef,
-                        generation = conn.generation,
-                        workspaceKey = directoryEvent.directory?.takeIf {
-                            it.isNotBlank()
-                        }?.let(WorkspaceKey::Directory) ?: WorkspaceKey.Global,
-                        event = directoryEvent.event,
-                    )
-                }
-            }
-        }
-
+    @Suppress("ReturnCount")
     suspend fun connect(config: ServerConfig, password: String? = null): Result<List<ProjectDto>> {
-        AppLog.d(TAG, "Connecting to ${config.url}")
+        AppLog.d(TAG, "Connecting")
+
+        if (config.username != null && password != null &&
+            !ServerUrl.allowsCleartextCredentials(config.url)
+        ) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "Credentials cannot be sent over HTTP outside a private local network",
+                ),
+            )
+        }
 
         disconnect()
         _connectionState.value = ConnectionState.Connecting
 
         val configsToTry = connectionCandidates(config)
-        var lastError: Throwable? = null
+        var primaryError: Throwable? = null
         configsToTry.forEachIndexed { index, candidate ->
             if (index > 0) {
-                AppLog.d(TAG, "Retrying connection with fallback URL ${candidate.url}")
+                AppLog.d(TAG, "Retrying connection with fallback endpoint")
             }
 
             val result = connectSingle(candidate, password)
             if (result.isSuccess) return result
-            lastError = result.exceptionOrNull()
+            if (primaryError == null) primaryError = result.exceptionOrNull()
         }
 
-        return Result.failure(lastError ?: Exception("Connection failed"))
+        return Result.failure(primaryError ?: Exception("Connection failed"))
     }
 
     private suspend fun connectSingle(config: ServerConfig, password: String? = null): Result<List<ProjectDto>> {
@@ -146,14 +135,15 @@ class ConnectionManager constructor(
 
             val probeResult = runCatching {
                 withTimeout(8_000) {
-                    api.listProjects()
+                    api.listProjects(directory = null, workspace = null)
                 }
             }
 
             if (probeResult.isFailure) {
+                currentCoroutineContext().ensureActive()
                 val error = probeResult.exceptionOrNull()
-                AppLog.e(TAG, "Project probe failed", error)
-                _connectionState.value = ConnectionState.Error(error?.message ?: "Connection failed")
+                AppLog.e(TAG, "Project probe failed")
+                _connectionState.value = ConnectionState.Error("Connection failed")
                 return Result.failure(error ?: Exception("Connection failed"))
             }
 
@@ -170,9 +160,11 @@ class ConnectionManager constructor(
             // Build and store the auth-aware WebSocket client (shares pool with base)
             _authOkHttpClient.value = buildWebSocketOkHttpClient(baseClient)
 
-            val generation = ServerGeneration(++generationCounter)
+            val generation = generationIssuer()
             val connection = Connection(config, generation, api, eventSource)
-            _connection.value = connection
+            synchronized(connectionLifecycleLock) {
+                _connection.value = connection
+            }
 
             // Forward SSE connection state instead of setting Connected optimistically.
             // The state will move from Connecting → Connected when SSE onOpen fires.
@@ -181,7 +173,7 @@ class ConnectionManager constructor(
                 eventSource.connectionState.collect { sseState ->
                     // Only forward if this event source is still the active one
                     if (_connection.value?.eventSource === eventSource) {
-                        AppLog.d(TAG, "SSE state forwarded: $sseState")
+                        AppLog.d(TAG, "SSE connection state updated")
                         _connectionState.value = sseState
                         handleSseStateForReconnectOwner(connection, sseState)
                     }
@@ -190,31 +182,49 @@ class ConnectionManager constructor(
 
             eventSource.connect()
 
-            AppLog.d(TAG, "Connected successfully to ${config.url}")
+            AppLog.d(TAG, "Connected successfully")
             Result.success(probeResult.getOrNull().orEmpty())
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            AppLog.e(TAG, "Connection failed", e)
+            AppLog.e(TAG, "Connection failed")
             _connection.value = null
-            _connectionState.value = ConnectionState.Error(e.message ?: "Unknown error")
+            _connectionState.value = ConnectionState.Error("Connection failed")
             _authOkHttpClient.value = null
             Result.failure(e)
         }
     }
 
-    private fun connectionCandidates(config: ServerConfig): List<ServerConfig> {
-        val parsed = config.url.toHttpUrlOrNull() ?: return listOf(config)
-        if (parsed.port != ServerUrl.DEFAULT_PORT) return listOf(config)
+    internal fun connectionCandidates(config: ServerConfig): List<ServerConfig> {
+        val primaryUrl = ServerUrl.normalizeConnectUrl(config.url) ?: config.url
+        val primaryConfig = if (primaryUrl.trimEnd('/') == config.url.trimEnd('/')) {
+            config
+        } else {
+            config.copy(url = primaryUrl)
+        }
+        val parsed = primaryConfig.url.toHttpUrlOrNull() ?: return listOf(primaryConfig)
+        if (hasExplicitPort(config.url)) return listOf(primaryConfig)
 
-        val fallbackPort = when (parsed.scheme) {
-            "http" -> 80
-            "https" -> 443
-            else -> return listOf(config)
+        val opencodeUrl = parsed.newBuilder().port(ServerUrl.DEFAULT_PORT).build().toString().trimEnd('/')
+        val opencodeConfig = primaryConfig.copy(url = opencodeUrl)
+        if (opencodeUrl == primaryConfig.url.trimEnd('/')) return listOf(primaryConfig)
+
+        return listOf(opencodeConfig, primaryConfig)
+    }
+
+    internal fun hasExplicitPort(url: String): Boolean {
+        val authority = url
+            .substringAfter("://", missingDelimiterValue = url)
+            .substringBefore('/')
+            .substringBefore('?')
+            .substringBefore('#')
+            .substringAfterLast('@')
+
+        if (authority.startsWith("[")) {
+            return authority.substringAfter("]", missingDelimiterValue = "").startsWith(":")
         }
 
-        val fallbackUrl = parsed.newBuilder().port(fallbackPort).build().toString().trimEnd('/')
-        if (fallbackUrl == config.url.trimEnd('/')) return listOf(config)
-
-        return listOf(config, config.copy(url = fallbackUrl))
+        return authority.contains(':')
     }
 
     /**
@@ -224,13 +234,13 @@ class ConnectionManager constructor(
      *
      * Use this for background-resume recovery instead of full connect() which requires password.
      */
-    fun reconnectSse(reason: String = "unknown"): Boolean {
+    fun reconnectSse(@Suppress("UNUSED_PARAMETER") reason: String = "unknown"): Boolean {
         val connection = _connection.value
         if (connection == null) {
-            AppLog.w(TAG, "reconnectSse($reason) called with no connection – ignoring")
+            AppLog.w(TAG, "SSE reconnect requested with no connection; ignoring")
             return false
         }
-        AppLog.d(TAG, "reconnectSse($reason) – lightweight SSE restart")
+        AppLog.d(TAG, "Restarting SSE connection")
         _connectionState.value = ConnectionState.Connecting
         connection.eventSource.reconnect()
         return true
@@ -241,12 +251,23 @@ class ConnectionManager constructor(
         val state = _connectionState.value
         if (state is ConnectionState.Connected || state is ConnectionState.Connecting) return
 
-        AppLog.d(TAG, "Foreground resume: SSE state is $state, refreshing SSE reconnect owner")
+        AppLog.d(TAG, "Refreshing SSE connection after foreground resume")
         connection.eventSource.resetConsecutiveErrors()
         reconnectSse(reason = "app_foreground")
     }
 
-    fun disconnect() {
+    fun disconnect() = synchronized(connectionLifecycleLock) {
+        disconnectLocked()
+    }
+
+    /** Disconnects only if [generation] still owns this manager's live connection. */
+    fun disconnect(generation: ServerGeneration): Boolean = synchronized(connectionLifecycleLock) {
+        if (_connection.value?.generation != generation) return@synchronized false
+        disconnectLocked()
+        true
+    }
+
+    private fun disconnectLocked() {
         AppLog.d(TAG, "Disconnecting")
         sseForwardingJob?.cancel()
         sseForwardingJob = null
@@ -265,7 +286,7 @@ class ConnectionManager constructor(
                 sseEscalationJob?.cancel()
                 sseEscalationJob = null
             }
-            is ConnectionState.Error -> scheduleSseEscalation(connection, state)
+            is ConnectionState.Error -> scheduleSseEscalation(connection)
             ConnectionState.Disconnected -> {
                 sseEscalationJob?.cancel()
                 sseEscalationJob = null
@@ -273,7 +294,7 @@ class ConnectionManager constructor(
         }
     }
 
-    private fun scheduleSseEscalation(connection: Connection, state: ConnectionState.Error) {
+    private fun scheduleSseEscalation(connection: Connection) {
         sseEscalationJob?.cancel()
         sseEscalationJob = scope.launch {
             val settings = settingsDataStore.connectionSettings.first()
@@ -287,7 +308,10 @@ class ConnectionManager constructor(
 
             delay(settings.reconnectTimeoutSeconds * 1000L)
             if (_connection.value === connection && _connectionState.value is ConnectionState.Error) {
-                AppLog.w(TAG, "SSE remained in Error after ${settings.reconnectTimeoutSeconds}s; escalating to Disconnected: ${state.message}")
+                AppLog.w(
+                    TAG,
+                    "SSE remained in Error after ${settings.reconnectTimeoutSeconds}s; escalating to Disconnected",
+                )
                 connection.eventSource.disconnect()
             }
         }
@@ -297,19 +321,22 @@ class ConnectionManager constructor(
      * Build a shared base OkHttpClient with auth and common settings.
      * Derived clients share its connection pool and dispatcher via newBuilder().
      */
-    private fun buildBaseOkHttpClient(config: ServerConfig, password: String?): OkHttpClient {
+    internal fun buildBaseOkHttpClient(config: ServerConfig, password: String?): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectionPool(sharedConnectionPool)
             .dispatcher(sharedDispatcher)
 
         if (config.username != null && password != null) {
-            builder.addInterceptor(createAuthInterceptor(config.username, password))
+            val configuredOrigin = requireNotNull(ServerUrl.normalizeConnectUrl(config.url)?.toHttpUrlOrNull())
+            builder.addInterceptor(createAuthInterceptor(config.username, password, configuredOrigin))
         }
 
         if (config.allowInsecure) {
-            AppLog.w(TAG, "TLS verification DISABLED for ${config.url} (allowInsecure=true)")
+            AppLog.w(TAG, "TLS verification DISABLED (allowInsecure=true)")
             builder.applyInsecureTls()
         }
 
@@ -319,24 +346,31 @@ class ConnectionManager constructor(
     private fun buildOkHttpClient(base: OkHttpClient): OkHttpClient =
         base.newBuilder()
             .readTimeout(60, TimeUnit.SECONDS)
-            .addInterceptor(
-                HttpLoggingInterceptor().apply {
-                    level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.NONE
-                    redactHeader("Authorization")
-                }
-            )
+            .addInterceptor(createDiagnosticLoggingInterceptor())
             .build()
 
-    private fun buildSseOkHttpClient(base: OkHttpClient): OkHttpClient =
+    internal fun buildSseOkHttpClient(base: OkHttpClient): OkHttpClient =
         base.newBuilder()
-            .readTimeout(0, TimeUnit.SECONDS)
-            .addInterceptor(
-                HttpLoggingInterceptor().apply {
-                    level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.HEADERS else HttpLoggingInterceptor.Level.NONE
-                    redactHeader("Authorization")
-                }
-            )
+            .readTimeout(60, TimeUnit.SECONDS)
+            .addInterceptor(createDiagnosticLoggingInterceptor())
             .build()
+
+    /**
+     * Debug diagnostics intentionally stop at headers. Provider auth and OAuth endpoints carry
+     * credentials in JSON bodies, and future endpoints may do the same; a headers-only policy is
+     * therefore safer than trying to recognize secrets or maintain a sensitive-path allowlist.
+     */
+    internal fun createDiagnosticLoggingInterceptor(
+        debugLoggingEnabled: Boolean = BuildConfig.DEBUG,
+        logger: HttpLoggingInterceptor.Logger = HttpLoggingInterceptor.Logger.DEFAULT,
+    ): HttpLoggingInterceptor = HttpLoggingInterceptor(logger).apply {
+        level = if (debugLoggingEnabled) {
+            HttpLoggingInterceptor.Level.HEADERS
+        } else {
+            HttpLoggingInterceptor.Level.NONE
+        }
+        redactHeader("Authorization")
+    }
 
     /**
      * Build an OkHttpClient configured for WebSocket use (long-lived, with ping).
@@ -348,8 +382,12 @@ class ConnectionManager constructor(
             .pingInterval(30, TimeUnit.SECONDS)
             .build()
 
-    private fun createAuthInterceptor(username: String, password: String): Interceptor {
+    internal fun createAuthInterceptor(username: String, password: String, configuredOrigin: HttpUrl): Interceptor {
         return Interceptor { chain ->
+            val requestUrl = chain.request().url
+            if (!requestUrl.hasSameOrigin(configuredOrigin)) {
+                return@Interceptor chain.proceed(chain.request().newBuilder().removeHeader("Authorization").build())
+            }
             val credentials = Credentials.basic(username, password)
             val request = chain.request().newBuilder()
                 .header("Authorization", credentials)
@@ -367,4 +405,13 @@ class ConnectionManager constructor(
             .addConverterFactory(json.asConverterFactory(contentType))
             .build()
     }
+}
+
+internal fun HttpUrl.hasSameOrigin(other: HttpUrl): Boolean =
+    scheme.httpEquivalent() == other.scheme.httpEquivalent() && host == other.host && port == other.port
+
+private fun String.httpEquivalent(): String = when (this) {
+    "ws" -> "http"
+    "wss" -> "https"
+    else -> this
 }

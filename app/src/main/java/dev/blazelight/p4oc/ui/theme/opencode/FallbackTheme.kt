@@ -2,6 +2,9 @@ package dev.blazelight.p4oc.ui.theme.opencode
 
 import androidx.compose.ui.graphics.Color
 
+@Suppress("MagicNumber")
+private val LightTextMuted = Color(0xFF52556D)
+
 fun createFallbackTheme(isDark: Boolean): OpenCodeTheme {
     return if (isDark) {
         OpenCodeTheme(
@@ -66,7 +69,8 @@ fun createFallbackTheme(isDark: Boolean): OpenCodeTheme {
             secondary = Color(0xFF8839EF),
             accent = Color(0xFFEA76CB),
             text = Color(0xFF4C4F69),
-            textMuted = Color(0xFF5C5F77),
+            // Keep small secondary text safely above AA across every light surface.
+            textMuted = LightTextMuted,
             background = Color(0xFFEFF1F5),
             error = Color(0xFFD20F39),
             warning = Color(0xFFDF8E1D),

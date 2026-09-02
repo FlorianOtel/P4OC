@@ -5,12 +5,12 @@ import dev.blazelight.p4oc.data.remote.dto.*
 import dev.blazelight.p4oc.domain.model.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.intOrNull
 
 // ============================================================================
 // Project Mapper
@@ -55,8 +55,7 @@ object SessionMapper {
         compactingAt = dto.time.compacting,
         summary = dto.summary?.let { mapSummaryToDomain(it) },
         shareUrl = dto.share?.url,
-        revert = dto.revert?.let { mapRevertToDomain(it) },
-        model = dto.model?.let { ModelRef(it.providerID, it.id) }
+        revert = dto.revert?.let { mapRevertToDomain(it) }
     )
 
     private fun mapSummaryToDomain(dto: SessionSummaryDto): SessionSummary = SessionSummary(
@@ -93,9 +92,14 @@ object SessionMapper {
 // Message Mapper
 // ============================================================================
 
-class MessageMapper constructor(
-    private val json: Json
-) {
+private fun JsonObject.stringValue(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
+
+private fun JsonObject.intValue(key: String): Int? = (this[key] as? JsonPrimitive)?.intOrNull
+
+private fun JsonObject.booleanValue(key: String): Boolean =
+    (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false
+
+class MessageMapper {
     fun mapToDomain(dto: MessageInfoDto): Message = when (dto.role) {
         "user" -> Message.User(
             id = dto.id,
@@ -104,7 +108,7 @@ class MessageMapper constructor(
             agent = dto.agent ?: "",
             model = dto.model?.let { ModelRef(it.providerID, it.modelID) }
                 ?: ModelRef("", ""),
-            summary = mapMessageSummaryToDomain(dto.summary),
+            summary = null,
             system = dto.system,
             tools = dto.tools?.let { jsonObj ->
                 jsonObj.mapValues { (_, v) -> v.toString().toBooleanStrictOrNull() ?: false }
@@ -125,7 +129,7 @@ class MessageMapper constructor(
             path = dto.path?.let { MessagePath(it.cwd ?: "", it.root ?: "") },
             error = dto.error?.let { mapMessageErrorToDomain(it) },
             finish = dto.finish,
-            summary = dto.summary?.toString()?.toBooleanStrictOrNull()
+            summary = null
         )
     }
 
@@ -147,12 +151,12 @@ class MessageMapper constructor(
         val data = dto.data
         return MessageError(
             name = dto.name,
-            message = data?.get("message")?.toString()?.removeSurrounding("\""),
-            statusCode = data?.get("statusCode")?.toString()?.toIntOrNull(),
-            isRetryable = data?.get("isRetryable")?.toString()?.toBooleanStrictOrNull() ?: false,
-            providerID = data?.get("providerID")?.toString()?.removeSurrounding("\""),
+            message = data?.stringValue("message"),
+            statusCode = data?.intValue("statusCode"),
+            isRetryable = data?.booleanValue("isRetryable") ?: false,
+            providerID = data?.stringValue("providerID"),
             responseHeaders = null,
-            responseBody = data?.get("responseBody")?.toString()?.removeSurrounding("\"")
+            responseBody = data?.stringValue("responseBody")
         )
     }
 
@@ -160,34 +164,11 @@ class MessageMapper constructor(
         if (dto.name != "APIError") return null
         val data = dto.data ?: return null
         return ApiError(
-            message = data["message"]?.toString()?.removeSurrounding("\"") ?: "",
-            statusCode = data["statusCode"]?.toString()?.toIntOrNull(),
-            isRetryable = data["isRetryable"]?.toString()?.toBooleanStrictOrNull() ?: false,
-            responseBody = data["responseBody"]?.toString()?.removeSurrounding("\"")
+            message = data.stringValue("message") ?: "",
+            statusCode = data.intValue("statusCode"),
+            isRetryable = data.booleanValue("isRetryable"),
+            responseBody = data.stringValue("responseBody")
         )
-    }
-
-    private fun mapMessageSummaryToDomain(summary: JsonElement?): MessageSummary? {
-        if (summary == null) return null
-        return try {
-            val obj = summary as? JsonObject ?: return null
-            val summaryDto = json.decodeFromJsonElement<MessageSummaryDto>(obj)
-            MessageSummary(
-                title = summaryDto.title,
-                body = summaryDto.body,
-                diffs = summaryDto.diffs.map { dto ->
-                    FileDiff(
-                        file = dto.file,
-                        before = dto.before,
-                        after = dto.after,
-                        additions = dto.additions,
-                        deletions = dto.deletions
-                    )
-                }
-            )
-        } catch (e: Exception) {
-            null
-        }
     }
 }
 
@@ -345,9 +326,9 @@ object PartMapper {
     )
 
     private fun mapAgentSourceToDomain(source: JsonObject): AgentPartSource? {
-        val value = source["value"]?.toString()?.removeSurrounding("\"") ?: return null
-        val start = source["start"]?.toString()?.toIntOrNull() ?: return null
-        val end = source["end"]?.toString()?.toIntOrNull() ?: return null
+        val value = source.stringValue("value") ?: return null
+        val start = source.intValue("start") ?: return null
+        val end = source.intValue("end") ?: return null
         return AgentPartSource(value, start, end)
     }
 
@@ -355,22 +336,22 @@ object PartMapper {
         if (dto.name != "APIError") return null
         val data = dto.data ?: return null
         return ApiError(
-            message = data["message"]?.toString()?.removeSurrounding("\"") ?: "",
-            statusCode = data["statusCode"]?.toString()?.toIntOrNull(),
-            isRetryable = data["isRetryable"]?.toString()?.toBooleanStrictOrNull() ?: false,
-            responseBody = data["responseBody"]?.toString()?.removeSurrounding("\"")
+            message = data.stringValue("message") ?: "",
+            statusCode = data.intValue("statusCode"),
+            isRetryable = data.booleanValue("isRetryable"),
+            responseBody = data.stringValue("responseBody")
         )
     }
 
     private fun mapFileSourceToDomain(source: JsonObject): FilePartSource? {
-        val typeValue = source["type"]?.toString()?.removeSurrounding("\"") ?: return null
+        val typeValue = source.stringValue("type") ?: return null
         val textObj = source["text"] as? JsonObject ?: return null
         val text = FilePartSourceText(
-            value = textObj["value"]?.toString()?.removeSurrounding("\"") ?: "",
-            start = textObj["start"]?.toString()?.toIntOrNull() ?: 0,
-            end = textObj["end"]?.toString()?.toIntOrNull() ?: 0
+            value = textObj.stringValue("value") ?: "",
+            start = textObj.intValue("start") ?: 0,
+            end = textObj.intValue("end") ?: 0
         )
-        val path = source["path"]?.toString()?.removeSurrounding("\"") ?: ""
+        val path = source.stringValue("path") ?: ""
 
         return when (typeValue) {
             "file" -> FilePartSource.FileSource(text = text, path = path)
@@ -380,10 +361,10 @@ object PartMapper {
                 val endObj = rangeObj?.get("end") as? JsonObject
                 val range = if (startObj != null && endObj != null) {
                     SymbolRange(
-                        startLine = startObj["line"]?.toString()?.toIntOrNull() ?: 0,
-                        startCharacter = startObj["character"]?.toString()?.toIntOrNull() ?: 0,
-                        endLine = endObj["line"]?.toString()?.toIntOrNull() ?: 0,
-                        endCharacter = endObj["character"]?.toString()?.toIntOrNull() ?: 0
+                        startLine = startObj.intValue("line") ?: 0,
+                        startCharacter = startObj.intValue("character") ?: 0,
+                        endLine = endObj.intValue("line") ?: 0,
+                        endCharacter = endObj.intValue("character") ?: 0
                     )
                 } else {
                     SymbolRange(0, 0, 0, 0)
@@ -392,8 +373,8 @@ object PartMapper {
                     text = text,
                     path = path,
                     range = range,
-                    name = source["name"]?.toString()?.removeSurrounding("\"") ?: "",
-                    kind = source["kind"]?.toString()?.toIntOrNull() ?: 0
+                    name = source.stringValue("name") ?: "",
+                    kind = source.intValue("kind") ?: 0
                 )
             }
             else -> null
@@ -559,6 +540,34 @@ object StatusMapper {
 }
 
 // ============================================================================
+// Permission Mapper
+// ============================================================================
+
+object PermissionMapper {
+    fun mapToDomain(dto: PermissionDto): Permission = Permission(
+        id = dto.id,
+        type = dto.permission,
+        patterns = dto.patterns,
+        sessionID = dto.sessionID,
+        messageID = dto.tool?.messageID.orEmpty(),
+        callID = dto.tool?.callID,
+        metadata = dto.metadata,
+        always = dto.always,
+    )
+
+    fun mapV2ToDomain(dto: PermissionV2RequestDto): Permission = Permission(
+        id = dto.id,
+        type = dto.action,
+        patterns = dto.resources,
+        sessionID = dto.sessionID,
+        messageID = dto.source?.takeIf { it.type == "tool" }?.messageID.orEmpty(),
+        callID = dto.source?.takeIf { it.type == "tool" }?.callID,
+        metadata = dto.metadata ?: JsonObject(emptyMap()),
+        always = dto.save,
+    )
+}
+
+// ============================================================================
 // Event Mapper
 // ============================================================================
 
@@ -655,6 +664,12 @@ class EventMapper constructor(
                         MessageError(
                             name = error.name,
                             message = (error.data?.get("message") as? JsonPrimitive)?.contentOrNull,
+                            statusCode = (error.data?.get("statusCode") as? JsonPrimitive)?.intOrNull,
+                            isRetryable = (error.data?.get("isRetryable") as? JsonPrimitive)
+                                ?.contentOrNull
+                                ?.toBooleanStrictOrNull()
+                                ?: false,
+                            providerID = (error.data?.get("providerID") as? JsonPrimitive)?.contentOrNull,
                             responseBody = (error.data?.get("responseBody") as? JsonPrimitive)?.contentOrNull,
                         )
                     }
@@ -666,32 +681,25 @@ class EventMapper constructor(
             }
             "permission.asked" -> {
                 val permissionDto = json.decodeFromJsonElement<PermissionDto>(dto.properties)
-                OpenCodeEvent.PermissionRequested(
-                    Permission(
-                        id = permissionDto.id,
-                        type = permissionDto.permission,
-                        patterns = permissionDto.patterns,
-                        sessionID = permissionDto.sessionID,
-                        messageID = permissionDto.tool?.messageID ?: "",
-                        callID = permissionDto.tool?.callID,
-                        metadata = permissionDto.metadata,
-                        always = permissionDto.always
-                    )
-                )
+                OpenCodeEvent.PermissionRequested(PermissionMapper.mapToDomain(permissionDto))
             }
-            "permission.replied" -> {
+            "permission.v2.asked" -> {
+                val permissionDto = json.decodeFromJsonElement<PermissionV2RequestDto>(dto.properties)
+                OpenCodeEvent.PermissionRequested(PermissionMapper.mapV2ToDomain(permissionDto))
+            }
+            "permission.replied", "permission.v2.replied" -> {
                 val props = json.decodeFromJsonElement<PermissionRepliedPropertiesDto>(dto.properties)
                 OpenCodeEvent.PermissionReplied(props.sessionID, props.requestID, props.reply)
             }
-            "question.asked" -> {
+            "question.asked", "question.v2.asked" -> {
                 val questionDto = json.decodeFromJsonElement<QuestionRequestDto>(dto.properties)
                 OpenCodeEvent.QuestionAsked(mapQuestionRequestDtoToDomain(questionDto))
             }
-            "question.replied" -> {
+            "question.replied", "question.v2.replied" -> {
                 val props = json.decodeFromJsonElement<QuestionRepliedPropertiesDto>(dto.properties)
                 OpenCodeEvent.QuestionReplied(props.sessionID, props.requestID, props.answers)
             }
-            "question.rejected" -> {
+            "question.rejected", "question.v2.rejected" -> {
                 val props = json.decodeFromJsonElement<QuestionRejectedPropertiesDto>(dto.properties)
                 OpenCodeEvent.QuestionRejected(props.sessionID, props.requestID)
             }
@@ -714,6 +722,21 @@ class EventMapper constructor(
                 val props = json.decodeFromJsonElement<VcsBranchPropertiesDto>(dto.properties)
                 OpenCodeEvent.VcsBranchUpdated(props.branch)
             }
+            "project.updated" -> {
+                val props = json.decodeFromJsonElement<ProjectUpdatedPropertiesDto>(dto.properties)
+                OpenCodeEvent.ProjectUpdated(ProjectMapper.mapToDomain(props.info))
+            }
+            "project.directories.updated" -> {
+                val props = json.decodeFromJsonElement<ProjectDirectoriesUpdatedPropertiesDto>(dto.properties)
+                OpenCodeEvent.ProjectDirectoriesUpdated(props.projectID)
+            }
+            "models-dev.refreshed" -> OpenCodeEvent.ModelsRefreshed
+            "catalog.updated" -> OpenCodeEvent.CatalogUpdated
+            "mcp.tools.changed" -> {
+                val props = json.decodeFromJsonElement<McpToolsChangedPropertiesDto>(dto.properties)
+                OpenCodeEvent.McpToolsChanged(props.server)
+            }
+            "global.disposed" -> OpenCodeEvent.GlobalDisposed
             "session.idle" -> {
                 val props = json.decodeFromJsonElement<SessionIdlePropertiesDto>(dto.properties)
                 OpenCodeEvent.SessionIdle(props.sessionID)
@@ -764,7 +787,7 @@ class EventMapper constructor(
             else -> null
         }
     } catch (e: Exception) {
-        AppLog.e("EventMapper", "Failed to map event type=${dto.type}: ${e.message}", e)
+        AppLog.e("EventMapper", "Failed to map event (${e::class.simpleName})")
         null
     }
 }
@@ -822,6 +845,21 @@ private fun mapPtyToDomain(dto: PtyDto): Pty = Pty(
 @kotlinx.serialization.Serializable
 private data class InstallationUpdatedPropertiesDto(
     val version: String
+)
+
+@kotlinx.serialization.Serializable
+private data class ProjectUpdatedPropertiesDto(
+    val info: ProjectDto
+)
+
+@kotlinx.serialization.Serializable
+private data class ProjectDirectoriesUpdatedPropertiesDto(
+    @SerialName("projectID") val projectID: String
+)
+
+@kotlinx.serialization.Serializable
+private data class McpToolsChangedPropertiesDto(
+    val server: String
 )
 
 @kotlinx.serialization.Serializable

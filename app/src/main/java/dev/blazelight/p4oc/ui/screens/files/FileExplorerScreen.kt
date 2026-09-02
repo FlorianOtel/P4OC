@@ -1,5 +1,6 @@
 package dev.blazelight.p4oc.ui.screens.files
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -28,7 +29,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +50,7 @@ import dev.blazelight.p4oc.core.filetype.FileTypeCategory
 import dev.blazelight.p4oc.core.filetype.FileTypeClassifier
 import dev.blazelight.p4oc.domain.model.FileNode
 import dev.blazelight.p4oc.domain.model.Symbol
+import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import dev.blazelight.p4oc.ui.components.TuiAlertDialog
 import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
@@ -57,19 +69,21 @@ import dev.blazelight.p4oc.ui.theme.Spacing
 @Composable
 fun FileExplorerScreen(
     viewModel: FilesViewModel,
-    workspaceDirectory: String?,
+    workspaceKey: WorkspaceKey?,
     onFileClick: (String) -> Unit,
     onNavigateBack: () -> Unit,
     onSwitchWorkspace: () -> Unit = {},
 ) {
     val theme = LocalOpenCodeTheme.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val changesState by viewModel.changesState.collectAsStateWithLifecycle()
+    val fileSearchResults by viewModel.fileSearchResults.collectAsStateWithLifecycle()
     val symbolResults by viewModel.symbolResults.collectAsStateWithLifecycle()
     val uploadState by viewModel.uploadState.collectAsStateWithLifecycle()
-    var searchQuery by remember { mutableStateOf("") }
-    var isSearchActive by remember { mutableStateOf(false) }
-    var isSymbolMode by remember { mutableStateOf(false) }
-    var symbolQuery by remember { mutableStateOf("") }
+    val searchQuery = uiState.searchQuery
+    val isSearchActive = uiState.isSearchActive
+    val isSymbolMode = uiState.isSymbolMode
+    val symbolQuery = uiState.symbolQuery
     var createDialog by remember { mutableStateOf<FileCreateKind?>(null) }
     var renameTarget by remember { mutableStateOf<FileNode?>(null) }
     var deleteTarget by remember { mutableStateOf<FileNode?>(null) }
@@ -86,14 +100,12 @@ fun FileExplorerScreen(
         }
     }
 
-    val filteredFiles = remember(uiState.files, searchQuery) {
-        if (searchQuery.isBlank()) {
-            uiState.files.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-        } else {
-            uiState.files
-                .filter { it.name.contains(searchQuery, ignoreCase = true) }
-                .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-        }
+    val sortedFiles = remember(uiState.files) {
+        uiState.files.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+    }
+
+    BackHandler(enabled = changesState.isActive) {
+        viewModel.exitChanges()
     }
 
     Scaffold(
@@ -103,11 +115,10 @@ fun FileExplorerScreen(
                 TuiTopBar(
                     title = "",
                     onNavigateBack = {
-                        if (isSearchActive || isSymbolMode) {
-                            isSearchActive = false
-                            isSymbolMode = false
-                            searchQuery = ""
-                            symbolQuery = ""
+                        if (changesState.isActive) {
+                            viewModel.exitChanges()
+                        } else if (isSearchActive || isSymbolMode) {
+                            viewModel.clearFilters()
                         } else if (uiState.currentPath.isNotBlank()) {
                             viewModel.navigateUp()
                         } else {
@@ -115,13 +126,19 @@ fun FileExplorerScreen(
                         }
                     },
                     titleContent = {
-                        if (isSymbolMode) {
+                        if (changesState.isActive) {
+                            Text(
+                                text = stringResource(R.string.files_changes_title),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = theme.text,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.semantics { heading() },
+                            )
+                        } else if (isSymbolMode) {
                             OutlinedTextField(
                                 value = symbolQuery,
-                                onValueChange = {
-                                    symbolQuery = it
-                                    viewModel.searchSymbols(it)
-                                },
+                                onValueChange = viewModel::updateSymbolQuery,
                                 placeholder = {
                                     Text(
                                         stringResource(R.string.symbol_search_hint),
@@ -139,9 +156,10 @@ fun FileExplorerScreen(
                                 )
                             )
                         } else if (isSearchActive) {
+                            val searchFieldDescription = stringResource(R.string.files_search_placeholder)
                             OutlinedTextField(
                                 value = searchQuery,
-                                onValueChange = { searchQuery = it },
+                                onValueChange = viewModel::updateSearchQuery,
                                 placeholder = {
                                     Text(
                                         stringResource(R.string.files_search_placeholder),
@@ -149,7 +167,10 @@ fun FileExplorerScreen(
                                     )
                                 },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics { contentDescription = searchFieldDescription }
+                                    .testTag("files_search_field"),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Color.Transparent,
                                     unfocusedBorderColor = Color.Transparent,
@@ -167,8 +188,13 @@ fun FileExplorerScreen(
                                     color = theme.text,
                                     style = MaterialTheme.typography.titleMedium
                                 )
-                                val workspaceLabel = workspaceDirectory?.trimEnd('/')?.substringAfterLast('/')?.ifBlank { workspaceDirectory }
-                                    ?: stringResource(R.string.files_workspace_global)
+                                val workspaceLabel = when (workspaceKey) {
+                                    WorkspaceKey.Global -> stringResource(R.string.files_workspace_global)
+                                    is WorkspaceKey.Directory -> workspaceKey.value.trimEnd('/').substringAfterLast('/')
+                                        .ifBlank { workspaceKey.value }
+                                    is WorkspaceKey.SessionScoped -> workspaceKey.sessionId.value
+                                    null -> stringResource(R.string.files_workspace_global)
+                                }
                                 Text(
                                     text = workspaceLabel,
                                     maxLines = 1,
@@ -181,37 +207,82 @@ fun FileExplorerScreen(
                         }
                     },
                     actions = {
-                        if (!isSearchActive && !isSymbolMode) {
-                            FileCreateMenu(
-                                canCreateFile = uiState.capabilities.canWrite,
-                                canCreateFolder = uiState.capabilities.canCreateDirectory,
-                                onCreateFile = { createDialog = FileCreateKind.File },
-                                onCreateFolder = { createDialog = FileCreateKind.Folder },
-                            )
+                        if (changesState.isActive) {
                             IconButton(
-                                onClick = { isSearchActive = true },
-                                modifier = Modifier.size(Sizing.iconButtonMd)
+                                onClick = viewModel::refreshChanges,
+                                enabled = !changesState.isRefreshing,
+                                modifier = Modifier
+                                    .size(Sizing.minTouchTarget)
+                                    .testTag("files_changes_refresh"),
                             ) {
                                 Icon(
-                                    Icons.Default.Search,
-                                    contentDescription = stringResource(R.string.cd_search),
+                                    Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.files_changes_refresh),
                                     tint = theme.textMuted,
-                                    modifier = Modifier.size(Sizing.iconAction)
+                                    modifier = Modifier.size(Sizing.iconAction),
                                 )
                             }
                             IconButton(
-                                onClick = { isSymbolMode = true },
-                                modifier = Modifier.size(Sizing.iconButtonMd)
+                                onClick = viewModel::exitChanges,
+                                modifier = Modifier
+                                    .size(Sizing.minTouchTarget)
+                                    .testTag("files_changes_exit"),
                             ) {
                                 Icon(
-                                    Icons.Default.Code,
-                                    contentDescription = stringResource(R.string.cd_symbol_search),
+                                    Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.files_changes_exit),
                                     tint = theme.textMuted,
-                                    modifier = Modifier.size(Sizing.iconAction)
+                                    modifier = Modifier.size(Sizing.iconAction),
                                 )
+                            }
+                        } else {
+                            if (!isSearchActive && !isSymbolMode) {
+                                FileCreateMenu(
+                                    canCreateFile = uiState.capabilities.canWrite,
+                                    canCreateFolder = uiState.capabilities.canCreateDirectory,
+                                    onCreateFile = { createDialog = FileCreateKind.File },
+                                    onCreateFolder = { createDialog = FileCreateKind.Folder },
+                                )
+                            }
+                            IconButton(
+                                onClick = viewModel::enterChanges,
+                                modifier = Modifier
+                                    .size(Sizing.minTouchTarget)
+                                    .testTag("files_changes_action"),
+                            ) {
+                                Icon(
+                                    Icons.Default.Difference,
+                                    contentDescription = stringResource(R.string.files_changes_action),
+                                    tint = theme.textMuted,
+                                    modifier = Modifier.size(Sizing.iconAction),
+                                )
+                            }
+                            if (!isSearchActive && !isSymbolMode) {
+                                IconButton(
+                                    onClick = { viewModel.setSearchActive(true) },
+                                    modifier = Modifier.size(Sizing.iconButtonMd)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = stringResource(R.string.cd_search),
+                                        tint = theme.textMuted,
+                                        modifier = Modifier.size(Sizing.iconAction)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { viewModel.setSymbolMode(true) },
+                                    modifier = Modifier.size(Sizing.iconButtonMd)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Code,
+                                        contentDescription = stringResource(R.string.cd_symbol_search),
+                                        tint = theme.textMuted,
+                                        modifier = Modifier.size(Sizing.iconAction)
+                                    )
+                                }
                             }
                         }
-                        if (!isSearchActive && !isSymbolMode) {
+                        if (!changesState.isActive && !isSearchActive && !isSymbolMode) {
                             IconButton(
                                 onClick = { uploadLauncher.launch(arrayOf("*/*")) },
                                 enabled = uiState.capabilities.canUpload,
@@ -227,21 +298,23 @@ fun FileExplorerScreen(
                                 )
                             }
                         }
-                        IconButton(
-                            onClick = viewModel::refresh,
-                            modifier = Modifier.size(Sizing.iconButtonMd)
-                        ) {
-                            Icon(
-                                Icons.Default.Refresh,
-                                contentDescription = stringResource(R.string.cd_refresh),
-                                tint = theme.textMuted,
-                                modifier = Modifier.size(Sizing.iconAction)
-                            )
+                        if (!changesState.isActive) {
+                            IconButton(
+                                onClick = viewModel::refresh,
+                                modifier = Modifier.size(Sizing.iconButtonMd)
+                            ) {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.cd_refresh),
+                                    tint = theme.textMuted,
+                                    modifier = Modifier.size(Sizing.iconAction)
+                                )
+                            }
                         }
                     }
                 )
 
-                if (uiState.currentPath.isNotBlank()) {
+                if (!changesState.isActive && !isSearchActive && uiState.currentPath.isNotBlank()) {
                     BreadcrumbNavigation(
                         path = uiState.currentPath,
                         onNavigateTo = { viewModel.navigateTo(it) }
@@ -255,7 +328,30 @@ fun FileExplorerScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (isSymbolMode) {
+            if (!changesState.isActive && !isSearchActive && uiState.pathRestoreError != null) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(Spacing.md),
+                    color = theme.error.copy(alpha = 0.12f),
+                    shape = RectangleShape,
+                ) {
+                    Text(
+                        text = stringResource(R.string.files_restored_path_unavailable),
+                        color = theme.error,
+                        modifier = Modifier.padding(Spacing.sm),
+                    )
+                }
+            }
+
+            if (changesState.isActive) {
+                workspaceChangesContent(
+                    state = changesState,
+                    onRefresh = viewModel::refreshChanges,
+                    onToggle = viewModel::toggleChange,
+                    onRetryPatch = viewModel::retrySelectedPatch,
+                )
+            } else if (isSymbolMode) {
                 // Symbol search results
                 if (symbolQuery.isBlank()) {
                     Column(
@@ -285,7 +381,7 @@ fun FileExplorerScreen(
                             color = theme.error
                         )
                         Text(
-                            text = stringResource(R.string.files_symbol_search_failed, uiState.symbolError.orEmpty()),
+                            text = stringResource(R.string.files_symbol_search_failed),
                             color = theme.error
                         )
                     }
@@ -321,68 +417,132 @@ fun FileExplorerScreen(
                         }
                     }
                 }
+            } else if (isSearchActive) {
+                FileSearchContent(
+                    state = FileSearchContentState(
+                        query = searchQuery,
+                        results = fileSearchResults,
+                        isLoading = uiState.isFileSearchLoading,
+                        hasError = uiState.fileSearchError != null,
+                    ),
+                    onRetry = viewModel::refresh,
+                    onFileClick = onFileClick,
+                )
             } else {
                 when {
                     uiState.isLoading -> {
                         TuiLoadingScreen(modifier = Modifier.align(Alignment.Center))
                     }
-                    filteredFiles.isEmpty() -> {
+                    uiState.error != null && uiState.files.isEmpty() -> {
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(Spacing.lg)
+                                .testTag("files_load_error"),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(Spacing.md),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = null,
+                                tint = theme.error,
+                                modifier = Modifier.size(Sizing.iconLg),
+                            )
+                            Text(
+                                text = stringResource(R.string.files_load_failed),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = theme.error,
+                            )
+                            Text(
+                                text = stringResource(R.string.files_load_failed_hint),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = theme.textMuted,
+                            )
+                            TuiButton(
+                                onClick = viewModel::refresh,
+                                modifier = Modifier.testTag("files_load_retry"),
+                            ) {
+                                Text(stringResource(R.string.retry))
+                            }
+                        }
+                    }
+                    sortedFiles.isEmpty() -> {
                         Column(
                             modifier = Modifier.align(Alignment.Center),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(Spacing.md)
                         ) {
                             Text(
-                                text = if (searchQuery.isNotBlank()) "∅" else "□",
+                                text = "□",
                                 style = MaterialTheme.typography.displayMedium,
                                 color = theme.textMuted
                             )
-                            val emptyText = if (searchQuery.isNotBlank()) {
-                                stringResource(R.string.files_no_matching_files)
-                            } else {
-                                stringResource(R.string.files_empty_folder)
-                            }
-                            Text(text = emptyText, color = theme.textMuted)
-                            if (searchQuery.isBlank()) {
-                                EmptyFolderActions(
-                                    canCreateFile = uiState.capabilities.canWrite,
-                                    canUpload = uiState.capabilities.canUpload,
-                                    onCreateFile = { createDialog = FileCreateKind.File },
-                                    onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
-                                )
-                            }
+                            Text(text = stringResource(R.string.files_empty_folder), color = theme.textMuted)
+                            EmptyFolderActions(
+                                canCreateFile = uiState.capabilities.canWrite,
+                                canUpload = uiState.capabilities.canUpload,
+                                onCreateFile = { createDialog = FileCreateKind.File },
+                                onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
+                            )
                         }
                     }
                     else -> {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(Spacing.md),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
-                        ) {
-                            items(filteredFiles, key = { it.path }) { file ->
-                                TuiFileItem(
-                                    file = file,
-                                    actions = FileItemActions(
-                                        canRename = uiState.capabilities.canRename,
-                                        canDelete = uiState.capabilities.canDelete,
-                                        onRename = { renameTarget = file },
-                                        onDelete = { deleteTarget = file },
-                                    ),
-                                    onClick = {
-                                        if (file.isDirectory) {
-                                            viewModel.navigateTo(file.path)
-                                        } else {
-                                            onFileClick(file.path)
+                        Column(Modifier.fillMaxSize()) {
+                            if (uiState.error != null) {
+                                Surface(
+                                    color = theme.error.copy(alpha = 0.12f),
+                                    shape = RectangleShape,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .semantics { liveRegion = LiveRegionMode.Polite }
+                                        .testTag("files_refresh_error"),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.files_refresh_failed),
+                                            color = theme.error,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        TuiTextButton(onClick = viewModel::refresh) {
+                                            Text(stringResource(R.string.retry))
                                         }
-                                    },
-                                )
+                                    }
+                                }
+                            }
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(Spacing.md),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                            ) {
+                                items(sortedFiles, key = { it.path }) { file ->
+                                    TuiFileItem(
+                                        file = file,
+                                        actions = FileItemActions(
+                                            canRename = uiState.capabilities.canRename,
+                                            canDelete = uiState.capabilities.canDelete,
+                                            onRename = { renameTarget = file },
+                                            onDelete = { deleteTarget = file },
+                                        ),
+                                        onClick = {
+                                            if (file.isDirectory) {
+                                                viewModel.navigateTo(file.path)
+                                            } else {
+                                                onFileClick(file.path)
+                                            }
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            if (!uploadState.isEmpty) {
+            if (!changesState.isActive && !uploadState.isEmpty) {
                 UploadProgressSheet(
                     state = uploadState,
                     onCancel = { viewModel.cancelUploads() },
@@ -391,66 +551,286 @@ fun FileExplorerScreen(
                 )
             }
 
-            if (uiState.isMutating) {
+            if (!changesState.isActive && uiState.isMutating) {
                 TuiLoadingScreen(modifier = Modifier.align(Alignment.Center))
             }
         }
     }
 
-    createDialog?.let { kind ->
-        TuiInputDialog(
-            onDismissRequest = { createDialog = null },
-            onConfirm = { name ->
-                when (kind) {
-                    FileCreateKind.File -> viewModel.createFile(name)
-                    FileCreateKind.Folder -> viewModel.createFolder(name)
-                }
-            },
-            title = when (kind) {
-                FileCreateKind.File -> stringResource(R.string.files_new_file)
-                FileCreateKind.Folder -> stringResource(R.string.files_new_folder)
-            },
-            placeholder = when (kind) {
-                FileCreateKind.File -> stringResource(R.string.files_new_file_placeholder)
-                FileCreateKind.Folder -> stringResource(R.string.files_new_folder_placeholder)
-            },
-            confirmText = stringResource(R.string.files_create),
-        )
-    }
-
-    renameTarget?.let { file ->
-        TuiInputDialog(
-            onDismissRequest = { renameTarget = null },
-            onConfirm = { name -> viewModel.renameFile(file, name) },
-            title = stringResource(R.string.files_rename_title, file.name),
-            initialValue = file.name,
-            confirmText = stringResource(R.string.files_rename),
-        )
-    }
-
-    deleteTarget?.let { file ->
-        TuiConfirmDialog(
-            onDismissRequest = { deleteTarget = null },
-            onConfirm = { viewModel.deleteFile(file) },
-            title = stringResource(R.string.files_delete_title),
-            message = stringResource(R.string.files_delete_confirm, file.name),
-            confirmText = stringResource(R.string.files_delete),
-            isDestructive = true,
-        )
-    }
-
-    uiState.mutationMessage?.let { message ->
-        TuiAlertDialog(
-            onDismissRequest = viewModel::clearMutationMessage,
-            title = stringResource(R.string.files_operation_failed),
-            confirmButton = {
-                TuiButton(onClick = viewModel::clearMutationMessage) {
-                    Text(stringResource(android.R.string.ok))
-                }
-            },
-        ) {
-            Text(message, color = theme.textMuted)
+    if (!changesState.isActive) {
+        createDialog?.let { kind ->
+            TuiInputDialog(
+                onDismissRequest = { createDialog = null },
+                onConfirm = { name ->
+                    when (kind) {
+                        FileCreateKind.File -> viewModel.createFile(name)
+                        FileCreateKind.Folder -> viewModel.createFolder(name)
+                    }
+                },
+                title = when (kind) {
+                    FileCreateKind.File -> stringResource(R.string.files_new_file)
+                    FileCreateKind.Folder -> stringResource(R.string.files_new_folder)
+                },
+                placeholder = when (kind) {
+                    FileCreateKind.File -> stringResource(R.string.files_new_file_placeholder)
+                    FileCreateKind.Folder -> stringResource(R.string.files_new_folder_placeholder)
+                },
+                confirmText = stringResource(R.string.files_create),
+            )
         }
+    }
+
+    if (!changesState.isActive) {
+        renameTarget?.let { file ->
+            TuiInputDialog(
+                onDismissRequest = { renameTarget = null },
+                onConfirm = { name -> viewModel.renameFile(file, name) },
+                title = stringResource(R.string.files_rename_title, file.name),
+                initialValue = file.name,
+                confirmText = stringResource(R.string.files_rename),
+            )
+        }
+    }
+
+    if (!changesState.isActive) {
+        deleteTarget?.let { file ->
+            TuiConfirmDialog(
+                onDismissRequest = { deleteTarget = null },
+                onConfirm = { viewModel.deleteFile(file) },
+                title = stringResource(R.string.files_delete_title),
+                message = stringResource(R.string.files_delete_confirm, file.name),
+                confirmText = stringResource(R.string.files_delete),
+                isDestructive = true,
+            )
+        }
+    }
+
+    if (!changesState.isActive) {
+        uiState.mutationMessage?.let {
+            TuiAlertDialog(
+                onDismissRequest = viewModel::clearMutationMessage,
+                title = stringResource(R.string.files_operation_failed),
+                confirmButton = {
+                    TuiButton(onClick = viewModel::clearMutationMessage) {
+                        Text(stringResource(android.R.string.ok))
+                    }
+                },
+            ) {
+                Text(stringResource(R.string.files_operation_failed_hint), color = theme.textMuted)
+            }
+        }
+    }
+}
+
+private data class FileSearchContentState(
+    val query: String,
+    val results: List<FileNode>,
+    val isLoading: Boolean,
+    val hasError: Boolean,
+)
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileSearchContent(
+    state: FileSearchContentState,
+    onRetry: () -> Unit,
+    onFileClick: (String) -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        when {
+            state.query.isBlank() -> FileSearchMessage(
+                glyph = "⌕",
+                text = stringResource(R.string.files_search_blank_hint),
+                modifier = Modifier.align(Alignment.Center),
+            )
+            state.isLoading -> TuiLoadingScreen(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .testTag("files_search_loading"),
+                text = stringResource(R.string.files_search_loading),
+            )
+            state.hasError -> FileSearchFailure(
+                onRetry = onRetry,
+                modifier = Modifier.align(Alignment.Center),
+            )
+            state.results.isEmpty() -> FileSearchMessage(
+                glyph = "∅",
+                text = stringResource(R.string.files_search_no_results),
+                modifier = Modifier.align(Alignment.Center),
+            )
+            else -> FileSearchResults(state.results, onFileClick)
+        }
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileSearchFailure(
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val theme = LocalOpenCodeTheme.current
+
+    Column(
+        modifier = modifier
+            .padding(Spacing.lg)
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .testTag("files_search_error"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+    ) {
+        Icon(
+            imageVector = Icons.Default.ErrorOutline,
+            contentDescription = null,
+            tint = theme.error,
+            modifier = Modifier.size(Sizing.iconLg),
+        )
+        Text(
+            text = stringResource(R.string.files_search_failed),
+            style = MaterialTheme.typography.bodyMedium,
+            color = theme.error,
+        )
+        TuiButton(
+            onClick = onRetry,
+            modifier = Modifier.testTag("files_search_retry"),
+        ) {
+            Text(stringResource(R.string.retry))
+        }
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileSearchResults(
+    results: List<FileNode>,
+    onFileClick: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(Spacing.md),
+        verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+    ) {
+        items(results, key = { it.path }) { file ->
+            FileSearchResultItem(
+                file = file,
+                onClick = { onFileClick(file.path) },
+            )
+        }
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileSearchMessage(
+    glyph: String,
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    val theme = LocalOpenCodeTheme.current
+
+    Column(
+        modifier = modifier.padding(Spacing.lg),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+    ) {
+        Text(
+            text = glyph,
+            style = MaterialTheme.typography.displayMedium,
+            color = theme.textMuted,
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = theme.textMuted,
+        )
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileSearchResultItem(
+    file: FileNode,
+    onClick: () -> Unit,
+) {
+    val theme = LocalOpenCodeTheme.current
+    val parentPath = file.path.substringBeforeLast('/', missingDelimiterValue = "")
+    val parentLabel = parentPath.ifBlank { stringResource(R.string.files_breadcrumb_root) }
+    val itemDescription = stringResource(
+        R.string.files_search_result_description,
+        file.name,
+        parentLabel,
+    )
+
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clearAndSetSemantics {
+                role = Role.Button
+                contentDescription = itemDescription
+                onClick {
+                    onClick()
+                    true
+                }
+            }
+            .testTag("files_search_result_${file.path}"),
+        color = Color.Transparent,
+        shape = RectangleShape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "■",
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                color = getFileIcon(file).second,
+                modifier = Modifier.width(Sizing.iconMd),
+            )
+            FileSearchResultLabels(
+                fileName = file.name,
+                parentLabel = parentLabel,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "›",
+                style = MaterialTheme.typography.titleMedium,
+                color = theme.border,
+            )
+        }
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun FileSearchResultLabels(
+    fileName: String,
+    parentLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    val theme = LocalOpenCodeTheme.current
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+    ) {
+        Text(
+            text = fileName,
+            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+            color = theme.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = parentLabel,
+            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+            color = theme.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -490,7 +870,13 @@ private fun FileCreateMenu(
                     expanded = false
                     onCreateFile()
                 },
-                leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = null, tint = theme.textMuted) }
+                leadingIcon = {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NoteAdd,
+                        contentDescription = null,
+                        tint = theme.textMuted
+                    )
+                }
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.files_new_folder), color = theme.text) },
@@ -523,12 +909,14 @@ private fun EmptyFolderActions(
     }
 }
 
+@Suppress("FunctionNaming", "LongMethod")
 @Composable
-private fun BreadcrumbNavigation(
+internal fun BreadcrumbNavigation(
     path: String,
     onNavigateTo: (String) -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
+    val rootDescription = stringResource(R.string.files_breadcrumb_root)
     val parts = path.split("/").filter { it.isNotEmpty() }
 
     Row(
@@ -543,6 +931,13 @@ private fun BreadcrumbNavigation(
         // Root indicator
         Surface(
             onClick = { onNavigateTo("") },
+            modifier = Modifier
+                .sizeIn(
+                    minWidth = Sizing.minTouchTarget,
+                    minHeight = Sizing.minTouchTarget,
+                )
+                .semantics { contentDescription = rootDescription }
+                .testTag("files_breadcrumb_root"),
             color = Color.Transparent,
             shape = RectangleShape
         ) {
@@ -567,6 +962,12 @@ private fun BreadcrumbNavigation(
 
             Surface(
                 onClick = { onNavigateTo(pathToNavigate) },
+                modifier = Modifier
+                    .sizeIn(
+                        minWidth = Sizing.minTouchTarget,
+                        minHeight = Sizing.minTouchTarget,
+                    )
+                    .testTag("files_breadcrumb_segment_$index"),
                 color = Color.Transparent,
                 shape = RectangleShape
             ) {
@@ -592,11 +993,48 @@ private fun TuiFileItem(
     onClick: () -> Unit,
 ) {
     val theme = LocalOpenCodeTheme.current
-    val (icon, iconColor) = getFileIcon(file)
+    val iconColor = getFileIcon(file).second
     val gitStatusColor = getGitStatusColor(file.gitStatus)
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var showContextMenu by remember { mutableStateOf(false) }
+    val itemType = stringResource(
+        if (file.isDirectory) R.string.files_type_folder else R.string.files_type_file,
+    )
+    val itemDescription = file.gitStatus?.let { status ->
+        stringResource(
+            R.string.files_item_description_git,
+            file.name,
+            itemType,
+            file.path,
+            status,
+        )
+    } ?: stringResource(
+        R.string.files_item_description,
+        file.name,
+        itemType,
+        file.path,
+    )
+    val renameLabel = stringResource(R.string.files_rename)
+    val deleteLabel = stringResource(R.string.files_delete)
+    val accessibilityActions = buildList {
+        if (actions.canRename) {
+            add(
+                CustomAccessibilityAction(renameLabel) {
+                    actions.onRename()
+                    true
+                }
+            )
+        }
+        if (actions.canDelete) {
+            add(
+                CustomAccessibilityAction(deleteLabel) {
+                    actions.onDelete()
+                    true
+                }
+            )
+        }
+    }
 
     Box {
         Surface(
@@ -609,7 +1047,16 @@ private fun TuiFileItem(
                         showContextMenu = true
                     },
                     role = Role.Button
-                ),
+                )
+                .clearAndSetSemantics {
+                    role = Role.Button
+                    contentDescription = itemDescription
+                    onClick {
+                        onClick()
+                        true
+                    }
+                    customActions = accessibilityActions
+                },
             color = Color.Transparent,
             shape = RectangleShape
         ) {
@@ -620,25 +1067,22 @@ private fun TuiFileItem(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // File type indicator
-                Text(
-                    text = if (file.isDirectory) "▸" else " ",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = theme.accent
-                )
-
-                // Icon
-                Icon(
-                    imageVector = icon,
-                    contentDescription = if (file.isDirectory) "Folder" else "File",
-                    tint = gitStatusColor ?: iconColor,
-                    modifier = Modifier.size(Sizing.iconSm)
-                )
+                // Type glyph (design 07): ▸ folders in secondary, ■ files in type color
+                Box(
+                    modifier = Modifier.width(Sizing.iconMd),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = if (file.isDirectory) "▸" else "■",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        color = if (file.isDirectory) theme.secondary else (gitStatusColor ?: iconColor),
+                    )
+                }
 
                 // File name
                 Text(
                     text = file.name,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                     fontWeight = if (file.isDirectory) FontWeight.Medium else FontWeight.Normal,
                     color = gitStatusColor ?: theme.text,
                     modifier = Modifier.weight(1f),
@@ -651,12 +1095,12 @@ private fun TuiFileItem(
                     TuiGitStatusBadge(status)
                 }
 
-                // Directory indicator
-                if (file.isDirectory) {
+                // Trailing chevron — files open in the viewer
+                if (!file.isDirectory) {
                     Text(
-                        text = ">",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = theme.textMuted
+                        text = "›",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = theme.border
                     )
                 }
             }

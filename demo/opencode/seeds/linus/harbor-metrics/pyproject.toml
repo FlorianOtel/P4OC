@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harbor-metrics"
+version = "0.1.0"
+description = "CSV shipment metrics CLI and library"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+harbor-metrics = "harbor_metrics.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["harbor_metrics*"]

@@ -95,6 +95,7 @@ data class McpConfigDto(
     val type: String, // "local" | "remote"
     // Local MCP
     val command: List<String>? = null,
+    val cwd: String? = null,
     val environment: Map<String, String>? = null,
     // Remote MCP
     val url: String? = null,

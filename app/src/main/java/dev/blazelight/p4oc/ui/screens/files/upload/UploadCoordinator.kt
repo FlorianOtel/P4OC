@@ -8,6 +8,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 class UploadCoordinator(
     private val scope: CoroutineScope,
@@ -24,6 +25,7 @@ class UploadCoordinator(
     private var uploadJob: Job? = null
     private var orchestrator: UploadOrchestrator? = null
     private var callbacks: UploadCallbacks? = null
+    private val generation = AtomicLong()
 
     fun upload(
         source: UploadSource,
@@ -39,6 +41,7 @@ class UploadCoordinator(
             return
         }
 
+        val currentGeneration = generation.incrementAndGet()
         val currentOrchestrator = UploadOrchestrator(
             fileRepository = repositoryFactory(),
             source = source,
@@ -48,7 +51,9 @@ class UploadCoordinator(
         uploadJob?.cancel()
         uploadJob = scope.launch(Dispatchers.IO) {
             val mirrorJob = launch {
-                currentOrchestrator.state.collect { _state.value = it }
+                currentOrchestrator.state.collect {
+                    if (generation.get() == currentGeneration) _state.value = it
+                }
             }
             try {
                 val plans = sourceIds.map { id ->
@@ -63,8 +68,10 @@ class UploadCoordinator(
                     )
                 }
                 val finalState = currentOrchestrator.run(currentCallbacks.destinationPath, plans)
-                _state.value = finalState
-                currentCallbacks.onComplete(finalState.successes)
+                if (generation.get() == currentGeneration) {
+                    _state.value = finalState
+                    currentCallbacks.onComplete(finalState.successes)
+                }
             } finally {
                 mirrorJob.cancel()
             }
@@ -74,16 +81,21 @@ class UploadCoordinator(
     fun retryFailed() {
         val currentOrchestrator = orchestrator ?: return
         if (_state.value.failures.isEmpty() || _state.value.isActive) return
+        val currentGeneration = generation.incrementAndGet()
         uploadJob?.cancel()
         uploadJob = scope.launch(Dispatchers.IO) {
             val mirrorJob = launch {
-                currentOrchestrator.state.collect { _state.value = it }
+                currentOrchestrator.state.collect {
+                    if (generation.get() == currentGeneration) _state.value = it
+                }
             }
             try {
                 currentOrchestrator.retryFailed()
                 val finalState = currentOrchestrator.state.value
-                _state.value = finalState
-                callbacks?.onComplete(finalState.successes)
+                if (generation.get() == currentGeneration) {
+                    _state.value = finalState
+                    callbacks?.onComplete(finalState.successes)
+                }
             } finally {
                 mirrorJob.cancel()
             }
@@ -93,17 +105,18 @@ class UploadCoordinator(
     fun cancel() {
         val currentJob = uploadJob ?: return
         val currentOrchestrator = orchestrator ?: return
+        generation.incrementAndGet()
         currentOrchestrator.markCancelled()
         _state.value = currentOrchestrator.state.value
         uploadJob = null
         scope.launch {
             currentJob.cancelAndJoin()
-            _state.value = currentOrchestrator.state.value
         }
     }
 
     fun dismiss() {
         if (_state.value.isActive) return
+        generation.incrementAndGet()
         _state.value = UploadQueueState()
         orchestrator = null
         callbacks = null

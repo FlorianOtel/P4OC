@@ -1,3 +1,5 @@
+@file:Suppress("ImportOrdering")
+
 package dev.blazelight.p4oc.ui.screens.settings
 
 import androidx.compose.foundation.horizontalScroll
@@ -5,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -13,19 +17,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ApiResult
-import dev.blazelight.p4oc.core.network.ConnectionManager
 import dev.blazelight.p4oc.core.network.safeApiCall
 import dev.blazelight.p4oc.data.remote.dto.ModelInput
-import dev.blazelight.p4oc.data.remote.dto.SetActiveModelRequest
+import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
+import dev.blazelight.p4oc.ui.components.TuiButton
+import dev.blazelight.p4oc.ui.components.TuiEmptyState
 import dev.blazelight.p4oc.ui.components.TuiSnackbar
 import dev.blazelight.p4oc.ui.components.TuiTopBar
+import dev.blazelight.p4oc.ui.screens.chat.ModelSelectionCoordinator
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
@@ -35,12 +46,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.koin.androidx.compose.koinViewModel
 
 data class ModelInfo(
     val id: String,
     val name: String,
     val providerId: String,
+    /** The provider's own display name; falls back to [providerId] when the server omits one. */
+    val providerName: String = providerId,
     val contextLength: Int = 0,
     val inputCostPer1k: Double = 0.0,
     val outputCostPer1k: Double = 0.0,
@@ -55,12 +67,15 @@ data class ModelControlsState(
     val selectedModelId: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
+    val loadFailed: Boolean = false,
     val searchQuery: String = "",
     val filterProvider: String? = null
 )
 
 class ModelControlsViewModel constructor(
-    private val connectionManager: ConnectionManager
+    private val workspaceClient: WorkspaceClient,
+    private val modelSelectionCoordinator: ModelSelectionCoordinator = ModelSelectionCoordinator(),
+    serverConnectionRegistry: dev.blazelight.p4oc.core.network.ServerConnectionRegistry? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ModelControlsState())
@@ -68,18 +83,21 @@ class ModelControlsViewModel constructor(
 
     init {
         loadModels()
+        serverConnectionRegistry?.observeWorkspaceCatalogEvents(
+            workspaceClient,
+            viewModelScope,
+        ) { loadModels(background = true) }
     }
 
-    fun loadModels() {
+    fun loadModels() = loadModels(background = false)
+
+    @Suppress("CyclomaticComplexMethod")
+    private fun loadModels(background: Boolean) {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
-            val api = connectionManager.getApi() ?: run {
-                _state.update { it.copy(isLoading = false, error = "Not connected") }
-                return@launch
-            }
+            if (!background) _state.update { it.copy(isLoading = true, error = null, loadFailed = false) }
             // Use getProviders() which returns all providers with their models
             // The /model endpoint returns HTML (server-side routing issue)
-            val result = safeApiCall { api.getProviders() }
+            val result = safeApiCall { workspaceClient.getProviders() }
             when (result) {
                 is ApiResult.Success -> {
                     val models = result.data.all.flatMap { provider ->
@@ -88,6 +106,7 @@ class ModelControlsViewModel constructor(
                                 id = dto.id,
                                 name = dto.name,
                                 providerId = dto.providerId,
+                                providerName = provider.name.takeIf { it.isNotBlank() } ?: dto.providerId,
                                 contextLength = dto.limit?.context ?: dto.contextLength ?: 0,
                                 inputCostPer1k = dto.cost?.input ?: dto.inputCostPer1k ?: 0.0,
                                 outputCostPer1k = dto.cost?.output ?: dto.outputCostPer1k ?: 0.0,
@@ -97,10 +116,14 @@ class ModelControlsViewModel constructor(
                             )
                         }
                     }
-                    _state.update { it.copy(models = models, isLoading = false) }
+                    _state.update { it.copy(models = models, isLoading = false, error = null, loadFailed = false) }
                 }
                 is ApiResult.Error -> {
-                    _state.update { it.copy(isLoading = false, error = result.message) }
+                    if (!background) {
+                        _state.update {
+                            it.copy(isLoading = false, error = "Could not load models. Try again.", loadFailed = true)
+                        }
+                    }
                 }
             }
         }
@@ -122,17 +145,36 @@ class ModelControlsViewModel constructor(
 
     fun selectModel(modelId: String) {
         viewModelScope.launch {
-            _state.update { it.copy(selectedModelId = modelId) }
-            val api = connectionManager.getApi() ?: return@launch
-            // Find the model to get its providerId
-            val model = _state.value.models.find { it.id == modelId } ?: return@launch
-            val request = SetActiveModelRequest(
-                model = ModelInput(
-                    providerID = model.providerId,
-                    modelID = model.id
-                )
+            val previousModelId = _state.value.selectedModelId
+            val model = _state.value.models.find { it.id == modelId } ?: run {
+                _state.update {
+                    it.copy(selectedModelId = previousModelId, error = "Model not available", loadFailed = false)
+                }
+                return@launch
+            }
+            val selectedModel = ModelInput(
+                providerID = model.providerId,
+                modelID = model.id
             )
-            safeApiCall { api.setActiveModel(request) }
+            when (safeApiCall { workspaceClient.updateCurrentModel("${model.providerId}/${model.id}") }) {
+                is ApiResult.Success -> {
+                    _state.update { it.copy(selectedModelId = modelId, error = null, loadFailed = false) }
+                    modelSelectionCoordinator.publishActiveModel(
+                        workspaceClient.workspace,
+                        workspaceClient.generation,
+                        selectedModel,
+                    )
+                }
+                is ApiResult.Error -> {
+                    _state.update {
+                        it.copy(
+                            selectedModelId = previousModelId,
+                            error = "Could not update the model. Try again.",
+                            loadFailed = false
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -144,32 +186,50 @@ class ModelControlsViewModel constructor(
         _state.update { it.copy(filterProvider = providerId) }
     }
 
+    fun clearSearchAndFilter() {
+        _state.update { it.copy(searchQuery = "", filterProvider = null) }
+    }
+
     fun clearError() {
         _state.update { it.copy(error = null) }
     }
 }
 
+internal enum class ModelListContentState { MODELS, EMPTY, NO_RESULTS }
+
+internal fun filteredModels(state: ModelControlsState): List<ModelInfo> = state.models.filter { model ->
+    val matchesSearch = state.searchQuery.isBlank() ||
+        model.name.contains(state.searchQuery, ignoreCase = true) ||
+        model.id.contains(state.searchQuery, ignoreCase = true) ||
+        model.providerName.contains(state.searchQuery, ignoreCase = true)
+    val matchesProvider = state.filterProvider == null || model.providerId == state.filterProvider
+    matchesSearch && matchesProvider
+}.sortedByDescending { it.isFavorite }
+
+internal fun modelListContentState(
+    state: ModelControlsState,
+    filteredModels: List<ModelInfo> = filteredModels(state)
+): ModelListContentState = when {
+    state.models.isEmpty() -> ModelListContentState.EMPTY
+    filteredModels.isEmpty() -> ModelListContentState.NO_RESULTS
+    else -> ModelListContentState.MODELS
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("FunctionNaming", "LongMethod", "NoNameShadowing")
 @Composable
 fun ModelControlsScreen(
-    viewModel: ModelControlsViewModel = koinViewModel(),
+    viewModel: ModelControlsViewModel,
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     val filteredModels = remember(state.models, state.searchQuery, state.filterProvider) {
-        state.models.filter { model ->
-            val matchesSearch = state.searchQuery.isEmpty() ||
-                model.name.contains(state.searchQuery, ignoreCase = true) ||
-                model.id.contains(state.searchQuery, ignoreCase = true)
-            val matchesProvider = state.filterProvider == null ||
-                model.providerId == state.filterProvider
-            matchesSearch && matchesProvider
-        }.sortedByDescending { it.isFavorite }
+        filteredModels(state)
     }
 
     val providers = remember(state.models) {
-        state.models.map { it.providerId }.distinct()
+        state.models.map { it.providerId to it.providerName }.distinct().sortedBy { it.second.lowercase() }
     }
 
     val theme = LocalOpenCodeTheme.current
@@ -219,9 +279,54 @@ fun ModelControlsScreen(
 
             if (state.isLoading) {
                 TuiLoadingScreen()
+            } else if (state.loadFailed) {
+                TuiEmptyState(
+                    icon = Icons.Default.ErrorOutline,
+                    title = stringResource(R.string.models_load_failed_title),
+                    description = stringResource(R.string.models_load_failed_description),
+                    iconTint = theme.error,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .wrapContentSize(Alignment.Center),
+                    action = {
+                        TuiButton(onClick = viewModel::loadModels) {
+                            Text(stringResource(R.string.retry))
+                        }
+                    }
+                )
+            } else if (modelListContentState(state, filteredModels) == ModelListContentState.EMPTY) {
+                TuiEmptyState(
+                    icon = Icons.Default.Storage,
+                    title = stringResource(R.string.models_empty_title),
+                    description = stringResource(R.string.models_empty_description),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .wrapContentSize(Alignment.Center),
+                    action = {
+                        TuiButton(onClick = viewModel::loadModels) {
+                            Text(stringResource(R.string.refresh))
+                        }
+                    }
+                )
+            } else if (modelListContentState(state, filteredModels) == ModelListContentState.NO_RESULTS) {
+                TuiEmptyState(
+                    icon = Icons.Default.SearchOff,
+                    title = stringResource(R.string.models_no_results_title),
+                    description = stringResource(R.string.models_no_results_description),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .wrapContentSize(Alignment.Center),
+                    action = {
+                        TuiButton(onClick = viewModel::clearSearchAndFilter) {
+                            Text(stringResource(R.string.models_clear_search_filters))
+                        }
+                    }
+                )
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .selectableGroup(),
                     contentPadding = PaddingValues(Spacing.xl),
                     verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
@@ -272,7 +377,7 @@ fun ModelControlsScreen(
         }
     }
 
-    state.error?.let { error ->
+    state.error?.takeUnless { state.loadFailed }?.let {
         TuiSnackbar(
             modifier = Modifier.padding(Spacing.xl),
             action = {
@@ -281,7 +386,7 @@ fun ModelControlsScreen(
                 }
             }
         ) {
-            Text(error)
+            Text(stringResource(R.string.models_operation_failed))
         }
     }
 }
@@ -311,7 +416,7 @@ private fun SearchBar(
 
 @Composable
 private fun ProviderFilterChips(
-    providers: List<String>,
+    providers: List<Pair<String, String>>,
     selected: String?,
     onSelect: (String?) -> Unit,
     modifier: Modifier = Modifier
@@ -326,11 +431,11 @@ private fun ProviderFilterChips(
             label = { Text(stringResource(R.string.all)) },
             shape = RectangleShape
         )
-        providers.forEach { provider ->
+        providers.forEach { (providerId, label) ->
             FilterChip(
-                selected = selected == provider,
-                onClick = { onSelect(if (selected == provider) null else provider) },
-                label = { Text(provider) },
+                selected = selected == providerId,
+                onClick = { onSelect(if (selected == providerId) null else providerId) },
+                label = { Text(label) },
                 shape = RectangleShape
             )
         }
@@ -338,17 +443,31 @@ private fun ProviderFilterChips(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("FunctionNaming", "LongMethod")
 @Composable
-private fun ModelCard(
+internal fun ModelCard(
     model: ModelInfo,
     isSelected: Boolean,
     onSelect: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
+    val currentModelDescription = stringResource(R.string.models_current_model)
+    val favoriteActionDescription = stringResource(
+        if (model.isFavorite) R.string.cd_remove_from_favorites else R.string.cd_add_to_favorites
+    )
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onSelect,
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = isSelected,
+                onClick = onSelect,
+                role = Role.RadioButton
+            )
+            .semantics {
+                if (isSelected) stateDescription = currentModelDescription
+            },
+        shape = RectangleShape,
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) {
                 theme.accent.copy(alpha = 0.2f)
@@ -378,7 +497,7 @@ private fun ModelCard(
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = model.providerId,
+                        text = model.providerName,
                         style = MaterialTheme.typography.bodySmall,
                         color = theme.textMuted
                     )
@@ -389,14 +508,22 @@ private fun ModelCard(
                         Text(
                             text = "✓",
                             style = MaterialTheme.typography.titleMedium,
-                            color = theme.accent
+                            color = theme.accent,
+                            modifier = Modifier.clearAndSetSemantics { }
                         )
                     }
-                    IconButton(onClick = onToggleFavorite) {
+                    IconToggleButton(
+                        checked = model.isFavorite,
+                        onCheckedChange = { onToggleFavorite() },
+                        modifier = Modifier.semantics {
+                            contentDescription = favoriteActionDescription
+                        }
+                    ) {
                         Text(
                             text = if (model.isFavorite) "★" else "☆",
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (model.isFavorite) SemanticColors.Accent.favorite else theme.textMuted
+                            color = if (model.isFavorite) SemanticColors.Accent.favorite else theme.textMuted,
+                            modifier = Modifier.clearAndSetSemantics { }
                         )
                     }
                 }
@@ -406,28 +533,24 @@ private fun ModelCard(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
                 if (model.supportsTools) {
-                    AssistChip(
-                        onClick = {},
-                        label = { Text(stringResource(R.string.models_tools)) },
-                        shape = RectangleShape,
-                        leadingIcon = {
+                    ModelCapabilityBadge(
+                        label = stringResource(R.string.models_tools),
+                        icon = {
                             Icon(
                                 Icons.Default.Build,
-                                contentDescription = stringResource(R.string.models_tools),
+                                contentDescription = null,
                                 modifier = Modifier.size(Sizing.iconXs)
                             )
                         }
                     )
                 }
                 if (model.supportsReasoning) {
-                    AssistChip(
-                        onClick = {},
-                        label = { Text(stringResource(R.string.models_reasoning)) },
-                        shape = RectangleShape,
-                        leadingIcon = {
+                    ModelCapabilityBadge(
+                        label = stringResource(R.string.models_reasoning),
+                        icon = {
                             Icon(
                                 Icons.Default.Psychology,
-                                contentDescription = stringResource(R.string.models_reasoning),
+                                contentDescription = null,
                                 modifier = Modifier.size(Sizing.iconXs)
                             )
                         }
@@ -441,7 +564,7 @@ private fun ModelCard(
             ) {
                 if (model.contextLength > 0) {
                     Text(
-                        text = "Context: ${formatContextLength(model.contextLength)}",
+                        text = stringResource(R.string.models_context_format, formatContextLength(model.contextLength)),
                         style = MaterialTheme.typography.labelSmall,
                         color = theme.textMuted
                     )
@@ -458,6 +581,29 @@ private fun ModelCard(
                     )
                 }
             }
+        }
+    }
+}
+
+@Suppress("FunctionNaming")
+@Composable
+private fun ModelCapabilityBadge(
+    label: String,
+    icon: @Composable () -> Unit
+) {
+    val theme = LocalOpenCodeTheme.current
+    Surface(
+        color = theme.background,
+        contentColor = theme.textMuted,
+        shape = RectangleShape
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.xs),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            icon()
+            Text(text = label, style = MaterialTheme.typography.labelMedium)
         }
     }
 }

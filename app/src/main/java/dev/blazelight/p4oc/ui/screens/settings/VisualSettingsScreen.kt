@@ -7,7 +7,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +47,9 @@ class VisualSettingsViewModel constructor(
     private val _themeMode = MutableStateFlow("system")
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
+    private val _oledBlack = MutableStateFlow(false)
+    val oledBlack: StateFlow<Boolean> = _oledBlack.asStateFlow()
+
     val availableThemes = listOf(
         "catppuccin" to "Catppuccin Mocha",
         "catppuccin-macchiato" to "Catppuccin Macchiato",
@@ -76,6 +79,11 @@ class VisualSettingsViewModel constructor(
                 _themeMode.value = mode
             }
         }
+        viewModelScope.launch {
+            settingsDataStore.oledBlack.collect { enabled ->
+                _oledBlack.value = enabled
+            }
+        }
     }
 
     fun updateThemeName(name: String) {
@@ -89,6 +97,13 @@ class VisualSettingsViewModel constructor(
         _themeMode.value = mode
         viewModelScope.launch {
             settingsDataStore.setThemeMode(mode)
+        }
+    }
+
+    fun updateOledBlack(enabled: Boolean) {
+        _oledBlack.value = enabled
+        viewModelScope.launch {
+            settingsDataStore.setOledBlack(enabled)
         }
     }
 
@@ -137,6 +152,7 @@ fun VisualSettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val themeName by viewModel.themeName.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val oledBlack by viewModel.oledBlack.collectAsStateWithLifecycle()
 
     val theme = LocalOpenCodeTheme.current
     Scaffold(
@@ -171,6 +187,16 @@ fun VisualSettingsScreen(
                     selected = themeName,
                     options = viewModel.availableThemes,
                     onSelect = viewModel::updateThemeName
+                )
+
+                Spacer(Modifier.height(Spacing.md))
+
+                SettingsSwitch(
+                    title = stringResource(R.string.visual_settings_oled_black),
+                    subtitle = stringResource(R.string.visual_settings_oled_black_desc),
+                    checked = oledBlack,
+                    onCheckedChange = viewModel::updateOledBlack,
+                    icon = Icons.Default.DarkMode
                 )
             }
 
@@ -216,7 +242,6 @@ fun VisualSettingsScreen(
                     onCheckedChange = { viewModel.toggleOpenSubAgentInNewTab() },
                     icon = Icons.Default.Tab
                 )
-
             }
 
             SettingsSection(title = stringResource(R.string.visual_settings_tool_mode_label)) {
@@ -257,6 +282,7 @@ private fun SettingsSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = Spacing.md),
+            shape = RectangleShape,
             colors = CardDefaults.cardColors(
                 containerColor = theme.backgroundElement
             )
@@ -306,20 +332,11 @@ private fun ThemeModeSelector(
         "dark" to "Dark"
     )
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Spacing.md)
-    ) {
-        modes.forEach { (id, label) ->
-            FilterChip(
-                selected = selected == id,
-                onClick = { onSelect(id) },
-                label = { Text(label) },
-                modifier = Modifier.weight(1f),
-                shape = RectangleShape
-            )
-        }
-    }
+    dev.blazelight.p4oc.ui.components.TuiSegmentedControl(
+        options = modes,
+        selectedId = selected,
+        onSelect = onSelect,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -344,7 +361,7 @@ private fun ThemeSelector(
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
             modifier = Modifier
                 .fillMaxWidth()
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
         )
 
         ExposedDropdownMenu(
@@ -411,6 +428,7 @@ private fun PreviewCard(settings: VisualSettings) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(Spacing.md),
+        shape = RectangleShape,
         colors = CardDefaults.cardColors(
             containerColor = theme.backgroundElement
         )

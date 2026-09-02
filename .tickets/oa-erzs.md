@@ -2,7 +2,7 @@
 id: oa-erzs
 status: closed
 deps: []
-links: []
+links: [oa-ivwp]
 created: 2026-03-05T13:44:18Z
 type: feature
 priority: 3

@@ -1,0 +1,4 @@
+{"id":"normalize-customer","kind":"uppercase","payload":"grace hopper","durationMs":15}
+{"id":"invoice-total","kind":"sum","payload":"19,23,58","durationMs":5}
+{"id":"unstable-webhook","kind":"flaky","payload":"retry-me","durationMs":10}
+{"id":"release-label","kind":"uppercase","payload":"compiler ready","durationMs":2}

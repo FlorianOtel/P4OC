@@ -1,10 +1,16 @@
+@file:Suppress("ImportOrdering")
+
 package dev.blazelight.p4oc.ui.screens.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -23,7 +30,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.data.remote.dto.ModelDto
+import dev.blazelight.p4oc.data.remote.dto.ProviderAuthMethodDto
 import dev.blazelight.p4oc.data.remote.dto.ProviderDto
+import dev.blazelight.p4oc.ui.components.TuiAlertDialog
 import dev.blazelight.p4oc.ui.components.TuiButton
 import dev.blazelight.p4oc.ui.components.TuiCard
 import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
@@ -32,15 +41,72 @@ import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.SemanticColors
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.workspace.WorkspaceRepositoryOwner
 import org.koin.androidx.compose.koinViewModel
+import org.koin.core.parameter.parametersOf
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+@Suppress("FunctionNaming", "LongMethod")
 fun ProviderConfigScreen(
-    viewModel: ProviderConfigViewModel = koinViewModel(),
+    workspaceOwner: WorkspaceRepositoryOwner,
+    viewModel: ProviderConfigViewModel = koinViewModel(
+        parameters = { parametersOf(workspaceOwner) },
+    ),
     onNavigateBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val pendingAuthorization = uiState.pendingAuthorization
+    var authorizationCode by remember(pendingAuthorization) { mutableStateOf("") }
+
+    pendingAuthorization?.let { pending ->
+        TuiAlertDialog(
+            onDismissRequest = viewModel::dismissAuthorization,
+            title = stringResource(R.string.provider_auth_title),
+            confirmButton = {
+                TuiButton(
+                    onClick = {
+                        viewModel.completeOAuth(
+                            authorizationCode.takeIf { pending.authorization.method == "code" }
+                        )
+                    },
+                    enabled = !uiState.isAuthenticating &&
+                        (pending.authorization.method != "code" || authorizationCode.isNotBlank())
+                ) {
+                    Text(stringResource(R.string.provider_auth_complete))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            val uri = Uri.parse(pending.authorization.url)
+                            if (uri.scheme.equals("https", ignoreCase = true) ||
+                                uri.scheme.equals("http", ignoreCase = true)
+                            ) {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.provider_auth_open_browser))
+                }
+            }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Text(pending.authorization.instructions)
+                if (pending.authorization.method == "code") {
+                    OutlinedTextField(
+                        value = authorizationCode,
+                        onValueChange = { authorizationCode = it },
+                        label = { Text(stringResource(R.string.provider_auth_code)) },
+                        singleLine = true,
+                    )
+                }
+            }
+        }
+    }
 
     val theme = LocalOpenCodeTheme.current
     Scaffold(
@@ -133,10 +199,15 @@ fun ProviderConfigScreen(
                             provider = provider,
                             isExpanded = uiState.selectedProviderId == provider.id,
                             currentModel = uiState.currentModel,
+                            authMethods = uiState.authMethods[provider.id].orEmpty(),
+                            isAuthenticating = uiState.isAuthenticating,
                             onToggle = {
                                 viewModel.selectProvider(
                                     if (uiState.selectedProviderId == provider.id) "" else provider.id
                                 )
+                            },
+                            onAuthenticate = { methodIndex ->
+                                viewModel.startOAuth(provider.id, methodIndex)
                             },
                             onSelectModel = { modelId -> viewModel.setModel(provider.id, modelId) }
                         )
@@ -154,7 +225,14 @@ fun ProviderConfigScreen(
                         }
 
                         items(disconnectedProviders, key = { it.id }) { provider ->
-                            DisabledProviderCard(provider = provider)
+                            DisabledProviderCard(
+                                provider = provider,
+                                authMethods = uiState.authMethods[provider.id].orEmpty(),
+                                isAuthenticating = uiState.isAuthenticating,
+                                onAuthenticate = { methodIndex ->
+                                    viewModel.startOAuth(provider.id, methodIndex)
+                                }
+                            )
                         }
                     }
                 }
@@ -205,11 +283,15 @@ private fun CurrentModelCard(
 }
 
 @Composable
+@Suppress("LongParameterList", "FunctionNaming")
 private fun ProviderCard(
     provider: ProviderDto,
     isExpanded: Boolean,
     currentModel: String?,
+    authMethods: List<ProviderAuthMethodDto>,
+    isAuthenticating: Boolean,
     onToggle: () -> Unit,
+    onAuthenticate: (Int) -> Unit,
     onSelectModel: (String) -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
@@ -228,44 +310,7 @@ private fun ProviderCard(
         )
     ) {
         Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(role = Role.Button, onClick = onToggle)
-                    .padding(Spacing.md),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ProviderIcon(provider.name)
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = provider.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium,
-                        color = theme.text
-                    )
-                    Text(
-                        text = "${provider.models.size} model${if (provider.models.size != 1) "s" else ""}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = theme.textMuted
-                    )
-                }
-
-                if (isActiveProvider) {
-                    Text(
-                        text = "✓",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = theme.accent
-                    )
-                }
-
-                Text(
-                    text = if (isExpanded) "▴" else "▾",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = theme.textMuted
-                )
-            }
+            ProviderCardHeader(provider, isActiveProvider, isExpanded, onToggle)
 
             AnimatedVisibility(
                 visible = isExpanded,
@@ -275,6 +320,7 @@ private fun ProviderCard(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .selectableGroup()
                         .padding(start = Spacing.md, end = Spacing.md, bottom = Spacing.md),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                 ) {
@@ -283,6 +329,15 @@ private fun ProviderCard(
                         color = theme.borderSubtle
                     )
                     Spacer(Modifier.height(Spacing.xs))
+
+                    authMethods.withIndex().firstOrNull { it.value.type == "oauth" }?.let { oauthMethod ->
+                        TuiButton(
+                            onClick = { onAuthenticate(oauthMethod.index) },
+                            enabled = !isAuthenticating
+                        ) {
+                            Text(oauthMethod.value.label)
+                        }
+                    }
 
                     provider.models.values.sortedBy { it.name }.forEach { model ->
                         ModelItem(
@@ -294,6 +349,48 @@ private fun ProviderCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+@Suppress("FunctionNaming")
+private fun ProviderCardHeader(
+    provider: ProviderDto,
+    isActiveProvider: Boolean,
+    isExpanded: Boolean,
+    onToggle: () -> Unit
+) {
+    val theme = LocalOpenCodeTheme.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onToggle)
+            .padding(Spacing.md),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ProviderIcon(provider.name)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = provider.name,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                color = theme.text
+            )
+            Text(
+                text = "${provider.models.size} model${if (provider.models.size != 1) "s" else ""}",
+                style = MaterialTheme.typography.bodySmall,
+                color = theme.textMuted
+            )
+        }
+        if (isActiveProvider) {
+            Text(text = "✓", style = MaterialTheme.typography.titleMedium, color = theme.accent)
+        }
+        Text(
+            text = if (isExpanded) "▴" else "▾",
+            style = MaterialTheme.typography.titleMedium,
+            color = theme.textMuted
+        )
     }
 }
 
@@ -315,7 +412,11 @@ private fun ModelItem(
                 },
                 shape = RectangleShape
             )
-            .clickable(role = Role.Button, onClick = onClick)
+            .selectable(
+                selected = isSelected,
+                onClick = onClick,
+                role = Role.RadioButton,
+            )
             .padding(Spacing.md),
         horizontalArrangement = Arrangement.spacedBy(Spacing.md),
         verticalAlignment = Alignment.CenterVertically
@@ -342,10 +443,18 @@ private fun ModelItem(
             ) {
                 model.capabilities?.let { caps ->
                     if (caps.reasoning) {
-                        CapabilityChip("Reasoning")
+                        Text(
+                            text = "[R]",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            color = theme.info,
+                        )
                     }
                     if (caps.toolcall) {
-                        CapabilityChip("Tools")
+                        Text(
+                            text = "[T]",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            color = theme.accent,
+                        )
                     }
                 }
 
@@ -399,7 +508,13 @@ private fun CapabilityChip(text: String) {
 }
 
 @Composable
-private fun DisabledProviderCard(provider: ProviderDto) {
+@Suppress("FunctionNaming")
+private fun DisabledProviderCard(
+    provider: ProviderDto,
+    authMethods: List<ProviderAuthMethodDto>,
+    isAuthenticating: Boolean,
+    onAuthenticate: (Int) -> Unit
+) {
     val theme = LocalOpenCodeTheme.current
     TuiCard(
         modifier = Modifier.fillMaxWidth(),
@@ -427,11 +542,21 @@ private fun DisabledProviderCard(provider: ProviderDto) {
                 )
             }
 
-            Text(
-                text = "⊘",
-                style = MaterialTheme.typography.titleMedium,
-                color = theme.textMuted
-            )
+            val oauthMethod = authMethods.withIndex().firstOrNull { it.value.type == "oauth" }
+            if (oauthMethod != null) {
+                TuiButton(
+                    onClick = { onAuthenticate(oauthMethod.index) },
+                    enabled = !isAuthenticating
+                ) {
+                    Text(oauthMethod.value.label)
+                }
+            } else {
+                Text(
+                    text = "⊘",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = theme.textMuted
+                )
+            }
         }
     }
 }

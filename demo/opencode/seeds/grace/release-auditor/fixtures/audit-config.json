@@ -1,0 +1,7 @@
+{
+  "manifest": "package-under-test.json",
+  "changelog": "CHANGELOG.sample.md",
+  "minimumNodeMajor": 22,
+  "requiredScripts": ["test", "build"],
+  "forbidPrivateRelease": true
+}

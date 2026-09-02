@@ -28,7 +28,7 @@ import dev.blazelight.p4oc.ui.components.code.SyntaxHighlightedCode
 import dev.blazelight.p4oc.ui.diff.UnifiedDiffBuilder
 import dev.blazelight.p4oc.ui.screens.files.editor.SoraCodeEditorView
 import dev.blazelight.p4oc.ui.screens.files.editor.SoraLanguageRegistry
-import dev.blazelight.p4oc.ui.screens.files.editor.displayLabelForScope
+import dev.blazelight.p4oc.ui.screens.files.editor.displayLabelResForScope
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
@@ -55,11 +55,19 @@ fun FileViewerScreen(
     LaunchedEffect(path) {
         viewModel.loadFileContent(path)
     }
+    LaunchedEffect(uiState.capabilitiesLoaded, uiState.capabilities.canWrite) {
+        if (uiState.capabilitiesLoaded && !uiState.capabilities.canWrite && editMode) {
+            editMode = false
+            pendingDiscard = null
+            viewModel.discardEdits()
+        }
+    }
 
     val filename = path.substringAfterLast("/")
-    val languageLabel = remember(filename) {
-        displayLabelForScope(SoraLanguageRegistry.scopeFor(filename))
+    val languageLabelRes = remember(filename) {
+        displayLabelResForScope(SoraLanguageRegistry.scopeFor(filename))
     }
+    val languageLabel = stringResource(languageLabelRes)
     val theme = LocalOpenCodeTheme.current
 
     val isDirty = editState.isDirty && editMode
@@ -110,7 +118,7 @@ fun FileViewerScreen(
                             modifier = Modifier.size(Sizing.iconAction)
                         )
                     }
-                    if (!editMode) {
+                    if (!editMode && uiState.capabilities.canWrite) {
                         IconButton(
                             onClick = { editMode = true },
                             modifier = Modifier
@@ -123,7 +131,7 @@ fun FileViewerScreen(
                                 modifier = Modifier.size(Sizing.iconAction)
                             )
                         }
-                    } else {
+                    } else if (editMode) {
                         IconButton(
                             onClick = { viewModel.requestSave() },
                             enabled = editState.isDirty && !editState.isSaving,
@@ -186,26 +194,55 @@ fun FileViewerScreen(
                     )
                 }
                 fileContent != null -> {
-                    SyntaxHighlightedCode(
-                        code = fileContent,
-                        filename = filename,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(Spacing.md),
-                        showLineNumbers = showLineNumbers,
-                        selectable = true
-                    )
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        SyntaxHighlightedCode(
+                            code = fileContent,
+                            filename = filename,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .padding(Spacing.md),
+                            showLineNumbers = showLineNumbers,
+                            selectable = true
+                        )
+                        if (uiState.capabilitiesLoaded && !uiState.capabilities.canWrite) {
+                            Surface(
+                                color = theme.backgroundPanel,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("file_viewer_read_only_message"),
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.file_editor_read_only),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = theme.textMuted,
+                                    modifier = Modifier.padding(Spacing.sm),
+                                )
+                            }
+                        }
+                    }
                 }
                 error != null -> {
-                    Text(
-                        text = error,
+                    Column(
                         modifier = Modifier.align(Alignment.Center),
-                        color = theme.error
-                    )
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.files_load_failed_hint),
+                            color = theme.error,
+                        )
+                        TuiButton(
+                            onClick = { viewModel.loadFileContent(path) },
+                            modifier = Modifier.testTag("file_viewer_retry"),
+                        ) {
+                            Text(stringResource(R.string.retry))
+                        }
+                    }
                 }
             }
 
-            editState.saveError?.let { msg ->
+            editState.saveError?.let {
                 TuiSnackbar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -216,7 +253,7 @@ fun FileViewerScreen(
                         }
                     }
                 ) {
-                    Text(stringResource(R.string.file_editor_save_failed, msg))
+                    Text(stringResource(R.string.file_editor_save_failed))
                 }
             }
         }

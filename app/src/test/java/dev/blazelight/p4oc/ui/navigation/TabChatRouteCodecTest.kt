@@ -32,4 +32,17 @@ class TabChatRouteCodecTest {
         assertNull(TabChatRouteCodec.decode("chat/session?directory=/repo"))
         assertNull(TabChatRouteCodec.decode("tab/%20/chat/session"))
     }
+
+    @Test
+    fun `tab chat route decode preserves literal plus signs`() {
+        assertEquals(
+            TabChatRoute(tabId = "tab+one", sessionId = "session+two"),
+            TabChatRouteCodec.decode("tab/tab+one/chat/session+two")
+        )
+    }
+
+    @Test
+    fun `tab chat route decode rejects malformed percent escapes`() {
+        assertNull(TabChatRouteCodec.decode("tab/tab%ZZ/chat/session"))
+    }
 }

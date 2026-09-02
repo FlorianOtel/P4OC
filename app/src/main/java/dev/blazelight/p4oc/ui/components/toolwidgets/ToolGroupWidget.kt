@@ -3,6 +3,7 @@ package dev.blazelight.p4oc.ui.components.toolwidgets
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -13,8 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -23,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Part
 import dev.blazelight.p4oc.domain.model.ToolState
+import dev.blazelight.p4oc.ui.components.chat.ChatAttachmentList
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
@@ -48,6 +53,12 @@ private data class ToolGroup(
     val tools: List<Part.Tool>
 )
 
+internal fun completedToolAttachments(state: ToolState): List<Part.File> = if (state is ToolState.Completed) {
+    state.attachments?.filterIsInstance<Part.File>().orEmpty()
+} else {
+    emptyList()
+}
+
 /**
  * Tool group widget with progressive disclosure.
  * Shows HUD-style summary that can expand to show individual widgets.
@@ -57,19 +68,21 @@ private data class ToolGroup(
  * Expanded: HUD + full tool widgets
  */
 @Composable
+@Suppress("CyclomaticComplexMethod", "LongParameterList", "LongMethod", "FunctionNaming")
 fun ToolGroupWidget(
     tools: List<Part.Tool>,
     defaultState: ToolWidgetState,
-    pendingPermissionCallIds: Set<String> = emptySet(),
+    pendingPermissionIdsByCallId: Map<String, String> = emptyMap(),
     onToolApprove: (String) -> Unit,
     onToolDeny: (String) -> Unit,
+    onToolAlways: (String) -> Unit,
     onOpenSubSession: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val theme = LocalOpenCodeTheme.current
 
-    // HITL tools (pending state) always show expanded
-    val hasPendingTools = tools.any { it.state is ToolState.Pending }
+    // A recovered permission request is authoritative even if persisted tool history still says running.
+    val hasPendingTools = tools.any { it.state is ToolState.Pending || it.callID in pendingPermissionIdsByCallId.keys }
     val effectiveDefault = if (hasPendingTools) ToolWidgetState.EXPANDED else defaultState
 
     var currentState by remember(tools.firstOrNull()?.callID) { mutableStateOf(effectiveDefault) }
@@ -82,12 +95,14 @@ fun ToolGroupWidget(
     }
 
     // Group tools by name and determine aggregate state
-    val toolGroups = remember(tools) {
+    val toolGroups = remember(tools, pendingPermissionIdsByCallId.keys) {
         tools.groupBy { it.toolName }
             .map { (name, toolList) ->
                 val state = when {
+                    toolList.any {
+                        it.state is ToolState.Pending || it.callID in pendingPermissionIdsByCallId.keys
+                    } -> AggregateToolState.PENDING
                     toolList.any { it.state is ToolState.Running } -> AggregateToolState.RUNNING
-                    toolList.any { it.state is ToolState.Pending } -> AggregateToolState.PENDING
                     toolList.any { it.state is ToolState.Error } -> AggregateToolState.ERROR
                     else -> AggregateToolState.COMPLETED
                 }
@@ -102,7 +117,7 @@ fun ToolGroupWidget(
                             AggregateToolState.PENDING -> 1
                             AggregateToolState.ERROR -> 2
                             AggregateToolState.COMPLETED -> 3
-                        } 
+                        }
                     },
                     { it.name }
                 )
@@ -148,6 +163,7 @@ fun ToolGroupWidget(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = Sizing.minTouchTarget)
                     .background(theme.backgroundPanel.copy(alpha = 0.5f))
                     .clickable(role = Role.Button) { currentState = currentState.next() }
                     .padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
@@ -187,12 +203,23 @@ fun ToolGroupWidget(
                                 onClick = { currentState = currentState.next() },
                                 modifier = Modifier.fillMaxWidth()
                             )
+                            completedToolAttachments(tool.state).takeIf { it.isNotEmpty() }?.let { attachments ->
+                                ChatAttachmentList(parts = attachments)
+                            }
 
-                            // Show approval buttons if pending
-                            if (tool.state is ToolState.Pending && tool.callID in pendingPermissionCallIds) {
+                            // Show approval buttons for live or recovered pending permissions.
+                            if (tool.callID in pendingPermissionIdsByCallId.keys) {
                                 PendingApprovalButtonsInline(
-                                    onApprove = { onToolApprove(tool.callID) },
-                                    onDeny = { onToolDeny(tool.callID) }
+                                    requestId = pendingPermissionIdsByCallId[tool.callID] ?: tool.callID,
+                                    onApprove = {
+                                        onToolApprove(
+                                            pendingPermissionIdsByCallId[tool.callID] ?: tool.callID
+                                        )
+                                    },
+                                    onAlways = {
+                                        onToolAlways(pendingPermissionIdsByCallId[tool.callID] ?: tool.callID)
+                                    },
+                                    onDeny = { onToolDeny(pendingPermissionIdsByCallId[tool.callID] ?: tool.callID) },
                                 )
                             }
                         }
@@ -201,12 +228,30 @@ fun ToolGroupWidget(
                             ToolCallExpanded(
                                 tool = tool,
                                 onClick = { currentState = currentState.next() },
-                                showApprovalActions = tool.callID in pendingPermissionCallIds,
+                                showApprovalActions = false,
+                                approvalRequestId = pendingPermissionIdsByCallId[tool.callID] ?: tool.callID,
                                 onToolApprove = onToolApprove,
                                 onToolDeny = onToolDeny,
                                 onOpenSubSession = onOpenSubSession,
                                 modifier = Modifier.fillMaxWidth()
                             )
+                            completedToolAttachments(tool.state).takeIf { it.isNotEmpty() }?.let { attachments ->
+                                ChatAttachmentList(parts = attachments)
+                            }
+                            if (tool.callID in pendingPermissionIdsByCallId.keys) {
+                                PendingApprovalButtonsInline(
+                                    requestId = pendingPermissionIdsByCallId[tool.callID] ?: tool.callID,
+                                    onApprove = {
+                                        onToolApprove(pendingPermissionIdsByCallId[tool.callID] ?: tool.callID)
+                                    },
+                                    onAlways = {
+                                        onToolAlways(pendingPermissionIdsByCallId[tool.callID] ?: tool.callID)
+                                    },
+                                    onDeny = {
+                                        onToolDeny(pendingPermissionIdsByCallId[tool.callID] ?: tool.callID)
+                                    },
+                                )
+                            }
                         }
                         else -> {} // Oneline handled above
                     }
@@ -217,37 +262,62 @@ fun ToolGroupWidget(
 }
 
 @Composable
+@Suppress("FunctionNaming")
 private fun PendingApprovalButtonsInline(
+    requestId: String,
     onApprove: () -> Unit,
+    onAlways: () -> Unit,
     onDeny: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(theme.secondary.copy(alpha = 0.2f))
-            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
-        horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+            .background(theme.backgroundElement)
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
+        OutlinedButton(
+            onClick = onApprove,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = Sizing.minTouchTarget)
+                .semantics { contentDescription = "Allow permission once $requestId" }
+                .testTag("tool_permission_allow_once_$requestId"),
+            contentPadding = PaddingValues(horizontal = Spacing.xs, vertical = Spacing.none),
+            shape = RectangleShape,
+            border = BorderStroke(Sizing.strokeMd, theme.success),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.success)
+        ) {
+            Text(stringResource(R.string.allow), style = MaterialTheme.typography.labelSmall)
+        }
+        OutlinedButton(
+            onClick = onAlways,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = Sizing.minTouchTarget)
+                .semantics { contentDescription = "Always allow permission $requestId" }
+                .testTag("tool_permission_allow_always_$requestId"),
+            contentPadding = PaddingValues(horizontal = Spacing.xs, vertical = Spacing.none),
+            shape = RectangleShape,
+            border = BorderStroke(Sizing.strokeMd, theme.border),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+        ) {
+            Text(stringResource(R.string.always_allow), style = MaterialTheme.typography.labelSmall)
+        }
         OutlinedButton(
             onClick = onDeny,
             modifier = Modifier
                 .weight(1f)
-                .height(Sizing.chipHeight),
-            contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.none),
-            shape = RectangleShape
+                .heightIn(min = Sizing.minTouchTarget)
+                .semantics { contentDescription = "Deny permission $requestId" }
+                .testTag("tool_permission_deny_$requestId"),
+            contentPadding = PaddingValues(horizontal = Spacing.xs, vertical = Spacing.none),
+            shape = RectangleShape,
+            border = BorderStroke(Sizing.strokeMd, theme.error),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.error)
         ) {
             Text(stringResource(R.string.deny), style = MaterialTheme.typography.labelSmall)
-        }
-        Button(
-            onClick = onApprove,
-            modifier = Modifier
-                .weight(1f)
-                .height(Sizing.chipHeight),
-            contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.none),
-            shape = RectangleShape
-        ) {
-            Text(stringResource(R.string.allow), style = MaterialTheme.typography.labelSmall)
         }
     }
 }

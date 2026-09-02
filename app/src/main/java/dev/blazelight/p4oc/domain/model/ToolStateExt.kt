@@ -24,6 +24,7 @@ private fun parseQuestion(json: JsonObject): Question? {
         val question = json["question"]?.jsonPrimitive?.content ?: return null
         val optionsArray = json["options"]?.jsonArray ?: return null
         val multiple = json["multiple"]?.jsonPrimitive?.booleanOrNull ?: false
+        val custom = json["custom"]?.jsonPrimitive?.booleanOrNull ?: true
 
         val options = optionsArray.mapNotNull { optionElement ->
             parseQuestionOption(optionElement as? JsonObject ?: return@mapNotNull null)
@@ -35,7 +36,8 @@ private fun parseQuestion(json: JsonObject): Question? {
             header = header,
             question = question,
             options = options,
-            multiple = multiple
+            multiple = multiple,
+            custom = custom
         )
     } catch (e: Exception) {
         null

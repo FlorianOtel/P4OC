@@ -54,6 +54,7 @@ class PtyTerminalClient(
         }
     }
 
+    @Suppress("SwallowedException")
     override fun onPasteTextFromClipboard(session: TerminalSession?) {
         try {
             val clip = clipboardManager.primaryClip
@@ -64,9 +65,9 @@ class PtyTerminalClient(
                 }
             }
         } catch (e: SecurityException) {
-            AppLog.w("PtyTerminalClient", "Clipboard access denied - app may not be in focus", e)
+            AppLog.w("PtyTerminalClient", "Terminal warning")
         } catch (e: Exception) {
-            AppLog.e("PtyTerminalClient", "Failed to paste from clipboard", e)
+            AppLog.e("PtyTerminalClient", "Terminal error")
         }
     }
 
@@ -75,30 +76,30 @@ class PtyTerminalClient(
     }
 
     override fun logError(tag: String?, message: String?) {
-        AppLog.e(tag ?: "PtyTerminalClient", message ?: "Unknown error")
+        AppLog.e("PtyTerminalClient", "Terminal library error")
     }
 
     override fun logWarn(tag: String?, message: String?) {
-        AppLog.w(tag ?: "PtyTerminalClient", message ?: "Unknown warning")
+        AppLog.w("PtyTerminalClient", "Terminal library warning")
     }
 
     override fun logInfo(tag: String?, message: String?) {
-        AppLog.i(tag ?: "PtyTerminalClient", message ?: "")
+        AppLog.i("PtyTerminalClient", "Terminal library info")
     }
 
     override fun logDebug(tag: String?, message: String?) {
-        AppLog.d(tag ?: "PtyTerminalClient", message ?: "")
+        AppLog.d("PtyTerminalClient", "Terminal library debug")
     }
 
     override fun logVerbose(tag: String?, message: String?) {
-        AppLog.v(tag ?: "PtyTerminalClient", message ?: "")
+        AppLog.v("PtyTerminalClient", "Terminal library trace")
     }
 
     override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {
-        AppLog.e(tag ?: "PtyTerminalClient", message ?: "Unknown error", e)
+        AppLog.e(tag ?: "PtyTerminalClient", "Terminal error")
     }
 
     override fun logStackTrace(tag: String?, e: Exception?) {
-        AppLog.e(tag ?: "PtyTerminalClient", "Stack trace", e)
+        AppLog.e(tag ?: "PtyTerminalClient", "Terminal error")
     }
 }

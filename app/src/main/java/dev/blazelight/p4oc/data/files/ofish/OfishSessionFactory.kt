@@ -40,10 +40,12 @@ internal class OfishSessionFactory(
             synchronized(activeSessionIds) { activeSessionIds -= session.id }
             withContext(NonCancellable) {
                 runCatching { client.deleteSession(session.id) }
-                    .onFailure { error -> AppLog.w(
-                        TAG,
-                        "Failed to delete OFISH session ${session.id}: ${error.message}"
-                    ) }
+                    .onFailure { error ->
+                        AppLog.w(
+                            TAG,
+                            "Failed to delete OFISH session: ${error.javaClass.simpleName}"
+                        )
+                    }
             }
         }
     }
@@ -69,7 +71,7 @@ internal class OfishSessionFactory(
                             .onSuccess { deleted += 1 }
                             .onFailure { error ->
                                 failed += 1
-                                AppLog.w(TAG, "Failed to sweep stale OFISH session ${session.id}: ${error.message}")
+                                AppLog.w(TAG, "Failed to sweep stale OFISH session: ${error.javaClass.simpleName}")
                             }
                     }
                 }
@@ -81,7 +83,7 @@ internal class OfishSessionFactory(
                 failed = failed,
             )
         }.getOrElse { error ->
-            AppLog.w(TAG, "Failed to list OFISH sessions for sweep: ${error.message}")
+            AppLog.w(TAG, "Failed to list OFISH sessions for sweep: ${error.javaClass.simpleName}")
             OfishSweepReport(scanned = 0, staleFound = 0, deleted = 0, failed = 1)
         }
     }
@@ -103,7 +105,8 @@ internal class OfishSessionFactory(
         val report = sweepStaleSessions(maxAgeMillis = STALE_SESSION_AGE_MILLIS)
         AppLog.i(
             TAG,
-            "OFISH stale session sweep workspace=$workspaceKey scanned=${report.scanned} stale=${report.staleFound} deleted=${report.deleted} failed=${report.failed}",
+            "OFISH sweep scanned=${report.scanned} stale=${report.staleFound} " +
+                "deleted=${report.deleted} failed=${report.failed}",
         )
     }
 

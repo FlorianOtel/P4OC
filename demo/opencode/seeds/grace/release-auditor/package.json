@@ -1,0 +1,14 @@
+{
+  "name": "release-auditor",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-free release manifest and changelog auditor",
+  "scripts": {
+    "audit": "node bin/release-audit.js --config fixtures/audit-config.json",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

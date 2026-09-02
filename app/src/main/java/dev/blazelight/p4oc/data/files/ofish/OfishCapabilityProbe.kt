@@ -3,6 +3,8 @@ package dev.blazelight.p4oc.data.files.ofish
 import dev.blazelight.p4oc.data.remote.dto.MessageWrapperDto
 import dev.blazelight.p4oc.data.remote.dto.ShellCommandRequest
 
+private const val CAPABILITY_MARKER = "#OFISH_HELLO"
+
 /**
  * Executes the OFISH shell-environment capability probe in an ephemeral session.
  *
@@ -26,7 +28,11 @@ internal class OfishCapabilityProbe(
                     command = OfishCapabilityProbeCommand.build(),
                 ),
             )
-            OfishCapabilityParser.parse(OfishShellOutputExtractor.extract(response))
+            val output = OfishShellOutputExtractor.extractCapabilitySegment(response)
+                ?: return@withSession OfishProbeResult.Failed(
+                    "Malformed OFISH capability probe output: missing $CAPABILITY_MARKER output segment",
+                )
+            OfishCapabilityParser.parse(output)
         }
     }.getOrElse { error ->
         OfishProbeResult.Failed("OFISH capability probe failed", error)
@@ -39,12 +45,23 @@ internal class OfishCapabilityProbe(
 }
 
 internal object OfishShellOutputExtractor {
-    fun extract(message: MessageWrapperDto): String = buildString {
-        message.parts.forEach { part ->
-            part.text?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
-            part.state?.output?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
-            part.state?.raw?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
-            part.state?.error?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
+    fun extractCapabilitySegment(message: MessageWrapperDto): String? =
+        extractMarkerSegment(message, CAPABILITY_MARKER)
+
+    fun extractMutationSegment(message: MessageWrapperDto, expectedMarker: String): String? =
+        extractMarkerSegment(message, expectedMarker)
+
+    private fun extractMarkerSegment(message: MessageWrapperDto, expectedMarker: String): String? {
+        fun String.containsMarker(): Boolean = lineSequence().any { it == expectedMarker }
+
+        // Shell tool state is authoritative. Text parts are only a compatibility fallback for
+        // servers that return command output as assistant text rather than structured tool state.
+        val stateSegments = message.parts.flatMap { part ->
+            listOfNotNull(part.state?.output, part.state?.raw, part.state?.error)
         }
+        return stateSegments.lastOrNull { it.containsMarker() }
+            ?: message.parts.asReversed().firstNotNullOfOrNull { part ->
+                part.text?.takeIf { it.containsMarker() }
+            }
     }
 }

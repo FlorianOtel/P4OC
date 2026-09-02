@@ -15,6 +15,8 @@ class OfishCommandBuilderTest {
         hasRm = true,
         hasAwk = true,
         hasMktemp = true,
+        hasChmod = true,
+        modeCommand = ModeCommand.STAT_GNU,
     )
 
     private val builder = OfishCommandBuilder()
@@ -57,6 +59,34 @@ class OfishCommandBuilderTest {
         assertTrue(script.contains("mktemp"))
         assertTrue(script.contains("trap cleanup"))
         assertTrue(script.contains("mv -f"))
+    }
+
+    @Test
+    fun `write rejects directory before expected hash check and temp creation`() {
+        val script = builder.write("dir", "content", "expected", capabilities).decodedScript()
+        val directoryGuard = script.indexOf("### 412 precondition reason=directory")
+
+        assertTrue(directoryGuard >= 0)
+        assertTrue(directoryGuard < script.indexOf("if [ -n \"\$EXPECTED\" ]"))
+        assertTrue(directoryGuard < script.indexOf("mktemp"))
+        assertTrue(directoryGuard < script.indexOf("mv -f"))
+    }
+
+    @Test
+    fun `write guards symlink before capture and immediately before move`() {
+        val script = builder.write("file.txt", "content", "expected", capabilities).decodedScript()
+        val guard = "if [ -L \"\$P\" ]"
+        val firstGuard = script.indexOf(guard)
+        val lastGuard = script.lastIndexOf(guard)
+        val hashCapture = script.indexOf("ACTUAL=\$(hash_file")
+        val modeCapture = script.indexOf("MODE=\$(stat -c")
+        val move = script.indexOf("mv -f")
+
+        assertTrue(firstGuard >= 0)
+        assertTrue(firstGuard < hashCapture)
+        assertTrue(firstGuard < modeCapture)
+        assertTrue(lastGuard < move)
+        assertTrue(lastGuard > script.indexOf("chmod \"\$MODE\""))
     }
 
     @Test
@@ -106,6 +136,7 @@ class OfishCommandBuilderTest {
         assertTrue(script.contains("TO='dir/new'\\''name.txt'"))
         assertTrue(script.contains("if [ -e \"\$TO\" ]; then printf '### 409 conflict"))
         assertTrue(script.contains("mv -- \"\$FROM\" \"\$TO\""))
+        assertTrue(script.contains("if [ -L \"\$FROM\" ] || [ -L \"\$TO\" ]"))
     }
 
     @Test
@@ -119,6 +150,7 @@ class OfishCommandBuilderTest {
         assertTrue(chunk.decodedScript().contains("#OFISH_UPLOAD_CHUNK"))
         assertTrue(chunk.decodedScript().contains("<<'__OFISH_PAYLOAD__'"))
         assertTrue(chunk.decodedScript().contains("### 412 precondition reason=missing_tmp"))
+        assertTrue(chunk.decodedScript().contains("### 412 precondition reason=symlink"))
         assertTrue(finish.decodedScript().contains("#OFISH_UPLOAD_FINISH"))
         assertTrue(abort.decodedScript().contains("#OFISH_UPLOAD_ABORT"))
     }

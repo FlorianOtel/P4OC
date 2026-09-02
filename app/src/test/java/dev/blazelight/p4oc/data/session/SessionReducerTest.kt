@@ -2,6 +2,7 @@ package dev.blazelight.p4oc.data.session
 
 import dev.blazelight.p4oc.domain.model.OpenCodeEvent
 import dev.blazelight.p4oc.domain.model.Session
+import dev.blazelight.p4oc.domain.model.SessionStatus
 import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.session.SessionId
 import dev.blazelight.p4oc.domain.session.WorkspaceSession
@@ -56,11 +57,54 @@ class SessionReducerTest {
 
     @Test
     fun `session deleted removes session`() {
-        val initial = Snapshot(mapOf("gone" to workspaceSession("gone")))
+        val initial = Snapshot(
+            sessions = mapOf("gone" to workspaceSession("gone")),
+            statuses = mapOf("gone" to SessionStatus.Busy),
+        )
 
         val result = reducer.reduce(initial, OpenCodeEvent.SessionDeleted(session("gone")))
 
         assertFalse(result.sessions.containsKey("gone"))
+        assertFalse(result.statuses.containsKey("gone"))
+    }
+
+    @Test
+    fun `session status changed updates status`() {
+        val result = reducer.reduce(
+            Snapshot(statuses = mapOf("session" to SessionStatus.Idle)),
+            OpenCodeEvent.SessionStatusChanged("session", SessionStatus.Busy),
+        )
+
+        assertEquals(SessionStatus.Busy, result.statuses["session"])
+    }
+
+    @Test
+    fun `session idle updates status to idle`() {
+        val result = reducer.reduce(
+            Snapshot(statuses = mapOf("session" to SessionStatus.Busy)),
+            OpenCodeEvent.SessionIdle("session"),
+        )
+
+        assertEquals(SessionStatus.Idle, result.statuses["session"])
+    }
+
+    @Test
+    fun `session error updates status to idle`() {
+        val result = reducer.reduce(
+            Snapshot(statuses = mapOf("session" to SessionStatus.Busy)),
+            OpenCodeEvent.SessionError("session", error = null),
+        )
+
+        assertEquals(SessionStatus.Idle, result.statuses["session"])
+    }
+
+    @Test
+    fun `session error without session id leaves snapshot unchanged`() {
+        val initial = Snapshot(statuses = mapOf("session" to SessionStatus.Busy))
+
+        val result = reducer.reduce(initial, OpenCodeEvent.SessionError(sessionID = null, error = null))
+
+        assertSame(initial, result)
     }
 
     @Test

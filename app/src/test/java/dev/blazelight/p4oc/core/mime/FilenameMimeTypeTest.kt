@@ -35,6 +35,12 @@ class FilenameMimeTypeTest {
     }
 
     @Test
+    fun `hidden dotfiles without basename extension return null`() {
+        assertNull(FilenameMimeType.resolve(".png", lookup))
+        assertNull(FilenameMimeType.resolve(".env", lookup))
+    }
+
+    @Test
     fun `octet stream fallback preserves chat attachment behavior`() {
         assertEquals(FilenameMimeType.OCTET_STREAM, FilenameMimeType.resolveOrOctetStream("README"))
     }

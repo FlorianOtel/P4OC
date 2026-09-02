@@ -39,13 +39,59 @@ class MessageBlockUtilsTest {
         assertEquals(listOf(secondAssistant), (blocks[2] as MessageBlock.AssistantBlock).messages)
     }
 
-    private fun assistantMessageWithText(id: String, text: String): MessageWithParts =
+    @Test
+    fun groupMessagesIntoBlocks_marksFollowUpBehindActiveAssistantAsQueued() {
+        val activeAssistant = assistantMessageWithText(id = "assistant-1", text = "working", parentID = "user-1")
+        val queuedUser = userMessageWithText(id = "user-2", text = "follow-up")
+
+        val blocks = groupMessagesIntoBlocks(listOf(activeAssistant, queuedUser), isBusy = true)
+
+        assertEquals(true, (blocks[1] as MessageBlock.UserBlock).isQueued)
+    }
+
+    @Test
+    fun groupMessagesIntoBlocks_doesNotMarkFirstUnansweredUserMessageQueued() {
+        val user = userMessageWithText(id = "user-1", text = "first")
+
+        val blocks = groupMessagesIntoBlocks(listOf(user), isBusy = true)
+
+        assertEquals(false, (blocks.single() as MessageBlock.UserBlock).isQueued)
+    }
+
+    @Test
+    fun groupMessagesIntoBlocks_doesNotMarkQueuedWhenSessionIsIdle() {
+        val activeAssistant = assistantMessageWithText(id = "assistant-1", text = "working", parentID = "user-1")
+        val followUp = userMessageWithText(id = "user-2", text = "follow-up")
+
+        val blocks = groupMessagesIntoBlocks(listOf(activeAssistant, followUp), isBusy = false)
+
+        assertEquals(false, (blocks[1] as MessageBlock.UserBlock).isQueued)
+    }
+
+    @Test
+    fun groupMessagesIntoBlocks_doesNotMarkUserQueuedWhenAssistantChildExists() {
+        val activeAssistant = assistantMessageWithText(id = "assistant-1", text = "working", parentID = "user-1")
+        val followUp = userMessageWithText(id = "user-2", text = "follow-up")
+        val followUpAssistant = assistantMessageWithText(id = "assistant-2", text = "answer", parentID = "user-2")
+
+        val blocks = groupMessagesIntoBlocks(listOf(activeAssistant, followUp, followUpAssistant), isBusy = true)
+
+        assertEquals(false, (blocks[1] as MessageBlock.UserBlock).isQueued)
+    }
+
+    private fun assistantMessageWithText(
+        id: String,
+        text: String,
+        parentID: String = "parent-1",
+        completedAt: Long? = null,
+    ): MessageWithParts =
         MessageWithParts(
             message = Message.Assistant(
                 id = id,
                 sessionID = "session-1",
                 createdAt = 1L,
-                parentID = "parent-1",
+                completedAt = completedAt,
+                parentID = parentID,
                 providerID = "provider-1",
                 modelID = "model-1",
                 mode = "build",

@@ -22,10 +22,12 @@ data class AgentDto(
     val color: String? = null,
     val permission: JsonElement? = null, // Array of PermissionRuleDto from server
     val model: ModelRefDto? = null,
+    val variant: String? = null,
     val prompt: String? = null,
     val tools: Map<String, Boolean>? = null,
     val options: JsonObject? = null,
     val maxSteps: Int? = null,
+    val steps: Double? = null,
     val systemPrompt: String? = null,
     val isEnabled: Boolean? = null,
     val isBuiltIn: Boolean? = null

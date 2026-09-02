@@ -1,6 +1,8 @@
 package dev.blazelight.p4oc.core.network
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.net.Inet6Address
+import java.net.InetAddress
 
 object ServerUrl {
     const val DEFAULT_PORT = 4096
@@ -11,7 +13,7 @@ object ServerUrl {
         return buildUrl(
             scheme = components.scheme,
             host = components.formattedHost,
-            port = components.port,
+            port = components.explicitPort,
             path = components.path,
         )
     }
@@ -21,15 +23,61 @@ object ServerUrl {
         return buildUrl(
             scheme = components.scheme,
             host = components.formattedHost,
-            port = components.port,
+            port = components.canonicalPort,
             path = components.path,
         )
+    }
+
+    /**
+     * Cleartext authentication is permitted only for exact localhost or literal local-network
+     * addresses. Other hostnames are deliberately excluded: resolving one here would make the
+     * decision vulnerable to DNS changes and rebinding between validation and connection.
+     */
+    @Suppress("ReturnCount")
+    fun allowsCleartextCredentials(input: String): Boolean {
+        val trimmed = input.trim()
+        val candidate = if (trimmed.contains("://")) trimmed else "http://$trimmed"
+        val parsed = stripIpv6ZoneId(candidate).toHttpUrlOrNull() ?: return false
+        if (parsed.scheme != "http") return true
+
+        val host = parsed.host.substringBefore('%')
+        return host.equals("localhost", ignoreCase = true) ||
+            isPrivateIpv4Literal(host) || isPrivateIpv6Literal(host)
+    }
+
+    @Suppress("MagicNumber", "ReturnCount")
+    private fun isPrivateIpv4Literal(host: String): Boolean {
+        val octets = host.split('.')
+        if (octets.size != 4) return false
+        val values = octets.map { part ->
+            if (part.isEmpty() || part.any { !it.isDigit() }) return false
+            part.toIntOrNull()?.takeIf { it in 0..255 } ?: return false
+        }
+        return values[0] == 127 ||
+            values[0] == 10 ||
+            (values[0] == 172 && values[1] in 16..31) ||
+            (values[0] == 192 && values[1] == 168)
+    }
+
+    @Suppress("MagicNumber", "ReturnCount")
+    private fun isPrivateIpv6Literal(host: String): Boolean {
+        if (':' !in host || host.any { it !in "0123456789abcdefABCDEF:." }) return false
+        val address = runCatching { InetAddress.getByName(host) }.getOrNull() as? Inet6Address
+            ?: return false
+        val bytes = address.address
+        val first = bytes[0].toInt() and 0xff
+        val second = bytes[1].toInt() and 0xff
+        val isLoopback = bytes.dropLast(1).all { it.toInt() == 0 } && bytes.last().toInt() == 1
+        val isUniqueLocal = first and 0xfe == 0xfc
+        val isLinkLocal = first == 0xfe && second and 0xc0 == 0x80
+        return isLoopback || isUniqueLocal || isLinkLocal
     }
 
     private data class ParsedServerUrl(
         val scheme: String,
         val formattedHost: String,
-        val port: Int,
+        val explicitPort: Int?,
+        val canonicalPort: Int,
         val path: String,
     )
 
@@ -45,10 +93,8 @@ object ServerUrl {
 
         val host = parsed.host.substringBefore('%').lowercase()
         val formattedHost = if (':' in host) "[$host]" else host
-        val port = when {
-            hasExplicitPort(sanitizedCandidate) -> parsed.port
-            else -> DEFAULT_PORT
-        }
+        val explicitPort = parsed.port.takeIf { hasExplicitPort(sanitizedCandidate) }
+        val canonicalPort = explicitPort ?: DEFAULT_PORT
         val path = parsed.encodedPath
             .takeUnless { it == "/" }
             ?.trimEnd('/')
@@ -57,7 +103,8 @@ object ServerUrl {
         return ParsedServerUrl(
             scheme = scheme,
             formattedHost = formattedHost,
-            port = port,
+            explicitPort = explicitPort,
+            canonicalPort = canonicalPort,
             path = path,
         )
     }
@@ -65,10 +112,10 @@ object ServerUrl {
     private fun buildUrl(
         scheme: String,
         host: String,
-        port: Int,
+        port: Int?,
         path: String,
     ): String {
-        val base = "$scheme://$host:$port"
+        val base = if (port == null) "$scheme://$host" else "$scheme://$host:$port"
         return if (path.isEmpty()) base else "$base$path"
     }
 

@@ -9,6 +9,8 @@ internal data class OfishCapabilities(
     val hasRm: Boolean = false,
     val hasAwk: Boolean = false,
     val hasMktemp: Boolean = false,
+    val hasChmod: Boolean = false,
+    val modeCommand: ModeCommand? = null,
 ) {
     val supportsMutation: Boolean
         get() = hasBase64 &&
@@ -18,7 +20,14 @@ internal data class OfishCapabilities(
             hasMkdir &&
             hasRm &&
             hasAwk &&
-            hasMktemp
+            hasMktemp &&
+            hasChmod &&
+            modeCommand != null
+}
+
+internal enum class ModeCommand(val wireName: String) {
+    STAT_GNU("stat -c %a"),
+    STAT_BSD("stat -f %Lp"),
 }
 
 internal enum class HashCommand(val wireName: String) {

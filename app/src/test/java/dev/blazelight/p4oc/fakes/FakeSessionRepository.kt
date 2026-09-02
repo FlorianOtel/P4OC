@@ -53,13 +53,17 @@ class FakeSessionRepository(
 
     override fun sessionUiState(sessionId: SessionId): StateFlow<SessionUiState> = MutableStateFlow(SessionUiState())
 
+    override fun acquireSession(sessionId: SessionId): AutoCloseable = AutoCloseable { }
+
     override fun clearPermission(sessionId: SessionId, permissionId: String) = Unit
 
     override fun clearPermissionByRequestId(sessionId: SessionId, requestId: String) = Unit
 
     override fun clearQuestion(sessionId: SessionId, requestId: String?) = Unit
 
-    override suspend fun loadMessages(sessionId: SessionId, limit: Int?) = Unit
+    override suspend fun loadMessages(sessionId: SessionId, limit: Int): Int = 0
+
+    override suspend fun reconcileMessages(sessionId: SessionId) = Unit
 
     override fun sendMessageAsync(sessionId: SessionId, request: SendMessageRequest): Deferred<Result<Unit>> =
         CompletableDeferred(Result.success(Unit))

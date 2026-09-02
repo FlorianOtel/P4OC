@@ -25,6 +25,7 @@ data class ModelDto(
     @SerialName("providerID") val providerId: String,
     val api: ModelApiDto? = null,
     val name: String,
+    val family: String? = null,
     val capabilities: ModelCapabilitiesDto? = null,
     val cost: ModelCostDto? = null,
     val limit: ModelLimitDto? = null,
@@ -33,6 +34,7 @@ data class ModelDto(
     val variants: JsonObject? = null,
     val variant: JsonObject? = null,
     val headers: Map<String, String>? = null,
+    @SerialName("release_date") val releaseDate: String? = null,
     val contextLength: Int? = null,
     val inputCostPer1k: Double? = null,
     val outputCostPer1k: Double? = null,
@@ -53,6 +55,7 @@ data class ModelCapabilitiesDto(
     val reasoning: Boolean = false,
     val attachment: Boolean = false,
     val toolcall: Boolean = false,
+    val interleaved: kotlinx.serialization.json.JsonElement? = null,
     val input: ModalitiesDto? = null,
     val output: ModalitiesDto? = null
 )
@@ -70,7 +73,23 @@ data class ModalitiesDto(
 data class ModelCostDto(
     val input: Double = 0.0,
     val output: Double = 0.0,
-    val cache: CacheCostDto? = null
+    val cache: CacheCostDto? = null,
+    val tiers: List<ModelCostTierDto>? = null,
+    val experimentalOver200K: JsonObject? = null,
+)
+
+@Serializable
+data class ModelCostTierDto(
+    val input: Double,
+    val output: Double,
+    val cache: CacheCostDto,
+    val tier: ModelCostTierRuleDto,
+)
+
+@Serializable
+data class ModelCostTierRuleDto(
+    val type: String,
+    val size: Double,
 )
 
 @Serializable
@@ -95,7 +114,8 @@ data class ProvidersResponseDto(
 @Serializable
 data class ProviderAuthMethodDto(
     val type: String, // "oauth" | "api"
-    val label: String
+    val label: String,
+    val prompts: List<JsonObject>? = null,
 )
 
 @Serializable
@@ -103,4 +123,9 @@ data class ProviderAuthAuthorizationDto(
     val url: String,
     val method: String, // "auto" | "code"
     val instructions: String
+)
+
+@Serializable
+data class ProviderAuthAuthorizeRequest(
+    val method: Int
 )

@@ -13,8 +13,10 @@ object FilenameMimeType {
 
     internal fun resolve(name: String?, lookup: (String) -> String?): String? {
         if (name.isNullOrBlank()) return null
-        val extension = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
-        if (extension.isBlank()) return null
+        val filename = name.substringAfterLast('/')
+        val dotIndex = filename.lastIndexOf('.')
+        if (dotIndex <= 0 || dotIndex == filename.lastIndex) return null
+        val extension = filename.substring(dotIndex + 1).lowercase()
         return lookup(extension)
     }
 

@@ -50,9 +50,9 @@ class DialogQueueManager(
             try {
                 val question = json.decodeFromString<QuestionRequest>(jsonString)
                 _pendingQuestion.value = question
-                AppLog.d(TAG, "Restored pending question: ${question.id}")
+                AppLog.d(TAG, "Restored pending question")
             } catch (e: Exception) {
-                AppLog.e(TAG, "Failed to restore pending question", e)
+                AppLog.e(TAG, "Failed to restore pending question (${e::class.simpleName})")
                 savedStateHandle.remove<String>(KEY_PENDING_QUESTION)
             }
         }
@@ -64,18 +64,17 @@ class DialogQueueManager(
                 pendingQuestions.addAll(questions)
                 AppLog.d(TAG, "Restored ${questions.size} queued questions")
             } catch (e: Exception) {
-                AppLog.e(TAG, "Failed to restore pending questions queue", e)
+                AppLog.e(TAG, "Failed to restore pending questions queue (${e::class.simpleName})")
                 savedStateHandle.remove<String>(KEY_PENDING_QUESTIONS_QUEUE)
             }
         }
     }
 
     fun enqueuePermission(permission: Permission) {
-        // Add to callID map for inline rendering
-        permission.callID?.let { callId ->
-            _pendingPermissionsByCallId.update { it + (callId to permission) }
-        }
+        _pendingPermissionsByCallId.update { it + (permission.pendingPermissionKey() to permission) }
     }
+
+    private fun Permission.pendingPermissionKey(): String = callID ?: "permission:$id"
 
     fun setPermissionsByCallId(permissions: Map<String, Permission>) {
         _pendingPermissionsByCallId.value = permissions
@@ -134,14 +133,18 @@ class DialogQueueManager(
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                AppLog.e(TAG, "Failed to persist pending question", e)
+                AppLog.e(TAG, "Failed to persist pending question (${e::class.simpleName})")
                 if (version == pendingQuestionPersistenceVersion) {
                     savedStateHandle.remove<String>(KEY_PENDING_QUESTION)
                 }
                 return@launch
             }
             if (version == pendingQuestionPersistenceVersion && _pendingQuestion.value == request) {
-                savedStateHandle[KEY_PENDING_QUESTION] = encoded
+                persistBounded(
+                    key = KEY_PENDING_QUESTION,
+                    encoded = encoded,
+                    otherKey = KEY_PENDING_QUESTIONS_QUEUE,
+                )
             }
         }
     }
@@ -162,7 +165,7 @@ class DialogQueueManager(
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                AppLog.e(TAG, "Failed to persist pending questions queue", e)
+                AppLog.e(TAG, "Failed to persist pending questions queue (${e::class.simpleName})")
                 if (version == pendingQuestionsQueuePersistenceVersion) {
                     savedStateHandle.remove<String>(KEY_PENDING_QUESTIONS_QUEUE)
                 }
@@ -172,8 +175,27 @@ class DialogQueueManager(
                 if (encoded == null) {
                     savedStateHandle.remove<String>(KEY_PENDING_QUESTIONS_QUEUE)
                 } else {
-                    savedStateHandle[KEY_PENDING_QUESTIONS_QUEUE] = encoded
+                    persistBounded(
+                        key = KEY_PENDING_QUESTIONS_QUEUE,
+                        encoded = encoded,
+                        otherKey = KEY_PENDING_QUESTION,
+                    )
                 }
+            }
+        }
+    }
+
+    /** Writes atomically with the combined-size check so concurrent persistence cannot exceed the budget. */
+    private fun persistBounded(key: String, encoded: String, otherKey: String) {
+        synchronized(savedStateHandle) {
+            val otherSize = savedStateHandle.get<String>(otherKey)?.length ?: 0
+            if (
+                encoded.length <= MAX_PERSISTED_QUESTION_JSON_CHARS &&
+                encoded.length + otherSize <= MAX_PERSISTED_QUESTIONS_JSON_CHARS
+            ) {
+                savedStateHandle[key] = encoded
+            } else {
+                savedStateHandle.remove<String>(key)
             }
         }
     }
@@ -182,5 +204,9 @@ class DialogQueueManager(
         const val TAG = "DialogQueueManager"
         const val KEY_PENDING_QUESTION = "pending_question"
         const val KEY_PENDING_QUESTIONS_QUEUE = "pending_questions_queue"
+
+        // Leave ample room in the Activity SavedState bundle for navigation and other screens.
+        const val MAX_PERSISTED_QUESTION_JSON_CHARS = 64 * 1024
+        const val MAX_PERSISTED_QUESTIONS_JSON_CHARS = 96 * 1024
     }
 }

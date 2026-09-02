@@ -26,6 +26,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.ui.components.TuiCard
 import dev.blazelight.p4oc.ui.components.TuiTextButton
@@ -43,8 +44,8 @@ fun LicensesScreen(
 ) {
     val theme = LocalOpenCodeTheme.current
     val context = LocalContext.current
-    val texts by viewModel.texts.collectAsState()
-    val loading by viewModel.loadingTexts.collectAsState()
+    val texts by viewModel.texts.collectAsStateWithLifecycle()
+    val loading by viewModel.loadingTexts.collectAsStateWithLifecycle()
     val entries = remember { LicenseCatalogue.all }
     val requestChannelUrl = stringResource(R.string.licenses_request_channel_url)
     var expandedKey by remember { mutableStateOf<String?>(null) }

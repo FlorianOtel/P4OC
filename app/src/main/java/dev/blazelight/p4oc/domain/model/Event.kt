@@ -41,6 +41,17 @@ sealed class OpenCodeEvent {
     data class FileEdited(val file: String) : OpenCodeEvent()
     data class FileWatcherUpdated(val file: String, val event: String) : OpenCodeEvent()
     data class VcsBranchUpdated(val branch: String?) : OpenCodeEvent()
+
+    // Project and catalog events (aligned with SDK)
+    data class ProjectUpdated(val project: Project) : OpenCodeEvent()
+    data class ProjectDirectoriesUpdated(val projectID: String) : OpenCodeEvent()
+    data object ModelsRefreshed : OpenCodeEvent()
+    data object CatalogUpdated : OpenCodeEvent()
+    data class McpToolsChanged(val server: String) : OpenCodeEvent()
+
+    // Global lifecycle events (aligned with SDK)
+    data object GlobalDisposed : OpenCodeEvent()
+
     data object Connected : OpenCodeEvent()
     data class Disconnected(val reason: String?) : OpenCodeEvent()
     data class Error(val throwable: Throwable) : OpenCodeEvent()
