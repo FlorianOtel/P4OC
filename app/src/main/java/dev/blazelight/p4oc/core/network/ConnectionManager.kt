@@ -296,7 +296,8 @@ class ConnectionManager constructor(
         sseEscalationJob?.cancel()
         sseEscalationJob = null
         _connection.value?.disconnect()
-        sharedConnectionPool.evictAll()
+        // Closing pooled TLS sockets writes close_notify; disconnect may run on the main thread.
+        scope.launch(Dispatchers.IO) { sharedConnectionPool.evictAll() }
         _connection.value = null
         _authOkHttpClient.value = null
         _connectionState.value = ConnectionState.Disconnected
