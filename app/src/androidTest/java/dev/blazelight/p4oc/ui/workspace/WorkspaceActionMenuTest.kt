@@ -145,7 +145,7 @@ class WorkspaceActionMenuTest {
         onRename: (String?) -> Unit,
     ) {
         PocketCodeTheme {
-            val state = rememberWorkspaceActionsState()
+            val state = rememberWorkspaceActionsState(Unit)
             val server = ServerRef.fromEndpoint("http://workspace.test:4096", "Test server")
             val subject = WorkspaceActionSubject(
                 server = server,

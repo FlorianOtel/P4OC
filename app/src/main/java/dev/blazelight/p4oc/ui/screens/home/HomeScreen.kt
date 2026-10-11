@@ -626,7 +626,7 @@ private fun workspaceShortcut(
         }
         return
     }
-    val actionsState = rememberWorkspaceActionsState()
+    val actionsState = rememberWorkspaceActionsState(workspace.serverRef.endpointKey to workspace.workspaceKey)
     val subject = workspace.actionSubject(label, directory)
     val handlers = remember(workspace, workspaceActions) { workspaceActions.handlersFor(workspace) }
     Box {
@@ -974,7 +974,7 @@ private fun workspaceDetailOverflow(input: WorkspaceDetailInput) {
     val label = workspace.label
     val directory = (workspace.workspaceKey as? WorkspaceKey.Directory)?.value
     if (workspaceActions == null || label == null || directory == null) return
-    val actionsState = rememberWorkspaceActionsState()
+    val actionsState = rememberWorkspaceActionsState(workspace.serverRef.endpointKey to workspace.workspaceKey)
     val subject = workspace.actionSubject(label, directory)
     val handlers = remember(workspace, workspaceActions, input.onBack) {
         workspaceActions.handlersFor(workspace, onRemoved = input.onBack)
@@ -1084,7 +1084,7 @@ private fun homeSessionRowSurface(
         )
         return
     }
-    val actionsState = rememberSessionActionsState()
+    val actionsState = rememberSessionActionsState(session.serverRef.endpointKey to session.sessionId)
     val subject = SessionActionSubject(
         sessionId = session.sessionId.value,
         title = session.title,

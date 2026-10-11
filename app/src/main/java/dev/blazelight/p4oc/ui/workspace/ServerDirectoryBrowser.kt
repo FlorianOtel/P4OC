@@ -83,9 +83,8 @@ private fun browseEntryName(entry: FileNodeDto): String? {
     } else {
         entry.name
     }
-    return name.takeUnless {
-        it.isBlank() || it == "." || it == ".." || '/' in it || '\\' in it || it.startsWith('.')
-    }
+    // Hidden entries are skipped; names ServerPath.child can't represent (control characters) too.
+    return name.takeUnless { !ServerPath.isValidComponent(it) || it.startsWith('.') }
 }
 
 internal fun mapBrowseFailure(error: Throwable): BrowseResult = when (error) {

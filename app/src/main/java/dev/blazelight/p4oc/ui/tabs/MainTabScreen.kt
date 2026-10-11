@@ -49,7 +49,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -82,8 +81,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
@@ -470,7 +471,7 @@ private fun startWorkPickerTargetRow(params: MainTabContentParams, target: Start
         isUserRoot = isRoot,
         label = label,
     )
-    val actionsState = rememberWorkspaceActionsState()
+    val actionsState = rememberWorkspaceActionsState(target.serverRef.endpointKey to target.workspaceKey)
     val subject = WorkspaceActionSubject(
         server = target.serverRef,
         directory = directory,
@@ -726,16 +727,28 @@ private val rememberStartWorkUiState: @Composable () -> StartWorkUiState = {
     remember { StartWorkUiState() }
 }
 
-private val rememberTabStateMaps: @Composable () -> TabStateMaps = {
-    remember {
-        TabStateMaps(
-            connectionStates = mutableStateMapOf(),
-            readTokens = mutableStateMapOf(),
-            routes = mutableStateMapOf(),
-            ptyIds = mutableStateMapOf(),
-            workspaceOwners = mutableStateMapOf(),
-        )
+/**
+ * Tab maps outlive Activity recreation (interface scale, theme, locale): tab ViewModels on the
+ * restored back stacks keep the workspace owners they were built with, so those owners must stay
+ * open. They are closed only when the main tab destination itself is popped.
+ */
+private class MainTabStateHolder : ViewModel() {
+    val tabMaps = TabStateMaps(
+        connectionStates = mutableStateMapOf(),
+        readTokens = mutableStateMapOf(),
+        routes = mutableStateMapOf(),
+        ptyIds = mutableStateMapOf(),
+        workspaceOwners = mutableStateMapOf(),
+    )
+
+    override fun onCleared() {
+        tabMaps.workspaceOwners.values.forEach { it.close() }
+        tabMaps.workspaceOwners.clear()
     }
+}
+
+private val rememberTabStateMaps: @Composable () -> TabStateMaps = {
+    viewModel { MainTabStateHolder() }.tabMaps
 }
 
 private val rememberScopedConnectionStates: @Composable (
@@ -837,12 +850,6 @@ private fun mainTabWorkspaceOwnersEffect(
     scopedConnectionStates: Map<String, ConnectionState>,
     workspaceOwners: SnapshotStateMap<String, WorkspaceRepositoryOwner>,
 ) {
-    DisposableEffect(Unit) {
-        onDispose {
-            workspaceOwners.values.forEach { it.close() }
-            workspaceOwners.clear()
-        }
-    }
     val tabOwnerInputs = tabs.mapNotNull { tab ->
         val serverRef = tab.serverRef ?: return@mapNotNull null
         val workspaceKey = tab.workspaceKey ?: return@mapNotNull null

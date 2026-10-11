@@ -77,8 +77,13 @@ class SessionActionsState {
     }
 }
 
+/**
+ * [subjectKey] identifies the session; when a row slot is reused for a different session (list
+ * reorders), the menu and any pending rename/delete dialog are dropped instead of retargeted.
+ */
 @Composable
-fun rememberSessionActionsState(): SessionActionsState = remember { SessionActionsState() }
+fun rememberSessionActionsState(subjectKey: Any): SessionActionsState =
+    remember(subjectKey) { SessionActionsState() }
 
 /**
  * Tap runs [onClick]; long-press gives haptic feedback and opens the shared session action menu.

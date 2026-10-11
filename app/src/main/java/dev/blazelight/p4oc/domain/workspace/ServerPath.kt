@@ -149,7 +149,8 @@ class ServerPath private constructor(
             )
         }
 
-        private fun isValidComponent(name: String): Boolean =
+        /** True when [name] can be one path component; [child] rejects everything else. */
+        fun isValidComponent(name: String): Boolean =
             name.isNotBlank() && name != "." && name != ".." &&
                 name.none { it == '/' || it == '\\' || it.isISOControl() }
     }

@@ -81,8 +81,10 @@ class WorkspaceActionsState {
     }
 }
 
+/** Keyed by [subjectKey] so a reordered row never carries a pending rename/remove to another workspace. */
 @Composable
-fun rememberWorkspaceActionsState(): WorkspaceActionsState = remember { WorkspaceActionsState() }
+fun rememberWorkspaceActionsState(subjectKey: Any): WorkspaceActionsState =
+    remember(subjectKey) { WorkspaceActionsState() }
 
 /** Tap runs [onClick]; long-press opens workspace actions and exposes them to accessibility. */
 @OptIn(ExperimentalFoundationApi::class)

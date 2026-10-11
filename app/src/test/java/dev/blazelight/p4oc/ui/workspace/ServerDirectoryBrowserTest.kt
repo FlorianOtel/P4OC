@@ -51,7 +51,7 @@ class ServerDirectoryBrowserTest {
     }
 
     @Test
-    fun filtersHiddenDotSeparatorAndEscapeNamesAndSeparatesFiles() {
+    fun filtersHiddenDotSeparatorControlAndEscapeNamesAndSeparatesFiles() {
         val path = serverPath("/workspace")
         val result = mapBrowseEntries(
             path,
@@ -65,6 +65,8 @@ class ServerDirectoryBrowserTest {
                 entry(name = "nested/name", path = "nested/name", type = "directory"),
                 entry(name = "nested/", path = "nested/", type = "directory"),
                 entry(name = "nested\\name", path = "nested\\name", type = "directory"),
+                entry(name = "tab\tname", path = "tab\tname", type = "directory"),
+                entry(name = "line\nbreak", path = "line\nbreak", type = "directory"),
                 entry(name = "README.md", path = "README.md", type = "file"),
                 entry(name = ".secret", path = ".secret", type = "file"),
                 entry(name = "../outside", path = "../outside", type = "file"),
@@ -73,6 +75,8 @@ class ServerDirectoryBrowserTest {
         )
 
         assertEquals(listOf("other", "visible"), result.folders)
+        // Every listed folder must be openable; rows build their child path while composing.
+        result.folders.forEach(path::child)
         assertEquals(listOf("README.md"), result.files)
     }
 

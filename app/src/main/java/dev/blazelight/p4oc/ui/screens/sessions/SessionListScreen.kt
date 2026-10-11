@@ -575,26 +575,28 @@ private fun SessionTreeNode(
                 verticalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
                 node.children.forEach { child ->
-                    SessionTreeNode(
-                        node = child,
-                        depth = depth + 1,
-                        expandedSessionIds = expandedSessionIds,
-                        sessionStatuses = sessionStatuses,
-                        sessionPresences = sessionPresences,
-                        forkingSessionIds = forkingSessionIds,
-                        isSessionForkPending = isSessionForkPending,
-                        supportsSessionSharing = supportsSessionSharing,
-                        showProjectChip = showProjectChip,
-                        onSessionClick = onSessionClick,
-                        onDeleteSession = onDeleteSession,
-                        onRenameSession = onRenameSession,
-                        onForkSession = onForkSession,
-                        onShareSession = onShareSession,
-                        onViewChanges = onViewChanges,
-                        onSummarizeSession = onSummarizeSession,
-                        onProjectClick = onProjectClick,
-                        onToggleExpand = onToggleExpand
-                    )
+                    key(child.sessionWithProject.session.id) {
+                        SessionTreeNode(
+                            node = child,
+                            depth = depth + 1,
+                            expandedSessionIds = expandedSessionIds,
+                            sessionStatuses = sessionStatuses,
+                            sessionPresences = sessionPresences,
+                            forkingSessionIds = forkingSessionIds,
+                            isSessionForkPending = isSessionForkPending,
+                            supportsSessionSharing = supportsSessionSharing,
+                            showProjectChip = showProjectChip,
+                            onSessionClick = onSessionClick,
+                            onDeleteSession = onDeleteSession,
+                            onRenameSession = onRenameSession,
+                            onForkSession = onForkSession,
+                            onShareSession = onShareSession,
+                            onViewChanges = onViewChanges,
+                            onSummarizeSession = onSummarizeSession,
+                            onProjectClick = onProjectClick,
+                            onToggleExpand = onToggleExpand
+                        )
+                    }
                 }
             }
         }
@@ -621,7 +623,7 @@ private fun SessionCard(
     isSubAgent: Boolean = false
 ) {
     val theme = LocalOpenCodeTheme.current
-    val actionsState = rememberSessionActionsState()
+    val actionsState = rememberSessionActionsState(session.id)
     val workspaceIdentity = projectName?.takeIf { it.isNotBlank() }
         ?: session.directory.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.sessions_no_project_context)
