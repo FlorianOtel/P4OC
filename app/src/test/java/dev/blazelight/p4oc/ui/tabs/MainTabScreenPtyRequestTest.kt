@@ -1,6 +1,7 @@
 package dev.blazelight.p4oc.ui.tabs
 
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabelIndex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -9,7 +10,7 @@ import org.junit.Test
 class MainTabScreenPtyRequestTest {
     @Test
     fun `global workspace terminal request omits client guessed process context`() {
-        val request = createPtyRequestForWorkspace(WorkspaceKey.Global)
+        val request = createPtyRequestForWorkspace(WorkspaceKey.Global, workspaceName = null)
 
         assertNull(request.command)
         assertEquals(emptyList<String>(), request.args)
@@ -18,13 +19,22 @@ class MainTabScreenPtyRequestTest {
     }
 
     @Test
-    fun `directory workspace terminal request uses directory cwd and basename title`() {
-        val request = createPtyRequestForWorkspace(WorkspaceKey.Directory("/repo/project"))
+    fun `directory workspace terminal request uses directory cwd and workspace display name`() {
+        val key = WorkspaceKey.Directory("/repo/project")
+        val request = createPtyRequestForWorkspace(key, WorkspaceLabelIndex.Empty.primaryFor(null, key))
 
         assertEquals("/repo/project", request.cwd)
         assertEquals("project", request.title)
         assertEquals(emptyList<String>(), request.args)
         assertNull(request.command)
         assertNotEquals(".", request.cwd)
+    }
+
+    @Test
+    fun `custom workspace name becomes the terminal title`() {
+        val request = createPtyRequestForWorkspace(WorkspaceKey.Directory("/repo/project"), "Weather App")
+
+        assertEquals("/repo/project", request.cwd)
+        assertEquals("Weather App", request.title)
     }
 }

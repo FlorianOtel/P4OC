@@ -11,6 +11,7 @@ import dev.blazelight.p4oc.domain.model.Session
 import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.domain.model.SessionStatus
 import dev.blazelight.p4oc.domain.model.resolveSessionPresence
+import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.session.SessionId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -31,6 +32,9 @@ class SessionListViewModel constructor(
     private val _uiState = MutableStateFlow(SessionListUiState())
     val uiState: StateFlow<SessionListUiState> = _uiState.asStateFlow()
     val supportsSessionSharing: Boolean get() = sessionRepository.supportsSessionSharing
+
+    /** The owning server, used only to look up workspace display names. */
+    val workspaceServer: ServerRef get() = sessionRepository.workspace.server
 
     companion object {
         internal const val MAX_SEARCH_QUERY_CHARS = 512

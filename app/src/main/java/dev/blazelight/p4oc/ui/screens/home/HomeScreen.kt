@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
@@ -65,8 +66,15 @@ import androidx.compose.ui.unit.sp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.core.network.ConnectionState
 import dev.blazelight.p4oc.domain.model.SessionPresence
+import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
+import dev.blazelight.p4oc.domain.workspace.ServerPath
 import dev.blazelight.p4oc.ui.components.TuiBackButton
+import dev.blazelight.p4oc.ui.components.session.SessionActionHandlers
+import dev.blazelight.p4oc.ui.components.session.SessionActionMenu
+import dev.blazelight.p4oc.ui.components.session.SessionActionSubject
+import dev.blazelight.p4oc.ui.components.session.rememberSessionActionsState
+import dev.blazelight.p4oc.ui.components.session.sessionActionGestures
 import dev.blazelight.p4oc.ui.components.status.SessionStatusDot
 import dev.blazelight.p4oc.ui.components.status.connectionStatusColor
 import dev.blazelight.p4oc.ui.components.status.connectionStatusDescription
@@ -76,6 +84,13 @@ import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.ProjectColors
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.workspace.WorkspaceActionHandlers
+import dev.blazelight.p4oc.ui.workspace.WorkspaceActionSubject
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabel
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabelIndex
+import dev.blazelight.p4oc.ui.workspace.rememberWorkspaceActionsState
+import dev.blazelight.p4oc.ui.workspace.workspaceActionGestures
+import dev.blazelight.p4oc.ui.workspace.workspaceActionMenu
 import java.util.concurrent.TimeUnit
 
 private const val RECENT_DAY_LIMIT = 30
@@ -96,6 +111,37 @@ data class HomeActions(
     val onWorkspaceSelected: (WorkspaceSummary) -> Unit = {},
     val onWorkspaceDetailChanged: (StartWorkSelection) -> Unit = {},
     val onStartScopedWork: (StartWorkTarget) -> Unit = {},
+    /** Long-press session actions; rows without a host that can route them stay tap-only. */
+    val sessionActions: HomeSessionActions? = null,
+    /** Workspace add/rename/remove; rows stay tap-only and add actions are hidden without a host. */
+    val workspaceActions: HomeWorkspaceActions? = null,
+)
+
+/**
+ * Workspace management. Rename/reset/remove change only local display data and the user's roots;
+ * adding opens the Add workspace sheet ([onAddWorkspace] with null server means "choose a server").
+ */
+data class HomeWorkspaceActions(
+    val onAddWorkspace: (server: ServerRef?, prefilledPath: String?) -> Unit,
+    val onRename: (WorkspaceSummary, String?) -> Unit,
+    val onResetName: (WorkspaceSummary) -> Unit,
+    val onCopyPath: (WorkspaceSummary) -> Unit,
+    val onRemove: (WorkspaceSummary) -> Unit,
+)
+
+/**
+ * Session row actions. The host routes every action to the session's own server and workspace
+ * ([SessionPreview.serverRef], [SessionPreview.workspaceKey]).
+ */
+data class HomeSessionActions(
+    val supportsSharing: (SessionPreview) -> Boolean,
+    val isForking: (SessionPreview) -> Boolean,
+    val onRename: (SessionPreview, String) -> Unit,
+    val onDelete: (SessionPreview) -> Unit,
+    val onFork: (SessionPreview) -> Unit,
+    val onToggleShare: (SessionPreview) -> Unit,
+    val onViewChanges: (SessionPreview) -> Unit,
+    val onSummarize: (SessionPreview) -> Unit,
 )
 
 private data class HomeOverviewInput(
@@ -115,6 +161,7 @@ private data class WorkspaceDetailInput(
     val openWork: List<OpenWorkSummary>,
     val sessions: List<SessionPreview>,
     val actions: HomeActions,
+    val labels: WorkspaceLabelIndex,
     val onBack: () -> Unit,
 )
 
@@ -128,7 +175,10 @@ fun homeScreen(
     var selectedWorkspace by remember { mutableStateOf<WorkspaceSummary?>(null) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var showAllWorkspaces by rememberSaveable { mutableStateOf(false) }
-    val selected = selectedWorkspace
+    val selected = selectedWorkspace?.let { picked ->
+        // Follow live data (renames, new sessions) for the open detail view.
+        summary.workspaces.firstOrNull { it.isSameWorkspace(picked) } ?: picked
+    }
     if (selected != null) {
         workspaceDetail(
             input = WorkspaceDetailInput(
@@ -138,13 +188,14 @@ fun homeScreen(
                 }?.connectionState,
                 openWork = summary.openWork.filter {
                     it.serverRef.endpointKey == selected.serverRef.endpointKey &&
-                        it.workspaceKey == selected.workspaceKey
+                        it.groupKey == selected.workspaceKey
                 },
                 sessions = summary.sessions.filter {
                     it.serverRef.endpointKey == selected.serverRef.endpointKey &&
-                        it.workspaceKey == selected.workspaceKey
+                        it.groupKey == selected.workspaceKey
                 },
                 actions = actions,
+                labels = summary.labels,
                 onBack = {
                     selectedWorkspace = null
                     actions.onWorkspaceDetailChanged(StartWorkSelection.NeedsSelection)
@@ -174,6 +225,9 @@ fun homeScreen(
         )
     }
 }
+
+private fun WorkspaceSummary.isSameWorkspace(other: WorkspaceSummary): Boolean =
+    serverRef.endpointKey == other.serverRef.endpointKey && workspaceKey == other.workspaceKey
 
 @Composable
 private fun homeOverview(input: HomeOverviewInput, modifier: Modifier) {
@@ -278,42 +332,54 @@ private val HomeSessions: LazyListScope.(HomeOverviewInput, List<SessionPreview>
         ) { session ->
             sessionRow(
                 session = session,
+                workspaceName = input.summary.labels.primaryFor(session.serverRef, session.groupKey),
+                sessionActions = input.actions.sessionActions,
                 onResume = { input.actions.onResumeSession(session) },
-                onWorkspace = {
-                    input.onWorkspaceClick(
-                        WorkspaceSummary(
-                            serverRef = session.serverRef,
-                            workspaceKey = session.workspaceKey,
-                            sessionCount = 0,
-                            openTabCount = 0,
-                            mostRecentAt = session.updatedAt,
-                        ),
-                    )
-                },
+                onWorkspace = { input.onWorkspaceClick(input.summary.workspaceFor(session)) },
             )
         }
     }
 }
 
+/** The Home workspace a session is grouped under, or a minimal summary when it is not listed. */
+private fun HomeSummaryState.workspaceFor(session: SessionPreview): WorkspaceSummary =
+    workspaces.firstOrNull {
+        it.serverRef.endpointKey == session.serverRef.endpointKey && it.workspaceKey == session.groupKey
+    } ?: WorkspaceSummary(
+        serverRef = session.serverRef,
+        workspaceKey = session.groupKey,
+        sessionCount = 0,
+        openTabCount = 0,
+        mostRecentAt = session.updatedAt,
+        label = (session.groupKey as? WorkspaceKey.Directory)
+            ?.let { labels.directoryLabel(session.serverRef.endpointKey, it.value) },
+    )
+
 private fun LazyListScope.homeWorkspaces(input: HomeOverviewInput, filteredWorkspaces: List<WorkspaceSummary>) {
     val searching = input.searchQuery.isNotBlank()
     val capped = searching || input.showAllWorkspaces
     val visible = if (capped) filteredWorkspaces else filteredWorkspaces.take(HOME_WORKSPACE_SHORTCUT_LIMIT)
-    item { sectionLabel(if (searching) "Workspaces" else "Recent workspaces") }
+    val workspaceActions = input.actions.workspaceActions
+    val onAdd: (() -> Unit)? = if (workspaceActions != null && !searching) {
+        { workspaceActions.onAddWorkspace(null, null) }
+    } else {
+        null
+    }
+    item {
+        workspaceSectionHeader(
+            label = if (searching) "Workspaces" else "Recent workspaces",
+            onAdd = onAdd,
+        )
+    }
     if (filteredWorkspaces.isEmpty()) {
-        item {
-            infoCard(
-                when {
-                    input.summary.isLoading -> "Looking for workspaces"
-                    searching -> "No matching workspaces"
-                    else -> "No workspaces yet"
-                },
-                if (searching) "Try another search." else "Use + to start something new.",
-            )
-        }
+        item { emptyWorkspacesCard(input, searching, workspaceActions) }
         return
     }
-    item { dividedRows(visible) { workspace -> workspaceShortcut(workspace, input.onWorkspaceClick) } }
+    item {
+        dividedRows(visible) { workspace ->
+            workspaceShortcut(workspace, workspaceActions, input.onWorkspaceClick)
+        }
+    }
     val hidden = filteredWorkspaces.size - visible.size
     if (!searching && (hidden > 0 || input.showAllWorkspaces)) {
         item {
@@ -323,6 +389,61 @@ private fun LazyListScope.homeWorkspaces(input: HomeOverviewInput, filteredWorks
                 testTag = "home_workspaces_toggle",
             )
         }
+    }
+}
+
+/** Section label with an optional inline `+ add` action (no new persistent chrome). */
+@Composable
+private fun workspaceSectionHeader(label: String, onAdd: (() -> Unit)?) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        sectionLabel(label)
+        if (onAdd != null) {
+            val addDescription = stringResource(R.string.home_workspaces_add_description)
+            Box(
+                modifier = Modifier
+                    .widthIn(min = Sizing.minTouchTarget)
+                    .heightIn(min = Sizing.minTouchTarget)
+                    .clickable(role = Role.Button, onClick = onAdd)
+                    .semantics { contentDescription = addDescription }
+                    .testTag("home_workspaces_add"),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text(
+                    stringResource(R.string.home_workspaces_add),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = LocalOpenCodeTheme.current.accent,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun emptyWorkspacesCard(
+    input: HomeOverviewInput,
+    searching: Boolean,
+    workspaceActions: HomeWorkspaceActions?,
+) {
+    val title = when {
+        input.summary.isLoading -> "Looking for workspaces"
+        searching -> "No matching workspaces"
+        else -> "No workspaces yet"
+    }
+    if (searching || input.summary.isLoading || workspaceActions == null) {
+        infoCard(title, if (searching) "Try another search." else "Use + to start something new.")
+        return
+    }
+    Surface(
+        onClick = { workspaceActions.onAddWorkspace(null, null) },
+        shape = RectangleShape,
+        color = LocalOpenCodeTheme.current.backgroundPanel,
+        modifier = Modifier.fillMaxWidth().testTag("home_workspaces_empty_add"),
+    ) {
+        infoCardContent(title, stringResource(R.string.home_workspaces_empty_add))
     }
 }
 
@@ -458,7 +579,7 @@ private fun projectPill(workspace: WorkspaceSummary) {
     val key = "${workspace.serverRef.endpointKey}:${workspace.workspaceKey}"
     Surface(shape = RectangleShape, color = ProjectColors.colorForProject(key)) {
         Text(
-            workspace.workspaceKey.displayLabel(),
+            workspace.displayName(),
             style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
             color = ProjectColors.textColorForProject(key),
             maxLines = 1,
@@ -487,60 +608,117 @@ private fun <T> dividedRows(items: List<T>, row: @Composable (T) -> Unit) {
 @Composable
 private fun workspaceShortcut(
     workspace: WorkspaceSummary,
+    workspaceActions: HomeWorkspaceActions?,
     onOpen: (WorkspaceSummary) -> Unit,
-    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     val theme = LocalOpenCodeTheme.current
-    Surface(
-        onClick = { onOpen(workspace) },
-        shape = RectangleShape,
-        color = theme.backgroundPanel,
-        modifier = modifier,
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(Sizing.listItemHeightMd)
-                .padding(horizontal = Spacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+    val label = workspace.label
+    val directory = (workspace.workspaceKey as? WorkspaceKey.Directory)?.value
+    val rowTag = "home_workspace_${workspace.serverRef.endpointKey}_${workspace.workspaceKey}"
+    if (workspaceActions == null || label == null || directory == null) {
+        Surface(
+            onClick = { onOpen(workspace) },
+            shape = RectangleShape,
+            color = theme.backgroundPanel,
+            modifier = Modifier.fillMaxWidth().testTag(rowTag),
         ) {
-            projectPill(workspace)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
-                Text(
-                    "${workspace.sessionCount} ${if (workspace.sessionCount == 1) "session" else "sessions"}" +
-                        " · ${recency(workspace.mostRecentAt)}",
-                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
-                    color = theme.text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "${workspace.serverRef.displayName} · ${workspace.workspaceKey.detailLabel()}",
-                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                    color = theme.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text("›", style = MaterialTheme.typography.labelMedium, color = theme.border)
+            workspaceShortcutContent(workspace)
         }
+        return
+    }
+    val actionsState = rememberWorkspaceActionsState()
+    val subject = workspace.actionSubject(label, directory)
+    val handlers = remember(workspace, workspaceActions) { workspaceActions.handlersFor(workspace) }
+    Box {
+        Surface(
+            shape = RectangleShape,
+            color = theme.backgroundPanel,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(rowTag)
+                .workspaceActionGestures(actionsState, subject, handlers) { onOpen(workspace) },
+        ) {
+            workspaceShortcutContent(workspace)
+        }
+        workspaceActionMenu(state = actionsState, subject = subject, handlers = handlers)
     }
 }
+
+@Composable
+private fun workspaceShortcutContent(workspace: WorkspaceSummary) {
+    val theme = LocalOpenCodeTheme.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(Sizing.listItemHeightMd)
+            .padding(horizontal = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+    ) {
+        projectPill(workspace)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+            Text(
+                "${workspace.sessionCount} ${if (workspace.sessionCount == 1) "session" else "sessions"}" +
+                    " · ${recency(workspace.mostRecentAt)}",
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                color = theme.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "${workspace.serverRef.displayName} · ${workspace.pathText()}",
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = theme.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text("›", style = MaterialTheme.typography.labelMedium, color = theme.border)
+    }
+}
+
+private fun WorkspaceSummary.actionSubject(label: WorkspaceLabel, directory: String) = WorkspaceActionSubject(
+    server = serverRef,
+    directory = directory,
+    label = label.copy(isUserRoot = isUserRoot),
+    canAddAsRoot = !isUserRoot && ServerPath.parseOrNull(directory) != null,
+)
+
+private fun HomeWorkspaceActions.handlersFor(
+    workspace: WorkspaceSummary,
+    onRemoved: () -> Unit = {},
+): WorkspaceActionHandlers = WorkspaceActionHandlers(
+    onRename = { name -> onRename(workspace, name) },
+    onResetName = { onResetName(workspace) },
+    onCopyPath = { onCopyPath(workspace) },
+    onAddAsWorkspace = {
+        onAddWorkspace(workspace.serverRef, (workspace.workspaceKey as? WorkspaceKey.Directory)?.value)
+    },
+    onRemove = {
+        onRemove(workspace)
+        onRemoved()
+    },
+)
+
+private fun WorkspaceSummary.displayName(): String = label?.primary ?: workspaceKey.displayLabel()
+
+private fun WorkspaceSummary.pathText(): String = label?.path ?: workspaceKey.detailLabel()
 
 @Composable
 @Suppress("LongMethod")
 private fun sessionRow(
     session: SessionPreview,
+    workspaceName: String?,
+    sessionActions: HomeSessionActions?,
     onResume: () -> Unit,
     onWorkspace: (() -> Unit)? = null,
 ) {
     val theme = LocalOpenCodeTheme.current
-    Surface(
-        onClick = onResume,
-        shape = RectangleShape,
-        color = theme.backgroundElement,
-        modifier = Modifier.fillMaxWidth(),
+    homeSessionRowSurface(
+        session = session,
+        sessionActions = sessionActions,
+        testTag = "home_session_${session.serverRef.endpointKey}_${session.sessionId.value}",
+        onResume = onResume,
     ) {
         Row(
             Modifier.fillMaxWidth().height(IntrinsicSize.Min),
@@ -609,33 +787,38 @@ private fun sessionRow(
                         }
                     }
                 }
-                SessionWorkspaceLabel(session, onWorkspace)
+                SessionWorkspaceLabel(session, workspaceName, onWorkspace)
             }
         }
     }
 }
 
-private val SessionWorkspaceLabel: @Composable (SessionPreview, (() -> Unit)?) -> Unit = { session, onWorkspace ->
-    val projectKey = "${session.serverRef.endpointKey}:${session.workspaceKey}"
-    Surface(
-        shape = RectangleShape,
-        color = ProjectColors.colorForProject(projectKey),
-        modifier = Modifier
-            .widthIn(max = Sizing.chipMaxWidth)
-            .then(
-                if (onWorkspace == null) Modifier else Modifier.clickable(role = Role.Button, onClick = onWorkspace),
-            ),
-    ) {
-        Text(
-            session.workspaceKey.displayLabel(),
-            style = MaterialTheme.typography.labelSmall,
-            color = ProjectColors.textColorForProject(projectKey),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-        )
+private val SessionWorkspaceLabel: @Composable (SessionPreview, String?, (() -> Unit)?) -> Unit =
+    { session, workspaceName, onWorkspace ->
+        val projectKey = "${session.serverRef.endpointKey}:${session.groupKey}"
+        Surface(
+            shape = RectangleShape,
+            color = ProjectColors.colorForProject(projectKey),
+            modifier = Modifier
+                .widthIn(max = Sizing.chipMaxWidth)
+                .then(
+                    if (onWorkspace == null) {
+                        Modifier
+                    } else {
+                        Modifier.clickable(role = Role.Button, onClick = onWorkspace)
+                    },
+                ),
+        ) {
+            Text(
+                workspaceName ?: session.groupKey.displayLabel(),
+                style = MaterialTheme.typography.labelSmall,
+                color = ProjectColors.textColorForProject(projectKey),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+            )
+        }
     }
-}
 
 private fun SessionPresence.statusColor(
     theme: dev.blazelight.p4oc.ui.theme.opencode.OpenCodeTheme,
@@ -715,13 +898,14 @@ private fun workspaceDetailHeader(input: WorkspaceDetailInput) {
                 .semantics { contentDescription = statusLabel },
         )
         Text(
-            input.workspace.workspaceKey.displayLabel(),
+            input.workspace.displayName(),
             style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
             color = theme.text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        workspaceDetailOverflow(input)
         Box(
             modifier = Modifier
                 .size(Sizing.minTouchTarget)
@@ -759,13 +943,60 @@ private fun workspaceDetailCard(workspace: WorkspaceSummary) {
                 )
             }
             Text(
-                workspace.workspaceKey.detailLabel(),
+                workspace.pathText(),
                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                 color = theme.textMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            workspace.label?.takeIf { it.custom != null }?.let { label ->
+                detailCardNote(stringResource(R.string.home_workspace_automatic_name, label.generated))
+            }
+            if (workspace.isUserRoot) detailCardNote(stringResource(R.string.home_workspace_user_root))
         }
+    }
+}
+
+@Composable
+private fun detailCardNote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+        color = LocalOpenCodeTheme.current.textMuted,
+    )
+}
+
+/** Overflow `⋮` in the detail header; opens the same workspace menu as a row long-press. */
+@Composable
+private fun workspaceDetailOverflow(input: WorkspaceDetailInput) {
+    val workspaceActions = input.actions.workspaceActions
+    val workspace = input.workspace
+    val label = workspace.label
+    val directory = (workspace.workspaceKey as? WorkspaceKey.Directory)?.value
+    if (workspaceActions == null || label == null || directory == null) return
+    val actionsState = rememberWorkspaceActionsState()
+    val subject = workspace.actionSubject(label, directory)
+    val handlers = remember(workspace, workspaceActions, input.onBack) {
+        workspaceActions.handlersFor(workspace, onRemoved = input.onBack)
+    }
+    val description = stringResource(R.string.home_workspace_detail_more)
+    Box {
+        Box(
+            modifier = Modifier
+                .size(Sizing.minTouchTarget)
+                .clickable(role = Role.Button) { actionsState.isMenuOpen = true }
+                .semantics { contentDescription = description }
+                .testTag("home_workspace_detail_more"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.MoreVert,
+                contentDescription = null,
+                tint = LocalOpenCodeTheme.current.textMuted,
+                modifier = Modifier.size(Sizing.iconMd),
+            )
+        }
+        workspaceActionMenu(state = actionsState, subject = subject, handlers = handlers)
     }
 }
 
@@ -784,19 +1015,28 @@ private fun LazyListScope.workspaceSessions(input: WorkspaceDetailInput) {
         item { dashedEmptyCard("No sessions", "Start one with + new") }
     } else {
         items(input.sessions, key = { it.sessionId.value }) { session ->
-            workspaceSessionRow(session) { input.actions.onResumeSession(session) }
+            workspaceSessionRow(
+                session = session,
+                workspaceName = input.labels.primaryFor(session.serverRef, session.workspaceKey),
+                sessionActions = input.actions.sessionActions,
+            ) { input.actions.onResumeSession(session) }
         }
     }
 }
 
 @Composable
-private fun workspaceSessionRow(session: SessionPreview, onResume: () -> Unit) {
+private fun workspaceSessionRow(
+    session: SessionPreview,
+    workspaceName: String?,
+    sessionActions: HomeSessionActions?,
+    onResume: () -> Unit,
+) {
     val theme = LocalOpenCodeTheme.current
-    Surface(
-        onClick = onResume,
-        shape = RectangleShape,
-        color = theme.backgroundElement,
-        modifier = Modifier.fillMaxWidth(),
+    homeSessionRowSurface(
+        session = session,
+        sessionActions = sessionActions,
+        testTag = "home_workspace_session_${session.sessionId.value}",
+        onResume = onResume,
     ) {
         Row(
             Modifier.fillMaxWidth().padding(Spacing.sm),
@@ -819,8 +1059,65 @@ private fun workspaceSessionRow(session: SessionPreview, onResume: () -> Unit) {
                     maxLines = 1,
                 )
             }
-            SessionWorkspaceLabel(session, null)
+            SessionWorkspaceLabel(session, workspaceName, null)
         }
+    }
+}
+
+/** Tap resumes the session; long-press opens the shared session action menu when a host routes actions. */
+@Composable
+private fun homeSessionRowSurface(
+    session: SessionPreview,
+    sessionActions: HomeSessionActions?,
+    testTag: String,
+    onResume: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val theme = LocalOpenCodeTheme.current
+    if (sessionActions == null) {
+        Surface(
+            onClick = onResume,
+            shape = RectangleShape,
+            color = theme.backgroundElement,
+            modifier = Modifier.fillMaxWidth().testTag(testTag),
+            content = content,
+        )
+        return
+    }
+    val actionsState = rememberSessionActionsState()
+    val subject = SessionActionSubject(
+        sessionId = session.sessionId.value,
+        title = session.title,
+        isShared = session.isShared,
+        supportsSharing = sessionActions.supportsSharing(session),
+        canFork = !sessionActions.isForking(session),
+    )
+    val handlers = remember(session, sessionActions) {
+        SessionActionHandlers(
+            onRename = { newTitle -> sessionActions.onRename(session, newTitle) },
+            onDelete = { sessionActions.onDelete(session) },
+            onFork = { sessionActions.onFork(session) },
+            onToggleShare = { sessionActions.onToggleShare(session) },
+            onViewChanges = { sessionActions.onViewChanges(session) },
+            onSummarize = { sessionActions.onSummarize(session) },
+        )
+    }
+    Box {
+        Surface(
+            shape = RectangleShape,
+            color = theme.backgroundElement,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(testTag)
+                .sessionActionGestures(
+                    state = actionsState,
+                    subject = subject,
+                    handlers = handlers,
+                    onClick = onResume,
+                ),
+            content = content,
+        )
+        SessionActionMenu(state = actionsState, subject = subject, handlers = handlers)
     }
 }
 
@@ -886,10 +1183,16 @@ private fun openWorkCard(work: OpenWorkSummary, onFocus: () -> Unit) {
 private fun infoCard(title: String, body: String) {
     val theme = LocalOpenCodeTheme.current
     Surface(shape = RectangleShape, color = theme.backgroundElement, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
-            Text(title, style = MaterialTheme.typography.labelMedium, color = theme.text)
-            Text(body, style = MaterialTheme.typography.bodySmall, color = theme.textMuted)
-        }
+        infoCardContent(title, body)
+    }
+}
+
+@Composable
+private fun infoCardContent(title: String, body: String) {
+    val theme = LocalOpenCodeTheme.current
+    Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+        Text(title, style = MaterialTheme.typography.labelMedium, color = theme.text)
+        Text(body, style = MaterialTheme.typography.bodySmall, color = theme.textMuted)
     }
 }
 
@@ -927,28 +1230,33 @@ internal fun HomeSummaryState.filteredHomeResults(
     val needle = query.trim()
     val matchingWorkspaces = ArrayList<WorkspaceSummary>(workspaces.size)
     for (workspace in workspaces) {
-        if (needle.isEmpty() || workspace.matchesSearch(needle)) matchingWorkspaces += workspace
+        if (needle.isEmpty() || workspace.matchesSearch(needle, labels)) matchingWorkspaces += workspace
     }
     val matchingSessions = ArrayList<SessionPreview>(sessions.size)
     for (session in sessions) {
-        if (needle.isEmpty() || session.matchesSearch(needle)) matchingSessions += session
+        if (needle.isEmpty() || session.matchesSearch(needle, labels)) matchingSessions += session
     }
     matchingSessions.sortByDescending { it.updatedAt }
     return FilteredHomeResults(matchingWorkspaces, matchingSessions)
 }
 
-private fun WorkspaceSummary.matchesSearch(query: String): Boolean =
-    serverRef.displayName.contains(query, ignoreCase = true) ||
-        workspaceKey.displayLabel().contains(query, ignoreCase = true) ||
-        workspaceKey.detailLabel().contains(query, ignoreCase = true)
+/** Matches custom and automatic names, full path, and host (server name and badge). */
+private fun WorkspaceSummary.matchesSearch(query: String, labels: WorkspaceLabelIndex): Boolean =
+    workspaceSearchText(serverRef, workspaceKey, labels).contains(query, ignoreCase = true)
 
-private fun SessionPreview.matchesSearch(query: String): Boolean =
+private fun SessionPreview.matchesSearch(query: String, labels: WorkspaceLabelIndex): Boolean =
     title.contains(query, ignoreCase = true) ||
         directory.contains(query, ignoreCase = true) ||
-        serverRef.displayName.contains(query, ignoreCase = true) ||
-        workspaceKey.displayLabel().contains(query, ignoreCase = true) ||
-        workspaceKey.detailLabel().contains(query, ignoreCase = true)
+        workspaceSearchText(serverRef, groupKey, labels).contains(query, ignoreCase = true)
 
+private fun workspaceSearchText(serverRef: ServerRef, key: WorkspaceKey, labels: WorkspaceLabelIndex): String =
+    if (key is WorkspaceKey.Directory) {
+        labels.searchText(serverRef, key)
+    } else {
+        "${serverRef.displayName}\n${serverRef.badgeLabel}\n${key.displayLabel()}\n${key.detailLabel()}"
+    }
+
+/** Fixed copy for non-directory workspaces, and a fallback when no label is available. */
 private fun WorkspaceKey.displayLabel(): String = when (this) {
     WorkspaceKey.Global -> "No project context"
     is WorkspaceKey.Directory -> value.trimEnd('/').substringAfterLast('/').ifBlank { value }

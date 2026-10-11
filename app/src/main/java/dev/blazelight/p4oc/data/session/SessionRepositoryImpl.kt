@@ -63,6 +63,8 @@ class SessionRepositoryImpl(
     private val nowMs: () -> Long = { System.currentTimeMillis() },
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val questionFetcher: (suspend () -> List<QuestionRequestDto>)? = null,
+    /** This repository's own server's user workspace roots; statuses are hydrated for each. */
+    private val userWorkspaceRoots: suspend () -> List<String> = { emptyList() },
 ) : SessionRepository {
     data class CachedSnapshot(
         val snapshot: Snapshot,
@@ -1145,7 +1147,8 @@ class SessionRepositoryImpl(
         try {
             val projects = seedProjects.sortedByDescending { it.worktree }
             val semaphore = Semaphore(MAX_CONCURRENT)
-            val totalSteps = (projects.size + 1) * 2
+            val statusDirectories = hydrationStatusDirectories(projects.map { it.worktree }, userRootsForHydrate())
+            val totalSteps = (projects.size + 1) + statusDirectories.size
             val completedSteps = AtomicInteger(0)
 
             fun updateHydrationState(currentStep: String? = null, completed: Int = completedSteps.get()) {
@@ -1221,8 +1224,7 @@ class SessionRepositoryImpl(
                 }
 
                 val statusesDeferred = async {
-                    val directories = listOf<String?>(null) + projects.map { it.worktree }
-                    directories.map { directory ->
+                    statusDirectories.map { directory ->
                         async {
                             val label = directory?.substringAfterLast("/") ?: "global"
                             trackedStep("Loading status for $label") {
@@ -1303,6 +1305,14 @@ class SessionRepositoryImpl(
             }
         }
     }
+
+    /** User roots for status hydration; unreadable settings never fail a session hydrate. */
+    private suspend fun userRootsForHydrate(): List<String> = runCatching { userWorkspaceRoots() }
+        .getOrElse { error ->
+            if (error is CancellationException) throw error
+            AppLog.w(TAG, "Failed to read user workspace roots: ${error.javaClass.simpleName}")
+            emptyList()
+        }
 
     private fun workspaceSession(session: Session): WorkspaceSession = WorkspaceSession(
         id = SessionId(session.id),
@@ -1694,3 +1704,10 @@ class SessionRepositoryImpl(
         const val MESSAGE_RECOVERY_RETRY_DELAY_MS = 200L
     }
 }
+
+/**
+ * Directories whose session statuses are hydrated: the server default, every project worktree, and
+ * every user workspace root (v1 keeps status per instance directory), without duplicates.
+ */
+internal fun hydrationStatusDirectories(worktrees: List<String>, userRoots: List<String>): List<String?> =
+    (listOf<String?>(null) + worktrees + userRoots).distinct()

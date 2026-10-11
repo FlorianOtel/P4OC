@@ -120,6 +120,10 @@ class WorkspaceClient(
     suspend fun listProjectFiles(projectDirectory: String, path: String = "."): List<FileNodeDto> =
         api.listFiles(path, projectDirectory, workspace = null)
 
+    /** Lists an absolute server directory, routed at that path's filesystem root (never a tab directory). */
+    suspend fun listServerDirectory(root: String, absolutePath: String): List<FileNodeDto> =
+        api.listFiles(path = absolutePath, directory = root, workspace = null)
+
     override suspend fun listSessions(
         directory: String?,
         scope: String?,

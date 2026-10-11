@@ -81,7 +81,7 @@ object Sizing {
     val switchTrackHeight: Dp = 20.dp
     val switchKnobSize: Dp = 14.dp
     val switchKnobInset: Dp = 2.dp
-    val tabBarHeight: Dp = 30.dp // Tab bar strip height (design)
+    val tabBarHeight: Dp = 30.dp // Minimum tab bar strip height (design); grows with label text
     val treeIndent: Dp = 24.dp // Session tree indentation per level
     val chipMaxWidth: Dp = 150.dp // Project chip max width
 

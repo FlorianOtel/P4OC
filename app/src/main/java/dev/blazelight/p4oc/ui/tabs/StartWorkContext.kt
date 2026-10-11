@@ -2,7 +2,10 @@ package dev.blazelight.p4oc.ui.tabs
 
 import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceState
+import dev.blazelight.p4oc.domain.workspace.WorkspaceAttribution
 import dev.blazelight.p4oc.ui.screens.home.ScopedHomeRepositoryState
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabelIndex
 
 data class StartWorkTarget(
     val serverRef: ServerRef,
@@ -119,23 +122,26 @@ fun startWorkContextForHomeDetail(target: StartWorkTarget): StartWorkContext = S
     selection = StartWorkSelection.Selected(target),
 )
 
+/** Picker targets from loaded sessions; a session inside a user root contributes that root. */
 internal fun deriveStartWorkPickerTargets(
     repositories: List<ScopedHomeRepositoryState>,
+    userWorkspaces: UserWorkspaceState = UserWorkspaceState.Empty,
 ): List<StartWorkTarget> = repositories.flatMap { repository ->
+    val roots = userWorkspaces.rootsFor(repository.serverRef.endpointKey)
     repository.state.snapshot.sessions.values.map { session ->
-        StartWorkTarget(repository.serverRef, session.workspace.key)
+        StartWorkTarget(repository.serverRef, WorkspaceAttribution.groupKeyFor(session.session.directory, roots))
     }
 }.distinct()
 
 /** Workspaces listed per server before the "show more" row takes over. */
 internal const val PICKER_WORKSPACE_PAGE_SIZE = 10
 
-/** Workspaces of one server that match [query]; an empty query keeps every entry. */
+/** Workspaces of one server that match [query] by name, path, or host; an empty query keeps every entry. */
 internal fun StartWorkPickerGroup.matchingTargets(query: String): List<StartWorkTarget> {
     val needle = query.trim()
     if (needle.isEmpty()) return targets
     return targets.filter { target ->
-        target.workspaceKey.pickerSearchText().contains(needle, ignoreCase = true)
+        target.pickerSearchText(labels).contains(needle, ignoreCase = true)
     }
 }
 
@@ -193,10 +199,10 @@ internal fun buildStartWorkPickerRows(
     }
 }
 
-private fun WorkspaceKey.pickerSearchText(): String = when (this) {
-    is WorkspaceKey.Directory -> "$value ${value.trimEnd('/').substringAfterLast('/')}"
+private fun StartWorkTarget.pickerSearchText(labels: WorkspaceLabelIndex): String = when (val key = workspaceKey) {
+    is WorkspaceKey.Directory -> labels.searchText(serverRef, key)
     WorkspaceKey.Global -> "global server root no directory"
-    is WorkspaceKey.SessionScoped -> sessionId.value
+    is WorkspaceKey.SessionScoped -> key.sessionId.value
 }
 
 private fun sourceForRoute(route: String): StartWorkSource = when {

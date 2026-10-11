@@ -610,6 +610,49 @@ class SessionRepositoryImplTest {
     }
 
     @Test
+    fun `user roots add status reads without extra session listings`() = runTest {
+        val client = FakeWorkspaceClient().apply {
+            projects = listOf(FakeWorkspaceClient.projectDto("p1", "/w/repo-a"))
+            statusesByDirectory = mapOf("/w" to mapOf("root-session" to SessionStatusDto(type = "busy")))
+        }
+        val repository =
+            SessionRepositoryImpl(
+                client,
+                nowMs = { testScheduler.currentTime },
+                dispatcher = StandardTestDispatcher(testScheduler),
+                userWorkspaceRoots = { listOf("/w", "/w/repo-a") },
+            )
+
+        repository.refresh()
+
+        // The root that is also a project worktree is requested once.
+        assertEquals(setOf(null, "/w/repo-a", "/w"), client.getSessionStatusesDirectories.toSet())
+        assertEquals(3, client.getSessionStatusesDirectories.size)
+        assertTrue(repository.state.value.snapshot.statuses.containsKey("root-session"))
+        // Roots add no session listings: only the global listing and the project listing run.
+        assertEquals(setOf(null, "/w/repo-a"), client.listSessionsDirectories.toSet())
+        assertEquals(2, client.listSessionsDirectories.size)
+        assertTrue(client.listSessionsScopes.all { it == null || it == "project" })
+    }
+
+    @Test
+    fun `unreadable user roots never fail hydration`() = runTest {
+        val client = FakeWorkspaceClient()
+        val repository =
+            SessionRepositoryImpl(
+                client,
+                nowMs = { testScheduler.currentTime },
+                dispatcher = StandardTestDispatcher(testScheduler),
+                userWorkspaceRoots = { throw IllegalStateException("settings unavailable") },
+            )
+
+        repository.refresh()
+
+        assertEquals(listOf(null), client.getSessionStatusesDirectories)
+        assertTrue(repository.state.value is RepoState.Live)
+    }
+
+    @Test
     fun `send message continues after UI waiter is cancelled`() = runTest {
         val client = FakeWorkspaceClient().apply {
             sendMessageBlocker = CompletableDeferred()

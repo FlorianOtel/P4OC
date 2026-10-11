@@ -72,6 +72,7 @@ import dev.blazelight.p4oc.ui.screens.files.upload.UploadProgressSheet
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.workspace.LocalWorkspaceLabels
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
@@ -946,14 +947,18 @@ fun ChatScreen(
         }
 
     if (showFilePicker) {
-        val workspaceDirectory =
-            attachmentWorkspace.directory
-                ?: stringResource(R.string.picker_server_workspace)
+        val workspaceLabels = LocalWorkspaceLabels.current
+        val pickerWorkspaceLabel = attachmentWorkspace.directory
+            ?.let { directory ->
+                val label = workspaceLabels.directoryLabel(attachmentWorkspace.server.endpointKey, directory)
+                "${attachmentWorkspace.server.displayName} · ${label.primary}\n${label.path}"
+            }
+            ?: "${attachmentWorkspace.server.displayName}\n${stringResource(R.string.picker_server_workspace)}"
         FilePickerDialog(
             files =
                 if (choosingUploadFolder) pickerFiles.filter { it.isDirectory } else pickerFiles,
             currentPath = pickerCurrentPath,
-            workspaceLabel = "${attachmentWorkspace.server.displayName}\n$workspaceDirectory",
+            workspaceLabel = pickerWorkspaceLabel,
             isLoading = isPickerLoading,
             error = pickerError,
             selectedFiles = attachedFiles,

@@ -43,7 +43,8 @@ import dev.blazelight.p4oc.data.vcs.WorkspacePatch
 import dev.blazelight.p4oc.domain.model.FileContent
 import dev.blazelight.p4oc.domain.model.FileNode
 import dev.blazelight.p4oc.domain.model.Symbol
-import dev.blazelight.p4oc.domain.server.WorkspaceKey
+import dev.blazelight.p4oc.domain.server.ServerRef
+import dev.blazelight.p4oc.domain.workspace.Workspace
 import dev.blazelight.p4oc.ui.screens.files.upload.UploadCoordinator
 import dev.blazelight.p4oc.ui.theme.PocketCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
@@ -69,7 +70,7 @@ class WorkspaceChangesPresentationTest {
             PocketCodeTheme {
                 FileExplorerScreen(
                     viewModel = viewModel,
-                    workspaceKey = WorkspaceKey.Directory("/work/project"),
+                    workspace = Workspace(ServerRef.fromEndpointKey("http://test.example"), "/work/project"),
                     onFileClick = {},
                     onNavigateBack = {},
                 )
@@ -107,7 +108,7 @@ class WorkspaceChangesPresentationTest {
             PocketCodeTheme {
                 FileExplorerScreen(
                     viewModel = viewModel,
-                    workspaceKey = WorkspaceKey.Directory("/work/project"),
+                    workspace = Workspace(ServerRef.fromEndpointKey("http://test.example"), "/work/project"),
                     onFileClick = {},
                     onNavigateBack = {},
                 )
@@ -138,7 +139,7 @@ class WorkspaceChangesPresentationTest {
             PocketCodeTheme {
                 FileExplorerScreen(
                     viewModel = viewModel,
-                    workspaceKey = WorkspaceKey.Directory("/work/project"),
+                    workspace = Workspace(ServerRef.fromEndpointKey("http://test.example"), "/work/project"),
                     onFileClick = {},
                     onNavigateBack = {},
                 )
@@ -189,7 +190,7 @@ class WorkspaceChangesPresentationTest {
             PocketCodeTheme {
                 FileExplorerScreen(
                     viewModel = viewModel,
-                    workspaceKey = WorkspaceKey.Directory("/work/project"),
+                    workspace = Workspace(ServerRef.fromEndpointKey("http://test.example"), "/work/project"),
                     onFileClick = {},
                     onNavigateBack = {},
                 )

@@ -4,6 +4,7 @@ import dev.blazelight.p4oc.core.log.AppLog
 import dev.blazelight.p4oc.core.network.ServerConnectionRegistry
 import dev.blazelight.p4oc.data.remote.mapper.MessageMapper
 import dev.blazelight.p4oc.data.server.ActiveServerApiProvider
+import dev.blazelight.p4oc.data.workspace.UserWorkspaceRootsSource
 import dev.blazelight.p4oc.data.workspace.WorkspaceClient
 import dev.blazelight.p4oc.domain.model.OpenCodeEvent
 import dev.blazelight.p4oc.domain.server.ScopedEvent
@@ -19,10 +20,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
+@Suppress("LongParameterList") // Collaborators plus test-injectable dispatchers; no grouping hides intent better.
 class SessionRepositoryProvider(
     private val activeServerApiProvider: ActiveServerApiProvider,
     private val messageMapper: MessageMapper,
     private val serverConnectionRegistry: ServerConnectionRegistry,
+    /** Persisted user roots; each repository is bound to its own server's roots at acquire. */
+    private val userWorkspaceRoots: UserWorkspaceRootsSource,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val repositoryDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val json: Json = Json.Default,
@@ -67,6 +71,7 @@ class SessionRepositoryProvider(
                 workspaceClient,
                 messageMapper,
                 dispatcher = repositoryDispatcher,
+                userWorkspaceRoots = { userWorkspaceRoots.roots(workspace.server) },
             )
             Entry(
                 workspaceClient = workspaceClient,

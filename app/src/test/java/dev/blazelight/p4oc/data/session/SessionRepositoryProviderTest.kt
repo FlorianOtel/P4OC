@@ -117,6 +117,9 @@ class SessionRepositoryProviderTest {
         private val byKey = mutableMapOf<Pair<ServerRef, ServerGeneration>, Bound>()
         private val defaultApi = mockk<OpenCodeApi>(relaxed = true)
 
+        /** Persisted user roots per server endpoint, as the settings-backed source would return them. */
+        val userRootsByEndpoint = mutableMapOf<String, List<String>>()
+
         fun bind(
             serverRef: ServerRef = server,
             generation: ServerGeneration = this@SessionRepositoryProviderTest.generation,
@@ -151,6 +154,7 @@ class SessionRepositoryProviderTest {
                 },
                 messageMapper = MessageMapper(),
                 serverConnectionRegistry = registry,
+                userWorkspaceRoots = { serverRef -> userRootsByEndpoint[serverRef.endpointKey].orEmpty() },
                 dispatcher = dispatcher,
                 repositoryDispatcher = dispatcher,
                 json = json,
@@ -569,6 +573,7 @@ class SessionRepositoryProviderTest {
             activeServerApiProvider = ActiveServerApiProvider { _, _ -> api },
             messageMapper = MessageMapper(),
             serverConnectionRegistry = registry,
+            userWorkspaceRoots = { emptyList() },
             dispatcher = StandardTestDispatcher(testScheduler),
             repositoryDispatcher = StandardTestDispatcher(testScheduler),
         )
@@ -596,6 +601,31 @@ class SessionRepositoryProviderTest {
         runCurrent()
         testScheduler.advanceUntilIdle()
         coVerify(exactly = 2) { api.getMessages("s1", 100, null, "/repo", null) }
+    }
+
+    @Test
+    fun `repository hydrates statuses for its own server user roots only`() = runTest {
+        val harness = harness()
+        val serverB = ServerRef.fromEndpointKey("http://other.test")
+        val boundA = harness.bind()
+        val boundB = harness.bind(serverB, generation)
+        harness.userRootsByEndpoint[server.endpointKey] = listOf("/a")
+        harness.userRootsByEndpoint[serverB.endpointKey] = listOf("/b")
+        val provider = harness.provider()
+        val workspaceB = Workspace(serverB, null)
+        val lease = provider.acquire(workspaceB, generation)
+        try {
+            lease.repository.refresh()
+
+            coVerify(exactly = 1) { boundB.api.getSessionStatuses("/b", null) }
+            coVerify(exactly = 0) { boundB.api.getSessionStatuses("/a", null) }
+            coVerify(exactly = 0) { boundA.api.getSessionStatuses(any(), any()) }
+            // Roots add status reads only: the session listings stay the existing global listing.
+            coVerify(exactly = 1) { boundB.api.listSessions(any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 1) { boundB.api.listSessions(null, null, null, null, true, null, null, any()) }
+        } finally {
+            provider.release(workspaceB, generation)
+        }
     }
 
     private fun connection(

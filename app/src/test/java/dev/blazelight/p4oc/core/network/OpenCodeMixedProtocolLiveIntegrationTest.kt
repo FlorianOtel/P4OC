@@ -126,6 +126,7 @@ class OpenCodeMixedProtocolLiveIntegrationTest {
             activeServerApiProvider = activeServerApiProvider(registry),
             messageMapper = MessageMapper(),
             serverConnectionRegistry = registry,
+            userWorkspaceRoots = { emptyList() },
             json = json,
         )
         // Same project directory on both servers: isolation must come from server identity alone.

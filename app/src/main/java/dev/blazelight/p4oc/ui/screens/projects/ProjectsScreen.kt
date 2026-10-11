@@ -37,6 +37,7 @@ import dev.blazelight.p4oc.ui.components.TuiLoadingScreen
 import dev.blazelight.p4oc.ui.components.TuiTopBar
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.workspace.LocalWorkspaceLabels
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.koin.androidx.compose.koinViewModel
@@ -54,6 +55,7 @@ fun ProjectsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val theme = LocalOpenCodeTheme.current
+    val workspaceLabels = LocalWorkspaceLabels.current
 
     Scaffold(
         containerColor = theme.background,
@@ -117,6 +119,9 @@ fun ProjectsScreen(
                     items(uiState.projects, key = { it.id }) { project ->
                         ProjectRow(
                             project = project,
+                            name = workspaceLabels
+                                .directoryLabel(workspaceClient.workspace.server.endpointKey, project.worktree)
+                                .primary,
                             onClick = {
                                 onProjectClick(project.id, project.worktree)
                             }
@@ -161,10 +166,11 @@ private fun EmptyProjectsMessage(staleProjectCount: Int) {
 @Composable
 private fun ProjectRow(
     project: ProjectDto,
+    name: String,
     onClick: () -> Unit
 ) {
     val theme = LocalOpenCodeTheme.current
-    val projectName = project.worktree.substringAfterLast("/")
+    val projectName = name
     val projectPath = project.worktree
     val createdDate = remember(project.time.created) {
         val instant = Instant.fromEpochMilliseconds(project.time.created)

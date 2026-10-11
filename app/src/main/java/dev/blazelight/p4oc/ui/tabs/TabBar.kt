@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -27,8 +28,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.SessionConnectionState
 import dev.blazelight.p4oc.domain.model.SessionPresence
@@ -37,6 +41,7 @@ import dev.blazelight.p4oc.ui.components.status.SessionStatusDot
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabelIndex
 
 /**
  * Tab bar showing all open tabs with indicators. Closeable tabs carry a compact trailing
@@ -71,6 +76,9 @@ fun TabBar(
     val theme = LocalOpenCodeTheme.current
     val listState = rememberLazyListState()
     val newWorkLabel = stringResource(R.string.cd_new_work)
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace)
+    val addStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace)
+    val tabBarHeight = rememberTabBarHeight(labelStyle, addStyle)
 
     // Home is pinned outside the scrolling work-tab list.
     LaunchedEffect(activeTabId, tabs) {
@@ -89,11 +97,13 @@ fun TabBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(Sizing.tabBarHeight),
+                    .height(tabBarHeight),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 tabs.firstOrNull { it.isPinnedHome }?.let { home ->
                     tabIndicator(
+                        height = tabBarHeight,
+                        labelStyle = labelStyle,
                         state = TabIndicatorState(
                             id = home.id,
                             title = tabTitles.getValue(home.id),
@@ -142,6 +152,8 @@ fun TabBar(
                         }
 
                         tabIndicator(
+                            height = tabBarHeight,
+                            labelStyle = labelStyle,
                             state = TabIndicatorState(
                                 id = tab.id,
                                 title = title,
@@ -160,7 +172,7 @@ fun TabBar(
 
                 // Add button — mono glyph with a left divider (design)
                 VerticalDivider(
-                    modifier = Modifier.height(Sizing.tabBarHeight),
+                    modifier = Modifier.height(tabBarHeight),
                     color = theme.border,
                     thickness = Sizing.strokeThin,
                 )
@@ -175,8 +187,7 @@ fun TabBar(
                 ) {
                     Text(
                         text = "+",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontFamily = FontFamily.Monospace,
+                        style = addStyle,
                         color = theme.textMuted,
                     )
                 }
@@ -187,11 +198,36 @@ fun TabBar(
 }
 
 /**
+ * Tab strip height: the design's [Sizing.tabBarHeight] at default text sizes, growing with the
+ * tab label and "+" glyph line heights (system font scale) so they never clip.
+ */
+@Composable
+private fun rememberTabBarHeight(labelStyle: TextStyle, addStyle: TextStyle): Dp {
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(textMeasurer, density, labelStyle, addStyle) {
+        // Single-line height depends on the style's font metrics/line height, not the characters.
+        val labelHeight = textMeasurer.measure(text = "Ag", style = labelStyle).size.height
+        val addHeight = textMeasurer.measure(text = "+", style = addStyle).size.height
+        with(density) {
+            maxOf(
+                Sizing.tabBarHeight,
+                // Active-tab top strip + breathing room above and below the label.
+                labelHeight.toDp() + Sizing.strokeThick + Spacing.xs * 2,
+                addHeight.toDp() + Spacing.xs * 2,
+            )
+        }
+    }
+}
+
+/**
  * Individual tab indicator showing icon, title, state, and close button.
  */
 @Composable
 private fun tabIndicator(
     state: TabIndicatorState,
+    height: Dp,
+    labelStyle: TextStyle,
     modifier: Modifier = Modifier,
 ) {
     val theme = LocalOpenCodeTheme.current
@@ -205,7 +241,7 @@ private fun tabIndicator(
     val topStripColor = if (state.isActive) theme.primary else Color.Transparent
     Column(
         modifier = modifier
-            .height(Sizing.tabBarHeight)
+            .height(height)
             .background(backgroundColor)
             .drawBehind {
                 drawRect(
@@ -226,6 +262,7 @@ private fun tabIndicator(
             tabIndicatorRow(
                 state = state,
                 needsAttention = needsAttention,
+                labelStyle = labelStyle,
             )
         }
     }
@@ -236,6 +273,7 @@ private fun tabIndicator(
 private fun tabIndicatorRow(
     state: TabIndicatorState,
     needsAttention: Boolean,
+    labelStyle: TextStyle,
 ) {
     val theme = LocalOpenCodeTheme.current
     val haptic = LocalHapticFeedback.current
@@ -269,7 +307,7 @@ private fun tabIndicatorRow(
         tabIndicatorIcon(state)
         Text(
             text = state.title,
-            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+            style = labelStyle,
             color = when {
                 needsAttention -> theme.warning
                 state.isActive -> theme.text
@@ -373,14 +411,43 @@ fun rememberTabTitleLabels(): TabTitleLabels = TabTitleLabels(
     sessionWorkspace = stringResource(R.string.tab_workspace_session),
 )
 
-fun getTitleForTab(tab: TabInstance, labels: TabTitleLabels): String {
+fun getTitleForTab(tab: TabInstance, labels: TabTitleLabels, workspaceLabels: WorkspaceLabelIndex): String =
+    titleWithWorkspace(tab, labels, tabWorkspaceName(tab, labels, workspaceLabels))
+
+/**
+ * Titles for every tab. When open tabs on different servers share a workspace name, each of those
+ * titles also carries its server badge; the stored alias is unchanged.
+ */
+fun getTitlesForTabs(
+    tabs: List<TabInstance>,
+    labels: TabTitleLabels,
+    workspaceLabels: WorkspaceLabelIndex,
+): Map<String, String> {
+    val names = tabs.associate { it.id to tabWorkspaceName(it, labels, workspaceLabels) }
+    val ambiguous = tabs
+        .filter { !it.isPinnedHome && names[it.id] != null && it.serverRef != null }
+        .groupBy { names.getValue(it.id) }
+        .filterValues { group -> group.mapTo(HashSet()) { it.serverRef?.endpointKey }.size > 1 }
+        .keys
+    return tabs.associate { tab ->
+        val name = names[tab.id]
+        val badge = tab.serverRef?.badgeLabel
+        val shown = if (name != null && badge != null && name in ambiguous) "$name · $badge" else name
+        tab.id to titleWithWorkspace(tab, labels, shown)
+    }
+}
+
+private fun titleWithWorkspace(tab: TabInstance, labels: TabTitleLabels, workspaceName: String?): String {
     if (tab.isPinnedHome) return labels.home
     val objectTitle = when {
         tab.sessionId != null -> tab.sessionTitle?.takeIf { it.isNotBlank() } ?: labels.chat
         else -> getTitleForRoute(tab.startRoute, labels, workspaceKey = null)
     }
-    return withWorkspaceSuffix(objectTitle, tab.workspaceKey, labels)
+    return workspaceName?.let { "$objectTitle · $it" } ?: objectTitle
 }
+
+private fun tabWorkspaceName(tab: TabInstance, labels: TabTitleLabels, workspaceLabels: WorkspaceLabelIndex): String? =
+    workspaceLabels.primaryFor(tab.serverRef, tab.workspaceKey) ?: workspaceLabel(tab.workspaceKey, labels)
 
 fun getIconForTab(tab: TabInstance): ImageVector = when {
     tab.isPinnedHome -> Icons.Default.Home
@@ -416,7 +483,7 @@ private fun withWorkspaceSuffix(title: String, workspaceKey: WorkspaceKey?, labe
 }
 
 fun workspaceLabel(workspaceKey: WorkspaceKey?, labels: TabTitleLabels): String? = when (workspaceKey) {
-    is WorkspaceKey.Directory -> workspaceKey.value.trimEnd('/').substringAfterLast('/').ifBlank { workspaceKey.value }
+    is WorkspaceKey.Directory -> WorkspaceLabelIndex.Empty.directoryLabel(null, workspaceKey.value).primary
     WorkspaceKey.Global -> labels.globalWorkspace
     is WorkspaceKey.SessionScoped -> labels.sessionWorkspace
     null -> null

@@ -47,6 +47,7 @@ import dev.blazelight.p4oc.ui.screens.sessions.SessionListScreen
 import dev.blazelight.p4oc.ui.screens.sessions.SessionListViewModel
 import dev.blazelight.p4oc.ui.screens.settings.*
 import dev.blazelight.p4oc.ui.screens.terminal.TerminalScreen
+import dev.blazelight.p4oc.ui.workspace.LocalWorkspaceLabels
 import dev.blazelight.p4oc.ui.workspace.WorkspaceRepositoryOwner
 import dev.blazelight.p4oc.ui.workspace.WorkspaceViewModel
 import kotlinx.coroutines.launch
@@ -233,6 +234,7 @@ fun TabNavHost(
                             savedServers = savedServers,
                             connectionStates = homeConnectionStates,
                             tabs = tabs,
+                            labels = LocalWorkspaceLabels.current,
                         ),
                     ),
                     actions = HomeActions(
@@ -615,7 +617,7 @@ fun TabNavHost(
                         workspaceViewModel = workspaceViewModel,
                         keySuffix = "files",
                     ),
-                    workspaceKey = workspaceOwner.workspace.key,
+                    workspace = workspaceOwner.workspace,
                     onFileClick = { path ->
                         navController.navigate(Screen.FileViewer.createRoute(path))
                     },
@@ -704,7 +706,12 @@ fun TabNavHost(
                 SessionDiffScreen(
                     sessionId = sessionId,
                     workspaceClient = workspaceViewModel.workspaceClient,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = {
+                        // A diff opened from Home is its tab's root; leaving it closes the tab.
+                        if (!navController.popBackStack()) {
+                            onCloseTab()
+                        }
+                    }
                 )
             }
 

@@ -8,7 +8,12 @@ import dev.blazelight.p4oc.domain.model.resolveSessionPresence
 import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import dev.blazelight.p4oc.domain.session.SessionId
+import dev.blazelight.p4oc.domain.workspace.ServerPath
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceState
+import dev.blazelight.p4oc.domain.workspace.WorkspaceAttribution
 import dev.blazelight.p4oc.ui.tabs.TabInstance
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabel
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabelIndex
 
 /** A repository snapshot whose immutable owner is known by Home. */
 data class ScopedHomeRepositoryState(
@@ -26,12 +31,19 @@ data class ServerSummary(
     val failure: String? = null,
 )
 
+/**
+ * One Home workspace row. [workspaceKey] is the grouping key: a user workspace root for every
+ * session inside it, otherwise the exact session or tab directory.
+ */
 data class WorkspaceSummary(
     val serverRef: ServerRef,
     val workspaceKey: WorkspaceKey,
     val sessionCount: Int,
     val openTabCount: Int,
     val mostRecentAt: Long,
+    val isUserRoot: Boolean = false,
+    /** Display name; null for non-directory workspaces, which keep their fixed copy. */
+    val label: WorkspaceLabel? = null,
 )
 
 enum class OpenWorkType { Chat, Files, Terminal }
@@ -43,11 +55,14 @@ data class OpenWorkSummary(
     val type: OpenWorkType,
     val title: String,
     val status: SessionPresence? = null,
+    /** Home workspace this tab is listed under; the tab's own [workspaceKey] is unchanged. */
+    val groupKey: WorkspaceKey = workspaceKey,
 )
 
 data class SessionPreview(
     val sessionId: SessionId,
     val serverRef: ServerRef,
+    /** Exact routing key used to resume the session. */
     val workspaceKey: WorkspaceKey,
     val title: String,
     val updatedAt: Long,
@@ -57,6 +72,8 @@ data class SessionPreview(
     val additions: Int,
     val deletions: Int,
     val isShared: Boolean,
+    /** Home workspace this session is grouped under (deepest user root, else its directory). */
+    val groupKey: WorkspaceKey = workspaceKey,
 )
 
 data class HomeSummaryState(
@@ -66,6 +83,7 @@ data class HomeSummaryState(
     val sessions: List<SessionPreview>,
     val isLoading: Boolean,
     val partialFailures: List<String> = emptyList(),
+    val labels: WorkspaceLabelIndex = WorkspaceLabelIndex.Empty,
 )
 
 data class HomeSummaryInput(
@@ -73,19 +91,22 @@ data class HomeSummaryInput(
     val connectionStates: Map<String, ConnectionState>,
     val tabs: List<TabInstance>,
     val repositories: List<ScopedHomeRepositoryState> = emptyList(),
+    /** Caps discovered workspaces only; user workspaces are always listed. */
     val workspaceLimit: Int = 12,
     val openWorkLimit: Int = 24,
+    val userWorkspaces: UserWorkspaceState = UserWorkspaceState.Empty,
+    val labels: WorkspaceLabelIndex = WorkspaceLabelIndex.Empty,
 )
 
 object HomeSummaryBuilder {
     fun build(input: HomeSummaryInput): HomeSummaryState {
         val workTabs = input.tabs.filterNot { it.isPinnedHome }
         val failures = mutableListOf<String>()
-        val sessions = buildSessionPreviews(input.repositories)
+        val sessions = buildSessionPreviews(input.repositories, input.userWorkspaces)
         val serverSummaries = buildServerSummaries(input, sessions, workTabs, failures)
         appendRepositoryFailures(input.repositories, failures)
-        val openWork = buildOpenWork(workTabs, sessions, input.openWorkLimit)
-        val workspaces = buildWorkspaces(sessions, openWork, input.workspaceLimit)
+        val openWork = buildOpenWork(workTabs, sessions, input.openWorkLimit, input.userWorkspaces)
+        val workspaces = buildWorkspaces(input, sessions, openWork)
 
         return HomeSummaryState(
             servers = serverSummaries,
@@ -94,34 +115,43 @@ object HomeSummaryBuilder {
             sessions = sessions,
             isLoading = input.repositories.any { it.state is RepoState.Hydrating },
             partialFailures = failures.distinct(),
+            labels = input.labels,
         )
     }
 }
 
-private fun buildSessionPreviews(repositories: List<ScopedHomeRepositoryState>): List<SessionPreview> =
-    repositories.flatMap { scoped ->
-        val sessions = scoped.state.snapshot.sessions.values
-        val childCounts = sessions.mapNotNull { it.session.parentID }
-            .groupingBy { it }
-            .eachCount()
-        sessions.map { workspaceSession ->
-            val session = workspaceSession.session
-            SessionPreview(
-                sessionId = workspaceSession.id,
-                serverRef = scoped.serverRef,
-                workspaceKey = workspaceSession.workspace.key,
-                title = session.title.ifBlank { "Untitled session" },
-                updatedAt = session.updatedAt,
-                status = resolveSessionPresence(scoped.state.snapshot.statuses[session.id]),
-                directory = session.directory,
-                childCount = childCounts[session.id] ?: 0,
-                additions = session.summary?.additions ?: 0,
-                deletions = session.summary?.deletions ?: 0,
-                isShared = session.shareUrl != null,
-            )
-        }
-    }.distinctBy { it.serverRef.endpointKey to it.sessionId.value }
-        .sortedByDescending { it.updatedAt }
+/** Grouping key for a directory on [serverRef]: its deepest user root, else the directory itself. */
+private fun UserWorkspaceState.groupKeyFor(serverRef: ServerRef, directory: String): WorkspaceKey =
+    WorkspaceAttribution.groupKeyFor(directory, rootsFor(serverRef.endpointKey))
+
+private fun buildSessionPreviews(
+    repositories: List<ScopedHomeRepositoryState>,
+    userWorkspaces: UserWorkspaceState,
+): List<SessionPreview> = repositories.flatMap { scoped ->
+    val sessions = scoped.state.snapshot.sessions.values
+    val childCounts = sessions.mapNotNull { it.session.parentID }
+        .groupingBy { it }
+        .eachCount()
+    sessions.map { workspaceSession ->
+        val session = workspaceSession.session
+        SessionPreview(
+            sessionId = workspaceSession.id,
+            serverRef = scoped.serverRef,
+            workspaceKey = workspaceSession.workspace.key,
+            title = session.title.ifBlank { "Untitled session" },
+            updatedAt = session.updatedAt,
+            status = resolveSessionPresence(scoped.state.snapshot.statuses[session.id]),
+            directory = session.directory,
+            childCount = childCounts[session.id] ?: 0,
+            additions = session.summary?.additions ?: 0,
+            deletions = session.summary?.deletions ?: 0,
+            isShared = session.shareUrl != null,
+            // Attribution reads the server-reported directory, never the loading repository's workspace.
+            groupKey = userWorkspaces.groupKeyFor(scoped.serverRef, session.directory),
+        )
+    }
+}.distinctBy { it.serverRef.endpointKey to it.sessionId.value }
+    .sortedByDescending { it.updatedAt }
 
 private fun buildServerSummaries(
     input: HomeSummaryInput,
@@ -165,9 +195,13 @@ private fun buildOpenWork(
     tabs: List<TabInstance>,
     sessions: List<SessionPreview>,
     limit: Int,
-): List<OpenWorkSummary> = tabs.mapNotNull { it.toOpenWorkSummary(sessions) }.take(limit)
+    userWorkspaces: UserWorkspaceState,
+): List<OpenWorkSummary> = tabs.mapNotNull { it.toOpenWorkSummary(sessions, userWorkspaces) }.take(limit)
 
-private fun TabInstance.toOpenWorkSummary(sessions: List<SessionPreview>): OpenWorkSummary? {
+private fun TabInstance.toOpenWorkSummary(
+    sessions: List<SessionPreview>,
+    userWorkspaces: UserWorkspaceState,
+): OpenWorkSummary? {
     val ownedServer = serverRef
     val ownedWorkspace = workspaceKey
     val type = openWorkType()
@@ -186,6 +220,9 @@ private fun TabInstance.toOpenWorkSummary(sessions: List<SessionPreview>): OpenW
         type = type,
         title = openWorkTitle(type, matchingSession),
         status = matchingSession?.status,
+        groupKey = (ownedWorkspace as? WorkspaceKey.Directory)
+            ?.let { userWorkspaces.groupKeyFor(ownedServer, it.value) }
+            ?: ownedWorkspace,
     )
 }
 
@@ -205,39 +242,61 @@ private fun TabInstance.openWorkTitle(
     OpenWorkType.Terminal -> "Terminal"
 }
 
+private val workspaceOrder = compareByDescending<WorkspaceSummary> { it.mostRecentAt }
+    .thenBy { it.workspaceKey.toString() }
+
 private fun buildWorkspaces(
+    input: HomeSummaryInput,
     sessions: List<SessionPreview>,
     openWork: List<OpenWorkSummary>,
-    limit: Int,
 ): List<WorkspaceSummary> {
-    val workspaceKeys = (
-        sessions.map { it.serverRef to it.workspaceKey } +
-            openWork.map { it.serverRef to it.workspaceKey }
-        ).distinctBy { it.first.endpointKey to it.second }
-    return workspaceKeys.map { (serverRef, workspaceKey) ->
-        workspaceSummary(serverRef, workspaceKey, sessions, openWork)
-    }.sortedWith(
-        compareByDescending<WorkspaceSummary> { it.mostRecentAt }
-            .thenBy { it.workspaceKey.toString() },
-    ).take(limit)
+    val userRoots = input.savedServers.flatMap { saved ->
+        val serverRef = ServerRef.fromEndpointKey(saved.endpointKey, saved.displayName)
+        input.userWorkspaces.forServer(saved.endpointKey).roots.map { root ->
+            workspaceSummary(
+                WorkspaceGroup(serverRef, WorkspaceKey.Directory(root.path.value), root.path, root.addedAt),
+                sessions,
+                openWork,
+                input.labels,
+            )
+        }
+    }
+    val userKeys = userRoots.mapTo(HashSet()) { it.serverRef.endpointKey to it.workspaceKey }
+    val discovered = (
+        sessions.map { it.serverRef to it.groupKey } +
+            openWork.map { it.serverRef to it.groupKey }
+        )
+        .distinctBy { it.first.endpointKey to it.second }
+        .filterNot { (it.first.endpointKey to it.second) in userKeys }
+        .map { (serverRef, key) -> workspaceSummary(WorkspaceGroup(serverRef, key), sessions, openWork, input.labels) }
+        .sortedWith(workspaceOrder)
+        .take(input.workspaceLimit)
+    return (userRoots + discovered).sortedWith(workspaceOrder)
 }
 
+private class WorkspaceGroup(
+    val serverRef: ServerRef,
+    val key: WorkspaceKey,
+    val userRoot: ServerPath? = null,
+    val addedAt: Long = 0L,
+)
+
 private fun workspaceSummary(
-    serverRef: ServerRef,
-    workspaceKey: WorkspaceKey,
+    group: WorkspaceGroup,
     sessions: List<SessionPreview>,
     openWork: List<OpenWorkSummary>,
+    labels: WorkspaceLabelIndex,
 ): WorkspaceSummary {
-    val scopedSessions = sessions.filter {
-        it.serverRef.endpointKey == serverRef.endpointKey && it.workspaceKey == workspaceKey
-    }
+    val endpointKey = group.serverRef.endpointKey
+    val scopedSessions = sessions.filter { it.serverRef.endpointKey == endpointKey && it.groupKey == group.key }
+    val latestSession = scopedSessions.maxOfOrNull { it.updatedAt } ?: 0L
     return WorkspaceSummary(
-        serverRef = serverRef,
-        workspaceKey = workspaceKey,
+        serverRef = group.serverRef,
+        workspaceKey = group.key,
         sessionCount = scopedSessions.size,
-        openTabCount = openWork.count {
-            it.serverRef.endpointKey == serverRef.endpointKey && it.workspaceKey == workspaceKey
-        },
-        mostRecentAt = scopedSessions.maxOfOrNull { it.updatedAt } ?: 0L,
+        openTabCount = openWork.count { it.serverRef.endpointKey == endpointKey && it.groupKey == group.key },
+        mostRecentAt = maxOf(latestSession, group.addedAt),
+        isUserRoot = group.userRoot != null,
+        label = (group.key as? WorkspaceKey.Directory)?.let { labels.directoryLabel(endpointKey, it.value) },
     )
 }

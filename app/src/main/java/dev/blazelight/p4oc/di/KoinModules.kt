@@ -18,6 +18,8 @@ import dev.blazelight.p4oc.data.server.StaleWorkspaceClientException
 import dev.blazelight.p4oc.data.session.SessionRepositoryImpl
 import dev.blazelight.p4oc.data.session.SessionRepositoryProvider
 import dev.blazelight.p4oc.data.vcs.WorkspaceChangesRepository
+import dev.blazelight.p4oc.data.workspace.SettingsUserWorkspaceRootsSource
+import dev.blazelight.p4oc.data.workspace.UserWorkspaceRootsSource
 import dev.blazelight.p4oc.ui.screens.chat.ChatViewModel
 import dev.blazelight.p4oc.ui.screens.chat.ModelSelectionCoordinator
 import dev.blazelight.p4oc.ui.screens.files.FilesViewModel
@@ -95,7 +97,8 @@ val networkModule = module {
     single<ActiveServerApiProvider> {
         activeServerApiProvider(get())
     }
-    single { SessionRepositoryProvider(get(), get(), get(), json = get()) }
+    single<UserWorkspaceRootsSource> { SettingsUserWorkspaceRootsSource(get()) }
+    single { SessionRepositoryProvider(get(), get(), get(), userWorkspaceRoots = get(), json = get()) }
 }
 
 val viewModelModule = module {

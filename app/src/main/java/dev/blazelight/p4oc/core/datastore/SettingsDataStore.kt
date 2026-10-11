@@ -13,12 +13,18 @@ import dev.blazelight.p4oc.data.remote.dto.ModelInput
 import dev.blazelight.p4oc.domain.server.ServerIdentity
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import dev.blazelight.p4oc.domain.session.SessionId
+import dev.blazelight.p4oc.domain.workspace.ServerPath
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceEdit
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceEdits
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceState
 import dev.blazelight.p4oc.domain.workspace.Workspace
 import dev.blazelight.p4oc.terminal.TerminalFontSize
+import dev.blazelight.p4oc.ui.theme.InterfaceScale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -176,6 +182,7 @@ class SettingsDataStore constructor(
         private val KEY_RECENT_SERVERS = stringPreferencesKey("recent_servers")
         private val KEY_SAVED_SERVERS = stringPreferencesKey("saved_servers_v1")
         private val KEY_TAB_STATE = stringPreferencesKey("tab_state_v1")
+        private val KEY_USER_WORKSPACES = stringPreferencesKey("user_workspaces_v1")
 
         // Visual settings keys
         private val KEY_FONT_SIZE = intPreferencesKey("font_size")
@@ -183,6 +190,7 @@ class SettingsDataStore constructor(
         private val KEY_FONT_FAMILY = stringPreferencesKey("font_family")
         private val KEY_CODE_BLOCK_FONT_SIZE = intPreferencesKey("code_block_font_size")
         private val KEY_TERMINAL_FONT_SIZE = intPreferencesKey("terminal_font_size")
+        private val KEY_INTERFACE_SCALE = intPreferencesKey("interface_scale_percent")
         private val KEY_SHOW_LINE_NUMBERS = booleanPreferencesKey("show_line_numbers")
         private val KEY_WORD_WRAP = booleanPreferencesKey("word_wrap")
         private val KEY_COMPACT_MODE = booleanPreferencesKey("compact_mode")
@@ -279,6 +287,15 @@ class SettingsDataStore constructor(
     val oledBlack: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_OLED_BLACK] ?: false
     }
+
+    /** App-wide interface scale percent; MainActivity applies it and recreates when it changes. */
+    val interfaceScale: Flow<Int> = context.dataStore.data.map { prefs -> prefs.interfaceScale() }
+        .distinctUntilChanged()
+
+    // Read through asMap so a value stored with the wrong type falls back to the default instead of
+    // throwing: this is read while the activity attaches, where a throw would crash every launch.
+    private fun Preferences.interfaceScale(): Int =
+        InterfaceScale.sanitize(asMap()[KEY_INTERFACE_SCALE] as? Int)
 
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_ONBOARDING_COMPLETED] ?: false
@@ -522,6 +539,10 @@ class SettingsDataStore constructor(
                     prefs[KEY_NOTIFY_SERVER_ROUTING] = updatedRouting
                 }
             }
+            // A legacy record can share the surviving record's endpoint; never prune a live endpoint.
+            removed?.endpointKey?.takeIf { key -> updated.none { it.endpointKey == key } }?.let { endpointKey ->
+                prefs.storeUserWorkspaces(pruneUserWorkspaces(prefs[KEY_USER_WORKSPACES], endpointKey))
+            }
         }
         if (removeCredentials) {
             removed?.let { server ->
@@ -529,6 +550,53 @@ class SettingsDataStore constructor(
                 credentialStore.removeServerPassword(server.endpoint)
             }
         }
+    }
+
+    /** User-defined workspace roots and custom aliases for every saved server. */
+    val userWorkspaces: Flow<UserWorkspaceState> = context.dataStore.data
+        .map { prefs -> decodeUserWorkspaces(prefs[KEY_USER_WORKSPACES]) }
+        .distinctUntilChanged()
+
+    suspend fun addUserWorkspaceRoot(endpointKey: String, path: ServerPath, addedAt: Long): UserWorkspaceEdit =
+        editUserWorkspaces { state -> UserWorkspaceEdits.addRoot(state, endpointKey, path, addedAt) }
+
+    suspend fun removeUserWorkspaceRoot(endpointKey: String, path: ServerPath): UserWorkspaceEdit =
+        editUserWorkspaces { state ->
+            UserWorkspaceEdit.Updated(UserWorkspaceEdits.removeRoot(state, endpointKey, path))
+        }
+
+    /** Sets a custom alias; null, blank, or a value equal to [generated] resets to the automatic name. */
+    suspend fun setWorkspaceAlias(
+        endpointKey: String,
+        path: ServerPath,
+        alias: String?,
+        generated: String?,
+    ): UserWorkspaceEdit = editUserWorkspaces { state ->
+        UserWorkspaceEdits.setAlias(state, endpointKey, path, alias, generated)
+    }
+
+    /** Re-keys a saved server's workspaces after its endpoint was edited; the target's entries win. */
+    suspend fun moveUserWorkspaces(fromEndpointKey: String, toEndpointKey: String) {
+        if (fromEndpointKey == toEndpointKey) return
+        context.dataStore.edit { prefs ->
+            prefs.storeUserWorkspaces(movedUserWorkspaces(prefs[KEY_USER_WORKSPACES], fromEndpointKey, toEndpointKey))
+        }
+    }
+
+    private suspend fun editUserWorkspaces(edit: (UserWorkspaceState) -> UserWorkspaceEdit): UserWorkspaceEdit {
+        var result: UserWorkspaceEdit? = null
+        context.dataStore.edit { prefs ->
+            val outcome = edit(decodeUserWorkspaces(prefs[KEY_USER_WORKSPACES]))
+            if (outcome is UserWorkspaceEdit.Updated) {
+                prefs.storeUserWorkspaces(encodeUserWorkspaces(outcome.state))
+            }
+            result = outcome
+        }
+        return checkNotNull(result)
+    }
+
+    private fun MutablePreferences.storeUserWorkspaces(encoded: String?) {
+        if (encoded == null) remove(KEY_USER_WORKSPACES) else this[KEY_USER_WORKSPACES] = encoded
     }
 
     suspend fun getSavedServerPassword(server: SavedServer): String? =
@@ -593,6 +661,7 @@ class SettingsDataStore constructor(
             fontFamily = prefs[KEY_FONT_FAMILY] ?: "System",
             codeBlockFontSize = prefs[KEY_CODE_BLOCK_FONT_SIZE] ?: 12,
             terminalFontSize = TerminalFontSize.clamp(prefs[KEY_TERMINAL_FONT_SIZE] ?: TerminalFontSize.DEFAULT_SP),
+            interfaceScale = prefs.interfaceScale(),
             showLineNumbers = prefs[KEY_SHOW_LINE_NUMBERS] ?: true,
             wordWrap = prefs[KEY_WORD_WRAP] ?: false,
             compactMode = prefs[KEY_COMPACT_MODE] ?: false,
@@ -611,6 +680,7 @@ class SettingsDataStore constructor(
             prefs[KEY_FONT_FAMILY] = settings.fontFamily
             prefs[KEY_CODE_BLOCK_FONT_SIZE] = settings.codeBlockFontSize
             prefs[KEY_TERMINAL_FONT_SIZE] = TerminalFontSize.clamp(settings.terminalFontSize)
+            prefs[KEY_INTERFACE_SCALE] = InterfaceScale.sanitize(settings.interfaceScale)
             prefs[KEY_SHOW_LINE_NUMBERS] = settings.showLineNumbers
             prefs[KEY_WORD_WRAP] = settings.wordWrap
             prefs[KEY_COMPACT_MODE] = settings.compactMode
@@ -1091,6 +1161,7 @@ data class VisualSettings(
     val fontFamily: String = "System",
     val codeBlockFontSize: Int = 12,
     val terminalFontSize: Int = TerminalFontSize.DEFAULT_SP,
+    val interfaceScale: Int = InterfaceScale.DEFAULT_PERCENT,
     val showLineNumbers: Boolean = true,
     val wordWrap: Boolean = false,
     val compactMode: Boolean = false,

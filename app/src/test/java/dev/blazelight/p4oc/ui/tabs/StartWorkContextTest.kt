@@ -7,9 +7,15 @@ import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import dev.blazelight.p4oc.domain.session.SessionId
 import dev.blazelight.p4oc.domain.session.WorkspaceSession
+import dev.blazelight.p4oc.domain.workspace.ServerPath
+import dev.blazelight.p4oc.domain.workspace.ServerUserWorkspaces
+import dev.blazelight.p4oc.domain.workspace.StoredWorkspaceAlias
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceRoot
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceState
 import dev.blazelight.p4oc.domain.workspace.Workspace
 import dev.blazelight.p4oc.ui.navigation.Screen
 import dev.blazelight.p4oc.ui.screens.home.ScopedHomeRepositoryState
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabelIndex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -384,6 +390,85 @@ class StartWorkContextTest {
             startWorkScopedActionOrder,
         )
     }
+
+    @Test
+    fun `sessions inside a user root contribute only the root as a picker target`() {
+        val userWorkspaces = rootsOn(alpha, "/w")
+        val repositories = listOf(
+            scopedRepository(alpha, session(alpha, "a", "/w/repo-a"), session(alpha, "b", "/w/repo-a/sub")),
+            scopedRepository(alpha, session(alpha, "c", "/elsewhere")),
+        )
+
+        val targets = deriveStartWorkPickerTargets(repositories, userWorkspaces)
+
+        assertEquals(
+            listOf(
+                StartWorkTarget(alpha, WorkspaceKey.Directory("/w")),
+                StartWorkTarget(alpha, WorkspaceKey.Directory("/elsewhere")),
+            ),
+            targets,
+        )
+    }
+
+    @Test
+    fun `user roots are listed after Global and before discovered targets even offline`() {
+        val userWorkspaces = rootsOn(alpha, "/srv/zeta", "/srv/alpha")
+        val labels = WorkspaceLabelIndex.build(userWorkspaces, emptyMap())
+        val groups = buildStartWorkPickerGroups(
+            servers = listOf(Triple(alpha.endpointKey, "Alpha", "A")),
+            openTargets = listOf(StartWorkTarget(alpha, WorkspaceKey.Directory("/srv/zeta/repo"))),
+            knownHomeTargets = listOf(StartWorkTarget(alpha, WorkspaceKey.Directory("/other"))),
+            userWorkspaces = userWorkspaces,
+            labels = labels,
+        )
+
+        assertEquals(
+            listOf(
+                WorkspaceKey.Global,
+                WorkspaceKey.Directory("/srv/alpha"),
+                WorkspaceKey.Directory("/srv/zeta"),
+                WorkspaceKey.Directory("/other"),
+            ),
+            groups.single().targets.map { it.workspaceKey },
+        )
+    }
+
+    @Test
+    fun `picker search matches custom workspace names and host`() {
+        val path = ServerPath.parseOrNull("/srv/weather-dashboard")!!
+        val userWorkspaces = UserWorkspaceState(
+            mapOf(
+                alpha.endpointKey to ServerUserWorkspaces(
+                    roots = listOf(UserWorkspaceRoot(path, 1L)),
+                    aliases = mapOf(path.compareKey to StoredWorkspaceAlias(path, "Weather App")),
+                ),
+            ),
+        )
+        val groups = buildStartWorkPickerGroups(
+            servers = listOf(Triple(alpha.endpointKey, "Desktop", "D")),
+            openTargets = emptyList(),
+            knownHomeTargets = emptyList(),
+            userWorkspaces = userWorkspaces,
+            labels = WorkspaceLabelIndex.build(userWorkspaces, emptyMap()),
+        )
+
+        listOf("weather app", "dashboard", "Desktop").forEach { query ->
+            val rows = buildStartWorkPickerRows(groups, StartWorkPickerViewState(query = query))
+            assertEquals(
+                query,
+                listOf(WorkspaceKey.Directory("/srv/weather-dashboard")),
+                rows.single().visibleTargets.map { it.workspaceKey },
+            )
+        }
+    }
+
+    private fun rootsOn(server: ServerRef, vararg directories: String) = UserWorkspaceState(
+        mapOf(
+            server.endpointKey to ServerUserWorkspaces(
+                roots = directories.map { UserWorkspaceRoot(ServerPath.parseOrNull(it)!!, 1L) },
+            ),
+        ),
+    )
 
     private fun scopedRepository(
         serverRef: ServerRef,

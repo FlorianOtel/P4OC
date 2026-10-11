@@ -5,7 +5,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,7 +23,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -33,17 +31,20 @@ import dev.blazelight.p4oc.R
 import dev.blazelight.p4oc.domain.model.Session
 import dev.blazelight.p4oc.domain.model.SessionPresence
 import dev.blazelight.p4oc.domain.model.SessionStatus
-import dev.blazelight.p4oc.ui.components.TuiConfirmDialog
-import dev.blazelight.p4oc.ui.components.TuiDropdownMenuItem
-import dev.blazelight.p4oc.ui.components.TuiInputDialog
 import dev.blazelight.p4oc.ui.components.TuiLoadingIndicator
 import dev.blazelight.p4oc.ui.components.TuiSnackbar
 import dev.blazelight.p4oc.ui.components.TuiTopBar
+import dev.blazelight.p4oc.ui.components.session.SessionActionHandlers
+import dev.blazelight.p4oc.ui.components.session.SessionActionMenu
+import dev.blazelight.p4oc.ui.components.session.SessionActionSubject
+import dev.blazelight.p4oc.ui.components.session.rememberSessionActionsState
+import dev.blazelight.p4oc.ui.components.session.sessionActionGestures
 import dev.blazelight.p4oc.ui.components.status.SessionStatusRow
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.ProjectColors
 import dev.blazelight.p4oc.ui.theme.Sizing
 import dev.blazelight.p4oc.ui.theme.Spacing
+import dev.blazelight.p4oc.ui.workspace.LocalWorkspaceLabels
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.koin.androidx.compose.koinViewModel
@@ -83,8 +84,6 @@ fun SessionListScreen(
     onNavigateBack: (() -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var showDeleteDialog by remember { mutableStateOf<Session?>(null) }
-    var showRenameDialog by remember { mutableStateOf<Session?>(null) }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -102,18 +101,29 @@ fun SessionListScreen(
             uiState.sessions
         }
     }
-    val displayedSessions = if (!uiState.isSearchActive) {
+    val workspaceLabels = LocalWorkspaceLabels.current
+    val labelServer = viewModel.workspaceServer
+    val filteredSessions = if (!uiState.isSearchActive) {
         baseDisplayedSessions
     } else if (uiState.serverSearchQuery == null) {
         baseDisplayedSessions.filter { it.session.title.contains(uiState.searchQuery.trim(), ignoreCase = true) }
     } else {
         uiState.displayedSearchResults
     }
-
-    val filteredProject = remember(uiState.projects, filterDirectory) {
-        filterDirectory?.let { directory -> uiState.projects.find { it.worktree == directory } }
+    // Session chips name the Home workspace the session belongs to (user root or its own folder).
+    val displayedSessions = remember(filteredSessions, workspaceLabels, labelServer) {
+        filteredSessions.map { swp ->
+            val directory = swp.session.directory
+            if (directory.isBlank()) {
+                swp
+            } else {
+                val group = workspaceLabels.groupKeyFor(labelServer, directory)
+                swp.copy(projectName = workspaceLabels.primaryFor(labelServer, group) ?: swp.projectName)
+            }
+        }
     }
-    val projectName = filteredProject?.name ?: filterDirectory?.substringAfterLast("/")
+
+    val projectName = filterDirectory?.let { workspaceLabels.directoryLabel(labelServer.endpointKey, it).primary }
 
     LaunchedEffect(filterDirectory) {
         viewModel.updateSearchDirectory(filterDirectory)
@@ -322,8 +332,10 @@ fun SessionListScreen(
                                 supportsSessionSharing = viewModel.supportsSessionSharing,
                                 showProjectChip = filterProjectId == null,
                                 onSessionClick = { session -> onSessionClick(session.id, session.directory) },
-                                onDeleteSession = { showDeleteDialog = it },
-                                onRenameSession = { showRenameDialog = it },
+                                onDeleteSession = { session -> viewModel.deleteSession(session.id) },
+                                onRenameSession = { session, newTitle ->
+                                    viewModel.renameSession(session.id, newTitle)
+                                },
                                 onForkSession = { session ->
                                     onForkSessionInWorkspace(session.id, session.directory)
                                 },
@@ -365,33 +377,6 @@ fun SessionListScreen(
                 }
             }
         }
-    }
-
-    showDeleteDialog?.let { session ->
-        TuiConfirmDialog(
-            onDismissRequest = { showDeleteDialog = null },
-            onConfirm = { viewModel.deleteSession(session.id) },
-            title = stringResource(R.string.sessions_delete_title),
-            message = stringResource(R.string.sessions_delete_confirm, session.title),
-            confirmText = stringResource(R.string.sessions_delete),
-            dismissText = stringResource(R.string.button_cancel),
-            isDestructive = true
-        )
-    }
-
-    showRenameDialog?.let { session ->
-        TuiInputDialog(
-            onDismissRequest = { showRenameDialog = null },
-            onConfirm = { newTitle ->
-                viewModel.renameSession(session.id, newTitle)
-                showRenameDialog = null
-            },
-            title = stringResource(R.string.sessions_rename_title),
-            initialValue = session.title,
-            label = stringResource(R.string.sessions_title_optional),
-            confirmText = stringResource(R.string.sessions_rename),
-            dismissText = stringResource(R.string.button_cancel)
-        )
     }
 }
 
@@ -533,7 +518,7 @@ private fun SessionTreeNode(
     showProjectChip: Boolean,
     onSessionClick: (Session) -> Unit,
     onDeleteSession: (Session) -> Unit,
-    onRenameSession: (Session) -> Unit,
+    onRenameSession: (Session, String) -> Unit,
     onForkSession: (Session) -> Unit,
     onShareSession: (Session) -> Unit,
     onViewChanges: (Session) -> Unit,
@@ -548,6 +533,7 @@ private fun SessionTreeNode(
     val indentPadding: Dp = Sizing.treeIndent * depth
 
     Column(modifier = Modifier.padding(start = indentPadding)) {
+        val isForking = session.id in forkingSessionIds
         SessionCard(
             session = session,
             projectId = swp.projectId,
@@ -555,17 +541,23 @@ private fun SessionTreeNode(
             showProjectChip = showProjectChip,
             status = sessionStatuses[session.id],
             presence = sessionPresences[session.id] ?: SessionPresence.IDLE,
-            isForking = session.id in forkingSessionIds,
-            isSessionForkPending = isSessionForkPending,
-            isShared = session.shareUrl != null,
-            supportsSessionSharing = supportsSessionSharing,
+            isForking = isForking,
+            actionSubject = SessionActionSubject(
+                sessionId = session.id,
+                title = session.title,
+                isShared = session.shareUrl != null,
+                supportsSharing = supportsSessionSharing,
+                canFork = !isSessionForkPending && !isForking,
+            ),
+            actionHandlers = SessionActionHandlers(
+                onRename = { newTitle -> onRenameSession(session, newTitle) },
+                onDelete = { onDeleteSession(session) },
+                onFork = { onForkSession(session) },
+                onToggleShare = { onShareSession(session) },
+                onViewChanges = { onViewChanges(session) },
+                onSummarize = { onSummarizeSession(session) },
+            ),
             onClick = { onSessionClick(session) },
-            onDelete = { onDeleteSession(session) },
-            onRename = { onRenameSession(session) },
-            onFork = { onForkSession(session) },
-            onShare = { onShareSession(session) },
-            onViewChanges = { onViewChanges(session) },
-            onSummarize = { onSummarizeSession(session) },
             onProjectClick = onProjectClick,
             childCount = node.totalDescendants,
             isExpanded = isExpanded,
@@ -609,7 +601,6 @@ private fun SessionTreeNode(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 @Suppress("FunctionNaming", "LongParameterList", "LongMethod", "CyclomaticComplexMethod")
 private fun SessionCard(
@@ -620,16 +611,9 @@ private fun SessionCard(
     status: SessionStatus?,
     presence: SessionPresence,
     isForking: Boolean,
-    isSessionForkPending: Boolean,
-    isShared: Boolean,
-    supportsSessionSharing: Boolean,
+    actionSubject: SessionActionSubject,
+    actionHandlers: SessionActionHandlers,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
-    onRename: () -> Unit,
-    onFork: () -> Unit,
-    onShare: () -> Unit,
-    onViewChanges: () -> Unit,
-    onSummarize: () -> Unit,
     onProjectClick: (String) -> Unit,
     childCount: Int = 0,
     isExpanded: Boolean = false,
@@ -637,7 +621,7 @@ private fun SessionCard(
     isSubAgent: Boolean = false
 ) {
     val theme = LocalOpenCodeTheme.current
-    var showContextMenu by remember { mutableStateOf(false) }
+    val actionsState = rememberSessionActionsState()
     val workspaceIdentity = projectName?.takeIf { it.isNotBlank() }
         ?: session.directory.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.sessions_no_project_context)
@@ -654,11 +638,11 @@ private fun SessionCard(
             .fillMaxWidth()
             .testTag("session_resume_${session.id}")
             .semantics { contentDescription = resumeIdentity }
-            .combinedClickable(
+            .sessionActionGestures(
+                state = actionsState,
+                subject = actionSubject,
+                handlers = actionHandlers,
                 onClick = onClick,
-                onLongClick = { showContextMenu = true },
-                onLongClickLabel = stringResource(R.string.sessions_open_actions),
-                role = Role.Button,
             ),
         color = when {
             presence == SessionPresence.BUSY -> theme.accent.copy(alpha = 0.1f)
@@ -787,79 +771,7 @@ private fun SessionCard(
         }
     }
 
-    // Long-press context menu
-    DropdownMenu(
-        expanded = showContextMenu,
-        onDismissRequest = { showContextMenu = false }
-    ) {
-        TuiDropdownMenuItem(
-            text = stringResource(R.string.sessions_rename),
-            onClick = {
-                showContextMenu = false
-                onRename()
-            },
-            leadingIcon = Icons.Default.Edit
-        )
-        TuiDropdownMenuItem(
-            text = stringResource(R.string.sessions_fork),
-            onClick = {
-                showContextMenu = false
-                onFork()
-            },
-            leadingIcon = Icons.Default.ContentCopy,
-            enabled = !isSessionForkPending && !isForking,
-        )
-        TuiDropdownMenuItem(
-            text = stringResource(R.string.sessions_view_changes),
-            onClick = {
-                showContextMenu = false
-                onViewChanges()
-            },
-            leadingIcon = Icons.Default.Description
-        )
-        TuiDropdownMenuItem(
-            text = stringResource(R.string.sessions_summarize),
-            onClick = {
-                showContextMenu = false
-                onSummarize()
-            },
-            leadingIcon = Icons.Default.Summarize
-        )
-        if (supportsSessionSharing && isShared) {
-            TuiDropdownMenuItem(
-                text = stringResource(R.string.sessions_unshare),
-                onClick = {
-                    showContextMenu = false
-                    onShare()
-                },
-                leadingIcon = Icons.Default.LinkOff
-            )
-        } else if (supportsSessionSharing) {
-            TuiDropdownMenuItem(
-                text = stringResource(R.string.sessions_share),
-                onClick = {
-                    showContextMenu = false
-                    onShare()
-                },
-                leadingIcon = Icons.Default.Share
-            )
-        }
-        HorizontalDivider(color = theme.borderSubtle)
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.sessions_delete), color = theme.error) },
-            onClick = {
-                showContextMenu = false
-                onDelete()
-            },
-            leadingIcon = {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.sessions_delete),
-                    tint = theme.error
-                )
-            }
-        )
-    }
+    SessionActionMenu(state = actionsState, subject = actionSubject, handlers = actionHandlers)
 }
 
 @Composable

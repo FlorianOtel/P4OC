@@ -350,7 +350,10 @@ class ServerViewModel constructor(
                 defaultWorkspace = server.defaultWorkspace,
                 lastConnectedAt = server.lastConnectedAt,
             )
-            if (updated.id != server.id) settingsDataStore.removeSavedServer(server.id)
+            if (updated.id != server.id) {
+                settingsDataStore.moveUserWorkspaces(server.endpointKey, updated.endpointKey)
+                settingsDataStore.removeSavedServer(server.id)
+            }
             _uiState.update { it.copy(remoteUrl = updated.endpoint, password = "", error = null) }
         }
     }

@@ -39,6 +39,7 @@ class ModelControlsSemanticsTest {
                         isSelected = true,
                         onSelect = {},
                         onToggleFavorite = {},
+                        enabled = true,
                     )
                 }
             }
@@ -74,6 +75,7 @@ class ModelControlsSemanticsTest {
                         isSelected = false,
                         onSelect = {},
                         onToggleFavorite = {},
+                        enabled = true,
                     )
                 }
             }

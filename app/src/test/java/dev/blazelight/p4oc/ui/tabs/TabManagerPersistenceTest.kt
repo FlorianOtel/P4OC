@@ -549,12 +549,6 @@ class TabManagerPersistenceTest {
     }
 
     @Test
-    fun `createPtyRequestForWorkspace uses target workspace cwd`() {
-        assertEquals("/repo", createPtyRequestForWorkspace(WorkspaceKey.Directory("/repo")).cwd)
-        assertEquals(null, createPtyRequestForWorkspace(WorkspaceKey.Global).cwd)
-    }
-
-    @Test
     fun `terminal routes are not persisted as resurrectable tabs`() {
         val manager = TabManager()
         manager.createTab(

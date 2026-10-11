@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -26,6 +27,7 @@ import dev.blazelight.p4oc.terminal.TerminalFontSize
 import dev.blazelight.p4oc.ui.components.TuiStepper
 import dev.blazelight.p4oc.ui.components.TuiSwitch
 import dev.blazelight.p4oc.ui.components.TuiTopBar
+import dev.blazelight.p4oc.ui.theme.InterfaceScale
 import dev.blazelight.p4oc.ui.theme.LocalOpenCodeTheme
 import dev.blazelight.p4oc.ui.theme.Spacing
 import dev.blazelight.p4oc.ui.theme.TuiCodeFontSize
@@ -127,6 +129,10 @@ class VisualSettingsViewModel constructor(
         persistSettings(_settings.value.copy(terminalFontSize = TerminalFontSize.clamp(size)))
     }
 
+    fun updateInterfaceScale(percent: Int) {
+        persistSettings(_settings.value.copy(interfaceScale = InterfaceScale.sanitize(percent)))
+    }
+
     fun toggleLineNumbers() {
         persistSettings(_settings.value.copy(showLineNumbers = !_settings.value.showLineNumbers))
     }
@@ -180,6 +186,15 @@ fun VisualSettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
+            // First section: the interface rescales (activity recreate) on change, and the
+            // restored scroll offset is in pixels, so keeping this at the top keeps it in view.
+            SettingsSection(title = stringResource(R.string.visual_settings_interface)) {
+                interfaceScaleRow(
+                    percent = settings.interfaceScale,
+                    onPercentChange = viewModel::updateInterfaceScale,
+                )
+            }
+
             SettingsSection(title = stringResource(R.string.visual_settings_theme)) {
                 ThemeModeSelector(
                     selected = themeMode,
@@ -321,13 +336,39 @@ private fun FontSizeSlider(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         TuiStepper(
             value = value,
             onValueChange = onValueChange,
             range = range,
             step = 1,
             valueLabel = "${value}sp"
+        )
+    }
+}
+
+@Composable
+private fun interfaceScaleRow(
+    percent: Int,
+    onPercentChange: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            stringResource(R.string.visual_settings_interface_scale),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        TuiStepper(
+            value = percent,
+            onValueChange = onPercentChange,
+            range = InterfaceScale.MIN_PERCENT..InterfaceScale.MAX_PERCENT,
+            modifier = Modifier.testTag("visual_settings_interface_scale"),
+            step = InterfaceScale.STEP_PERCENT,
+            valueLabel = "$percent%"
         )
     }
 }

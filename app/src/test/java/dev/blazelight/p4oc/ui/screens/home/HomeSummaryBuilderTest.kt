@@ -12,10 +12,17 @@ import dev.blazelight.p4oc.domain.server.ServerRef
 import dev.blazelight.p4oc.domain.server.WorkspaceKey
 import dev.blazelight.p4oc.domain.session.SessionId
 import dev.blazelight.p4oc.domain.session.WorkspaceSession
+import dev.blazelight.p4oc.domain.workspace.ServerPath
+import dev.blazelight.p4oc.domain.workspace.ServerUserWorkspaces
+import dev.blazelight.p4oc.domain.workspace.StoredWorkspaceAlias
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceRoot
+import dev.blazelight.p4oc.domain.workspace.UserWorkspaceState
 import dev.blazelight.p4oc.domain.workspace.Workspace
 import dev.blazelight.p4oc.ui.navigation.Screen
 import dev.blazelight.p4oc.ui.tabs.TabInstance
 import dev.blazelight.p4oc.ui.tabs.TabState
+import dev.blazelight.p4oc.ui.tabs.workspaceDirectoriesByEndpoint
+import dev.blazelight.p4oc.ui.workspace.WorkspaceLabelIndex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -348,12 +355,170 @@ class HomeSummaryBuilderTest {
         )
     }
 
+    @Test
+    fun `one user root groups a multi-repo project and keeps exact resume keys`() {
+        val (server, serverRef) = server("http://alpha.example.com", "Alpha")
+        val root = "/workspace/multirepo-probe"
+        val directories = listOf(root, "$root/repo-a", "$root/repo-a/sub/deep", "$root/repo-b", "$root/notes")
+        val repository = scopedRepository(
+            serverRef,
+            RepoState.Live(
+                snapshot(
+                    *directories.mapIndexed { index, directory ->
+                        workspaceSession(serverRef, "s$index", directory, "Session $index", index + 1L)
+                    }.toTypedArray(),
+                ),
+            ),
+        )
+
+        val summary = build(
+            servers = listOf(server),
+            repositories = listOf(repository),
+            userWorkspaces = roots(server.endpointKey, root to 0L),
+        )
+
+        val workspace = summary.workspaces.single()
+        assertEquals(WorkspaceKey.Directory(root), workspace.workspaceKey)
+        assertTrue(workspace.isUserRoot)
+        assertEquals(5, workspace.sessionCount)
+        assertTrue(summary.sessions.all { it.groupKey == WorkspaceKey.Directory(root) })
+        // Resuming still targets each session's own directory.
+        val resumeDirectories = summary.sessions.map { (it.workspaceKey as WorkspaceKey.Directory).value }
+        assertEquals(directories.toSet(), resumeDirectories.toSet())
+    }
+
+    @Test
+    fun `nested roots attribute to the deepest root and outside sessions keep their folder`() {
+        val (server, serverRef) = server("http://alpha.example.com", "Alpha")
+        val repository = scopedRepository(
+            serverRef,
+            RepoState.Live(
+                snapshot(
+                    workspaceSession(serverRef, "sub", "/w/repo-a/sub", "Sub", 3L),
+                    workspaceSession(serverRef, "notes", "/w/notes", "Notes", 2L),
+                    workspaceSession(serverRef, "tool", "/elsewhere/tool", "Tool", 1L),
+                ),
+            ),
+        )
+
+        val summary = build(
+            servers = listOf(server),
+            repositories = listOf(repository),
+            userWorkspaces = roots(server.endpointKey, "/w" to 0L, "/w/repo-a" to 0L),
+        )
+
+        val groupBySession = summary.sessions.associate { it.sessionId.value to it.groupKey }
+        assertEquals(WorkspaceKey.Directory("/w/repo-a"), groupBySession["sub"])
+        assertEquals(WorkspaceKey.Directory("/w"), groupBySession["notes"])
+        assertEquals(WorkspaceKey.Directory("/elsewhere/tool"), groupBySession["tool"])
+    }
+
+    @Test
+    fun `without user roots grouping matches exact session directories`() {
+        val (server, serverRef) = server("http://alpha.example.com", "Alpha")
+        val repository = scopedRepository(
+            serverRef,
+            RepoState.Live(
+                snapshot(
+                    workspaceSession(serverRef, "a", "/repo/a", "A", 2L),
+                    workspaceSession(serverRef, "deep", "/repo/a/sub/deep", "Deep", 1L),
+                ),
+            ),
+        )
+
+        val summary = build(servers = listOf(server), repositories = listOf(repository))
+
+        assertEquals(
+            listOf(WorkspaceKey.Directory("/repo/a"), WorkspaceKey.Directory("/repo/a/sub/deep")),
+            summary.workspaces.map { it.workspaceKey },
+        )
+        assertTrue(summary.sessions.all { it.groupKey == it.workspaceKey })
+    }
+
+    @Test
+    fun `empty user root is listed with its added time and survives the discovered limit`() {
+        val (server, serverRef) = server("http://alpha.example.com", "Alpha")
+        val sessions = (1..5).map { index ->
+            workspaceSession(serverRef, "s$index", "/repo-$index", "Work $index", 100L + index)
+        }.toTypedArray()
+
+        val summary = build(
+            servers = listOf(server),
+            repositories = listOf(scopedRepository(serverRef, RepoState.Live(snapshot(*sessions)))),
+            workspaceLimit = 2,
+            userWorkspaces = roots(server.endpointKey, "/srv/new" to 50L),
+        )
+
+        val root = summary.workspaces.single { it.workspaceKey == WorkspaceKey.Directory("/srv/new") }
+        assertTrue(root.isUserRoot)
+        assertEquals(0, root.sessionCount)
+        assertEquals(50L, root.mostRecentAt)
+        // Two discovered workspaces plus the user root, which the limit never drops.
+        assertEquals(3, summary.workspaces.size)
+    }
+
+    @Test
+    fun `open tab under a root counts as that root's open work without changing the tab workspace`() {
+        val (server, serverRef) = server("http://alpha.example.com", "Alpha")
+        val tab = tab(
+            TabInput(id = "files", serverRef = serverRef, directory = "/w/repo-b", route = "files"),
+        )
+
+        val summary = build(
+            servers = listOf(server),
+            tabs = listOf(tab),
+            userWorkspaces = roots(server.endpointKey, "/w" to 1L),
+        )
+
+        val work = summary.openWork.single()
+        assertEquals(WorkspaceKey.Directory("/w/repo-b"), work.workspaceKey)
+        assertEquals(WorkspaceKey.Directory("/w"), work.groupKey)
+        assertEquals(1, summary.workspaces.single { it.workspaceKey == WorkspaceKey.Directory("/w") }.openTabCount)
+    }
+
+    @Test
+    fun `home search matches custom name automatic name path and host`() {
+        val (server, serverRef) = server("http://desktop-pc.example.com", "desktop-pc")
+        val directory = "/home/dev/Projects/apps/weather-dashboard"
+        val userWorkspaces = UserWorkspaceState(
+            mapOf(
+                server.endpointKey to ServerUserWorkspaces(
+                    roots = listOf(UserWorkspaceRoot(ServerPath.parseOrNull(directory)!!, 1L)),
+                    aliases = mapOf(
+                        ServerPath.parseOrNull(directory)!!.compareKey to
+                            StoredWorkspaceAlias(ServerPath.parseOrNull(directory)!!, "Weather App"),
+                    ),
+                ),
+            ),
+        )
+        val summary = build(servers = listOf(server), userWorkspaces = userWorkspaces)
+
+        listOf("Weather", "dashboard", "weather-dashboard", "Projects", "desktop-pc").forEach { query ->
+            assertEquals(query, 1, summary.filteredHomeResults(query).workspaces.size)
+        }
+        assertEquals("Weather App", summary.workspaces.single().label?.primary)
+        assertEquals(serverRef.endpointKey, summary.workspaces.single().serverRef.endpointKey)
+    }
+
+    private fun roots(endpointKey: String, vararg roots: Pair<String, Long>) = UserWorkspaceState(
+        mapOf(
+            endpointKey to ServerUserWorkspaces(
+                roots = roots.map { (directory, addedAt) ->
+                    UserWorkspaceRoot(ServerPath.parseOrNull(directory)!!, addedAt)
+                },
+            ),
+        ),
+    )
+
+    /** Labels are built as the app builds them: from user workspaces plus session and tab directories. */
+    @Suppress("LongParameterList")
     private fun build(
         servers: List<SavedServer>,
         tabs: List<TabInstance> = emptyList(),
         repositories: List<ScopedHomeRepositoryState> = emptyList(),
         workspaceLimit: Int = 12,
         openWorkLimit: Int = 24,
+        userWorkspaces: UserWorkspaceState = UserWorkspaceState.Empty,
     ): HomeSummaryState = HomeSummaryBuilder.build(
         HomeSummaryInput(
             savedServers = servers,
@@ -362,6 +527,8 @@ class HomeSummaryBuilderTest {
             repositories = repositories,
             workspaceLimit = workspaceLimit,
             openWorkLimit = openWorkLimit,
+            userWorkspaces = userWorkspaces,
+            labels = WorkspaceLabelIndex.build(userWorkspaces, workspaceDirectoriesByEndpoint(repositories, tabs)),
         ),
     )
 
