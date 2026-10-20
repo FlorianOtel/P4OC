@@ -13,7 +13,7 @@ The UI is a deliberate terminal aesthetic: flat, monospaced where it matters, 0d
 Always set `JAVA_HOME` first (Java 17 required):
 
 ```bash
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ```
 
 ```bash
